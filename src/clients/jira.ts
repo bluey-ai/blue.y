@@ -71,6 +71,66 @@ export class JiraClient {
     }
   }
 
+  // Search for recent open tickets to avoid duplicates
+  async findDuplicate(keywords: string): Promise<JiraTicket | null> {
+    try {
+      // Search for open blue-y tickets created in last 24h with similar text
+      const jql = `project = ${config.jira.projectKey} AND labels = "blue-y" AND status NOT IN (Done, Closed, Resolved) AND created >= -24h AND summary ~ "${keywords.replace(/"/g, '\\"').substring(0, 100)}" ORDER BY created DESC`;
+      const response = await axios.get(
+        `${this.baseUrl}/rest/api/3/search`,
+        {
+          params: { jql, maxResults: 1, fields: 'key,summary' },
+          headers: {
+            'Authorization': `Basic ${this.auth}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000,
+        },
+      );
+
+      if (response.data.total > 0) {
+        const issue = response.data.issues[0];
+        return { key: issue.key, url: `${this.baseUrl}/browse/${issue.key}` };
+      }
+      return null;
+    } catch (err) {
+      logger.warn(`Jira duplicate search failed: ${err}`);
+      return null;
+    }
+  }
+
+  // Add a comment to an existing ticket
+  async addComment(ticketKey: string, comment: string): Promise<boolean> {
+    try {
+      await axios.post(
+        `${this.baseUrl}/rest/api/3/issue/${ticketKey}/comment`,
+        {
+          body: {
+            type: 'doc',
+            version: 1,
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: comment }],
+              },
+            ],
+          },
+        },
+        {
+          headers: {
+            'Authorization': `Basic ${this.auth}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000,
+        },
+      );
+      return true;
+    } catch (err) {
+      logger.error(`Failed to add Jira comment to ${ticketKey}: ${err}`);
+      return false;
+    }
+  }
+
   private buildDescription(incident: {
     pod?: string;
     namespace?: string;
