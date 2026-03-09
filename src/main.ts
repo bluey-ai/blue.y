@@ -77,6 +77,16 @@ scheduler.onIncident = (incident) => { lastIncident = incident; };
 // Track last bot response for "email this" context
 let lastBotResponse: string | null = null;
 
+// Team email directory — type a name instead of full address
+const TEAM_EMAILS: Record<string, string> = {
+  zeeshan: 'syed.zeeshan@blueonion.today',
+  abdul: 'abdul.khaliq@blueonion.today',
+  usama: 'usama.javed@blueonion.today',
+  wei: 'weslesy.feng@blueonion.today',
+  elsa: 'epau@blueonion.today',
+};
+const TEAM_ALL = Object.values(TEAM_EMAILS);
+
 // Handle incoming Telegram commands
 async function handleTelegramCommand(text: string, chatId: string): Promise<void> {
   const cmd = text.toLowerCase().trim();
@@ -474,17 +484,37 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
   }
 
   // --- Email incident report ---
-  // Match: any message containing "email" + an email address
+  // Match: /email command, or any message with "email/send/forward/share" + email address or team name
   const hasEmailAddress = text.match(/[\w.-]+@[\w.-]+\.\w+/);
   if (cmd.startsWith('/email ') || (hasEmailAddress && cmd.match(/\b(email|send|forward|share)\b/i))) {
-    // Extract email address(es) from command
-    const emailMatch = text.match(/[\w.-]+@[\w.-]+\.\w+/g);
-    if (!emailMatch || emailMatch.length === 0) {
-      await telegram.send('Usage: /email user@blueonion.today [user2@blueonion.today ...]');
+    const emailArgs = cmd.startsWith('/email ') ? cmd.replace('/email ', '').trim() : text;
+
+    // Resolve recipients: "team" → all, names → lookup, or raw email addresses
+    let recipients: string[] = [];
+
+    if (emailArgs.match(/\bteam\b|\ball\b|\beveryone\b/i)) {
+      recipients = TEAM_ALL;
+    } else {
+      // First grab any full email addresses
+      const rawEmails = text.match(/[\w.-]+@[\w.-]+\.\w+/g) || [];
+      recipients.push(...rawEmails);
+
+      // Then resolve names from team directory
+      const words = emailArgs.toLowerCase().split(/[\s,]+/);
+      for (const word of words) {
+        if (TEAM_EMAILS[word] && !recipients.includes(TEAM_EMAILS[word])) {
+          recipients.push(TEAM_EMAILS[word]);
+        }
+      }
+    }
+
+    if (recipients.length === 0) {
+      const nameList = Object.keys(TEAM_EMAILS).join(', ');
+      await telegram.send(`Usage: /email &lt;name|email|team&gt;\n\nTeam: ${nameList}\n\nExamples:\n<code>/email zeeshan</code>\n<code>/email team</code>\n<code>/email zeeshan abdul</code>`);
       return;
     }
+
     if (!lastIncident) {
-      // No prior /diagnose — use the last bot response as the report content
       lastIncident = {
         monitor: 'BLUE.Y Report',
         status: 'Info',
@@ -494,11 +524,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       };
     }
 
-    await telegram.send(`📧 Sending incident report to ${emailMatch.join(', ')}...`);
+    await telegram.send(`📧 Sending to ${recipients.join(', ')}...`);
     const { subject, body } = emailClient.formatIncidentEmail(lastIncident);
-    const ok = await emailClient.sendIncidentReport(emailMatch, subject, body);
+    const ok = await emailClient.sendIncidentReport(recipients, subject, body);
     await telegram.send(ok
-      ? `✅ Incident report sent to ${emailMatch.join(', ')}`
+      ? `✅ Sent to ${recipients.join(', ')}`
       : `❌ Failed to send email. Check SES permissions.`);
     return;
   }
@@ -590,7 +620,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       `/restart &lt;deployment&gt; — Rolling restart\n` +
       `/scale &lt;deployment&gt; &lt;N&gt; — Scale replicas\n\n` +
       `<b>Reports:</b>\n` +
-      `/email &lt;address&gt; — Email incident report\n` +
+      `/email &lt;name|team&gt; — Email report (zeeshan, abdul, usama, wei, elsa, team)\n` +
       `/jira — Create Jira ticket\n` +
       `/incidents — Incident timeline\n\n` +
       `<b>System:</b>\n` +
