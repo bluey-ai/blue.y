@@ -936,8 +936,9 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       }
       const found = await kube.findPod(target);
       if (found) {
-        const [desc, logs, events] = await Promise.all([
-          kube.describePod(found.namespace, found.pod.name),
+        const [desc, descPlain, logs, events] = await Promise.all([
+          kube.describePod(found.namespace, found.pod.name, 'html'),
+          kube.describePod(found.namespace, found.pod.name, 'plain'),
           kube.getPodLogs(found.namespace, found.pod.name, 50),
           kube.getEvents(found.namespace, found.pod.name),
         ]);
@@ -954,22 +955,25 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           const analysis = await bedrock.analyze({
             type: 'incident',
             message: `Diagnose pod ${found.pod.name} in namespace ${found.namespace}`,
-            context: { pod: found.pod, description: desc, recentLogs: logs.substring(0, 2000), events },
+            context: { pod: found.pod, description: descPlain, recentLogs: logs.substring(0, 2000), events },
           });
           analysisText = analysis.analysis || '';
           await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysisText}`);
         } catch (aiErr) {
           logger.error(`[Diagnose] AI analysis failed for ${target}`, aiErr);
-          analysisText = `AI analysis unavailable. Raw findings:\n\n${desc}\n\nRecent logs show: ${logs.substring(0, 500)}`;
+          analysisText = `AI analysis unavailable.\n\n${descPlain}\n\nRecent logs: ${logs.substring(0, 500)}`;
           await telegram.send(`⚠️ AI analysis failed. Raw data shown above.`);
         }
+
+        // Strip any HTML from analysis text for Teams/Jira (plain text contexts)
+        const plainAnalysis = analysisText.replace(/<[^>]+>/g, '');
 
         // Always send back to Teams — even if AI failed, send the raw summary
         if (teamsTicketId) {
           try {
             const diagCard = TeamsCards.diagnosticResults(
               found.pod.name, found.namespace,
-              analysisText || `Pod is running. ${desc.substring(0, 500)}`,
+              plainAnalysis || `Pod is running.\n\n${descPlain.substring(0, 500)}`,
               teamsTicketId,
             );
             await teamsClient.replyWithCard(teamsTicketId, diagCard);
