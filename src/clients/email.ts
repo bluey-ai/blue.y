@@ -1,7 +1,7 @@
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { logger } from '../utils/logger';
 
-const FROM_ADDRESS = 'bluey@blueonion.today';
+const FROM_ADDRESS = 'noreply@blueonion.today';
 
 export class EmailClient {
   private ses: SESClient;
