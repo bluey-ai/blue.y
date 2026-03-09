@@ -1,4 +1,4 @@
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
@@ -65,64 +65,43 @@ Response format (JSON):
 }`;
 
 export class BedrockClient {
-  private client: BedrockRuntimeClient;
+  private apiKey: string;
+  private baseUrl: string;
 
   constructor() {
-    this.client = new BedrockRuntimeClient({ region: config.bedrock.region });
-  }
-
-  private isAnthropicModel(modelId: string): boolean {
-    return modelId.includes('anthropic') || modelId.includes('claude');
-  }
-
-  private buildRequestBody(modelId: string, prompt: string): string {
-    if (this.isAnthropicModel(modelId)) {
-      return JSON.stringify({
-        anthropic_version: 'bedrock-2023-05-31',
-        max_tokens: config.bedrock.maxTokens,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: prompt }],
-      });
-    }
-    // Amazon Nova / other models use the standard Bedrock Messages API
-    return JSON.stringify({
-      inferenceConfig: { maxTokens: config.bedrock.maxTokens },
-      system: [{ text: SYSTEM_PROMPT }],
-      messages: [{ role: 'user', content: [{ text: prompt }] }],
-    });
-  }
-
-  private extractResponseText(modelId: string, responseBody: Record<string, unknown>): string {
-    if (this.isAnthropicModel(modelId)) {
-      const content = responseBody.content as Array<{ text?: string }> | undefined;
-      return content?.[0]?.text || '';
-    }
-    // Amazon Nova response format
-    const output = responseBody.output as { message?: { content?: Array<{ text?: string }> } } | undefined;
-    return output?.message?.content?.[0]?.text || '';
+    this.apiKey = config.ai.apiKey;
+    this.baseUrl = config.ai.baseUrl;
   }
 
   async analyze(request: AnalysisRequest): Promise<AnalysisResponse> {
-    // Use incident model for incidents/commands, routine model for checks
-    const modelId = request.type === 'incident' || request.type === 'user_command'
-      ? config.bedrock.incidentModel
-      : config.bedrock.routineModel;
+    // Use reasoning model for incidents/commands, fast model for routine checks
+    const model = request.type === 'incident' || request.type === 'user_command'
+      ? config.ai.incidentModel
+      : config.ai.routineModel;
 
-    logger.info(`Bedrock request: type=${request.type}, model=${modelId}`);
+    logger.info(`AI request: type=${request.type}, model=${model}`);
 
     try {
-      const body = this.buildRequestBody(modelId, this.buildPrompt(request));
+      const response = await axios.post(
+        `${this.baseUrl}/chat/completions`,
+        {
+          model,
+          max_tokens: config.ai.maxTokens,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: this.buildPrompt(request) },
+          ],
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        },
+      );
 
-      const command = new InvokeModelCommand({
-        modelId,
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: new TextEncoder().encode(body),
-      });
-
-      const response = await this.client.send(command);
-      const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-      const text = this.extractResponseText(modelId, responseBody);
+      const text = response.data.choices?.[0]?.message?.content || '';
 
       // Try to parse structured JSON response
       try {
@@ -140,7 +119,7 @@ export class BedrockClient {
         requiresAction: false,
       };
     } catch (err) {
-      logger.error(`Bedrock invocation failed: ${err}`);
+      logger.error(`AI invocation failed: ${err}`);
       return {
         analysis: `Error analyzing: ${err instanceof Error ? err.message : 'Unknown error'}`,
         severity: 'warning',
