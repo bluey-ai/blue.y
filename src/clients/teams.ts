@@ -71,7 +71,8 @@ export class TeamsClient {
   async handleMessage(context: TurnContext): Promise<void> {
     if (context.activity.type !== ActivityTypes.Message) return;
 
-    const text = context.activity.text?.trim() || '';
+    // Strip Teams <at>...</at> mention tags and clean up extra whitespace
+    const text = (context.activity.text || '').replace(/<at[^>]*>.*?<\/at>/gi, '').trim();
     const userName = context.activity.from?.name || 'Unknown User';
 
     if (!text) return;
