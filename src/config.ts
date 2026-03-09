@@ -4,13 +4,13 @@ dotenv.config();
 export const config = {
   port: parseInt(process.env.PORT || '8000', 10),
 
-  // AWS Bedrock
-  bedrock: {
-    region: process.env.AWS_REGION || 'ap-southeast-1',
-    // Hybrid model strategy: Sonnet for routine, Opus for incidents
-    routineModel: process.env.BEDROCK_ROUTINE_MODEL || 'apac.amazon.nova-lite-v1:0',
-    incidentModel: process.env.BEDROCK_INCIDENT_MODEL || 'apac.amazon.nova-pro-v1:0',
-    maxTokens: parseInt(process.env.BEDROCK_MAX_TOKENS || '2048', 10),
+  // AI (DeepSeek API — OpenAI-compatible)
+  ai: {
+    baseUrl: process.env.AI_BASE_URL || 'https://api.deepseek.com/v1',
+    apiKey: process.env.AI_API_KEY || '',
+    routineModel: process.env.AI_ROUTINE_MODEL || 'deepseek-chat',        // DeepSeek V3 — fast
+    incidentModel: process.env.AI_INCIDENT_MODEL || 'deepseek-reasoner',   // DeepSeek R1 — reasoning
+    maxTokens: parseInt(process.env.AI_MAX_TOKENS || '2048', 10),
   },
 
   // Telegram Bot
