@@ -772,10 +772,10 @@ async function startPolling(): Promise<void> {
 }
 
 // --- Microsoft Teams webhook endpoint ---
-if (config.teams.enabled) {
+if (teamsClient.isEnabled()) {
   app.post('/api/messages', async (req, res) => {
     try {
-      await teamsClient.getAdapter().process(req, res, async (context) => {
+      await teamsClient.getAdapter()!.process(req, res, async (context) => {
         await teamsClient.handleMessage(context);
       });
     } catch (err) {

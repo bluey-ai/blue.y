@@ -24,17 +24,22 @@ export interface TeamsTicket {
 type OnUserReportCallback = (ticket: TeamsTicket) => Promise<void>;
 
 export class TeamsClient {
-  private adapter: CloudAdapter;
+  private adapter: CloudAdapter | null = null;
   private onUserReport?: OnUserReportCallback;
   // Store active tickets for cross-channel flow
   private tickets: Map<string, TeamsTicket> = new Map();
   private ticketCounter = 0;
 
   constructor() {
+    if (!config.teams.enabled) {
+      logger.info('[Teams] Not configured — Teams integration disabled');
+      return;
+    }
+
     const authConfig: ConfigurationBotFrameworkAuthenticationOptions = {
       MicrosoftAppId: config.teams.appId,
       MicrosoftAppPassword: config.teams.appPassword,
-      MicrosoftAppType: 'SingleTenant',
+      MicrosoftAppType: 'MultiTenant',
     };
 
     const botAuth = new ConfigurationBotFrameworkAuthentication(authConfig);
@@ -45,14 +50,20 @@ export class TeamsClient {
       logger.error('[Teams] Turn error', error);
       await context.sendActivity('Sorry, something went wrong. The ops team has been notified.');
     };
+
+    logger.info('[Teams] Bot adapter initialized');
   }
 
   setOnUserReport(callback: OnUserReportCallback): void {
     this.onUserReport = callback;
   }
 
-  getAdapter(): CloudAdapter {
+  getAdapter(): CloudAdapter | null {
     return this.adapter;
+  }
+
+  isEnabled(): boolean {
+    return this.adapter !== null;
   }
 
   // Process incoming Teams messages
@@ -136,8 +147,8 @@ export class TeamsClient {
   // Send a proactive message back to the Teams user
   async replyToTicket(ticketId: string, message: string): Promise<boolean> {
     const ticket = this.tickets.get(ticketId);
-    if (!ticket) {
-      logger.warn(`[Teams] Ticket ${ticketId} not found for reply`);
+    if (!ticket || !this.adapter) {
+      logger.warn(`[Teams] Ticket ${ticketId} not found or adapter not initialized`);
       return false;
     }
 
