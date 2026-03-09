@@ -8,8 +8,8 @@ export const config = {
   bedrock: {
     region: process.env.AWS_REGION || 'ap-southeast-1',
     // Hybrid model strategy: Sonnet for routine, Opus for incidents
-    routineModel: process.env.BEDROCK_ROUTINE_MODEL || 'anthropic.claude-sonnet-4-6',
-    incidentModel: process.env.BEDROCK_INCIDENT_MODEL || 'anthropic.claude-opus-4-6-v1',
+    routineModel: process.env.BEDROCK_ROUTINE_MODEL || 'apac.amazon.nova-lite-v1:0',
+    incidentModel: process.env.BEDROCK_INCIDENT_MODEL || 'apac.amazon.nova-pro-v1:0',
     maxTokens: parseInt(process.env.BEDROCK_MAX_TOKENS || '2048', 10),
   },
 

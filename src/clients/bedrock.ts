@@ -71,8 +71,39 @@ export class BedrockClient {
     this.client = new BedrockRuntimeClient({ region: config.bedrock.region });
   }
 
+  private isAnthropicModel(modelId: string): boolean {
+    return modelId.includes('anthropic') || modelId.includes('claude');
+  }
+
+  private buildRequestBody(modelId: string, prompt: string): string {
+    if (this.isAnthropicModel(modelId)) {
+      return JSON.stringify({
+        anthropic_version: 'bedrock-2023-05-31',
+        max_tokens: config.bedrock.maxTokens,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: prompt }],
+      });
+    }
+    // Amazon Nova / other models use the standard Bedrock Messages API
+    return JSON.stringify({
+      inferenceConfig: { maxTokens: config.bedrock.maxTokens },
+      system: [{ text: SYSTEM_PROMPT }],
+      messages: [{ role: 'user', content: [{ text: prompt }] }],
+    });
+  }
+
+  private extractResponseText(modelId: string, responseBody: Record<string, unknown>): string {
+    if (this.isAnthropicModel(modelId)) {
+      const content = responseBody.content as Array<{ text?: string }> | undefined;
+      return content?.[0]?.text || '';
+    }
+    // Amazon Nova response format
+    const output = responseBody.output as { message?: { content?: Array<{ text?: string }> } } | undefined;
+    return output?.message?.content?.[0]?.text || '';
+  }
+
   async analyze(request: AnalysisRequest): Promise<AnalysisResponse> {
-    // Use Opus for incidents, Sonnet for routine checks
+    // Use incident model for incidents/commands, routine model for checks
     const modelId = request.type === 'incident' || request.type === 'user_command'
       ? config.bedrock.incidentModel
       : config.bedrock.routineModel;
@@ -80,17 +111,7 @@ export class BedrockClient {
     logger.info(`Bedrock request: type=${request.type}, model=${modelId}`);
 
     try {
-      const body = JSON.stringify({
-        anthropic_version: 'bedrock-2023-05-31',
-        max_tokens: config.bedrock.maxTokens,
-        system: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: 'user',
-            content: this.buildPrompt(request),
-          },
-        ],
-      });
+      const body = this.buildRequestBody(modelId, this.buildPrompt(request));
 
       const command = new InvokeModelCommand({
         modelId,
@@ -101,7 +122,7 @@ export class BedrockClient {
 
       const response = await this.client.send(command);
       const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-      const text = responseBody.content?.[0]?.text || '';
+      const text = this.extractResponseText(modelId, responseBody);
 
       // Try to parse structured JSON response
       try {
