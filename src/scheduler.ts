@@ -3,6 +3,7 @@ import { Monitor, MonitorResult } from './monitors/base';
 import { TelegramClient } from './clients/telegram';
 import { BedrockClient } from './clients/bedrock';
 import { KubeClient } from './clients/kube';
+import { LokiClient } from './clients/loki';
 import { config } from './config';
 import { logger } from './utils/logger';
 
@@ -23,6 +24,10 @@ export interface IncidentContext {
   events?: string;
   description?: string;
   timestamp?: string;
+  lokiErrorLogs?: string;
+  lokiStats?: string;
+  lokiPatterns?: string;
+  lokiTrend?: string;
 }
 
 export class MonitorScheduler {
@@ -45,6 +50,7 @@ export class MonitorScheduler {
     private telegram: TelegramClient,
     private bedrock: BedrockClient,
     private kube?: KubeClient,
+    private loki?: LokiClient,
   ) {}
 
   start(): void {
@@ -172,12 +178,18 @@ export class MonitorScheduler {
     try {
       await this.telegram.sendAlert('critical', `${monitorName}: ${resource} is unhealthy\n\n🔬 Auto-diagnosing...`);
 
-      // Gather full context
-      const [desc, logs, events] = await Promise.all([
+      // Gather full context (K8s + Loki in parallel)
+      const [desc, logs, events, lokiErrors, lokiStats, lokiTrend] = await Promise.all([
         this.kube!.describePod(namespace, podName),
         this.kube!.getPodLogs(namespace, podName, 50),
         this.kube!.getEvents(namespace, podName),
+        this.loki?.getErrorLogs(namespace, podName, '1h', 30).catch(() => []) ?? Promise.resolve([]),
+        this.loki?.getLogStats(namespace, podName, '1h').catch(() => null) ?? Promise.resolve(null),
+        this.loki?.getErrorTrend(namespace, podName).catch(() => 'unknown' as const) ?? Promise.resolve('unknown' as const),
       ]);
+
+      // Get error patterns
+      const lokiPatterns = await (this.loki?.getErrorPatterns(namespace, '1h', 100).catch(() => []) ?? Promise.resolve([]));
 
       // Send raw data
       await this.telegram.send(`🔎 <b>Pod Details:</b>\n${desc}`);
@@ -188,13 +200,28 @@ export class MonitorScheduler {
         await this.telegram.send(`📢 <b>Events:</b>\n${events}`);
       }
 
-      // AI analysis
+      // Send Loki analysis
+      const lokiStatsStr = lokiStats && this.loki ? this.loki.formatStats(lokiStats, lokiTrend) : '';
+      const lokiPatternsStr = lokiPatterns.length > 0 && this.loki ? this.loki.formatPatterns(lokiPatterns) : '';
+      const lokiErrorsStr = lokiErrors.slice(0, 15).join('\n');
+
+      if (lokiStatsStr) {
+        await this.telegram.send(`📊 <b>Log Analysis (Loki):</b>\n<pre>${lokiStatsStr}</pre>`);
+      }
+      if (lokiErrors.length > 0) {
+        await this.telegram.send(`🔴 <b>Error Logs (${lokiErrors.length}):</b>\n<pre>${lokiErrors.slice(0, 10).join('\n').substring(0, 3000)}</pre>`);
+      }
+
+      // AI analysis (with Loki context)
       let analysis = '';
+      const lokiContext = lokiStatsStr
+        ? `\n\n=== LOKI LOG ANALYSIS ===\n${lokiStatsStr}\n\nError Trend: ${lokiTrend}\n\nTop Error Patterns:\n${lokiPatternsStr}\n\nRecent Error Logs:\n${lokiErrorsStr.substring(0, 1500)}`
+        : '';
       try {
         const aiResult = await this.bedrock.analyze({
           type: 'incident',
           message: `Auto-detected: pod ${resource} is unhealthy`,
-          context: { description: desc, recentLogs: logs.substring(0, 2000), events },
+          context: { description: desc, recentLogs: logs.substring(0, 2000), events, lokiAnalysis: lokiContext || undefined },
         });
         analysis = aiResult.analysis;
         await this.telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysis}`);
@@ -202,7 +229,7 @@ export class MonitorScheduler {
         logger.warn(`AI analysis failed for ${resource}: ${err}`);
       }
 
-      // Save incident context
+      // Save incident context (including Loki data)
       const incident: IncidentContext = {
         monitor: monitorName,
         pod: podName,
@@ -213,6 +240,10 @@ export class MonitorScheduler {
         events,
         analysis,
         timestamp: new Date().toISOString(),
+        lokiErrorLogs: lokiErrorsStr,
+        lokiStats: lokiStatsStr,
+        lokiPatterns: lokiPatternsStr,
+        lokiTrend: lokiTrend,
       };
 
       // Add to incident timeline
