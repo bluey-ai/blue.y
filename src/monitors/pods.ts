@@ -8,6 +8,9 @@ const KNOWN_CRASHLOOP_PODS = [
   'doris-prod-be',  // Known OOM after nightly backup, auto-restarted by CronJob
 ];
 
+// Skip completed/errored CronJob pods (they have "-cron-" in the name)
+const isCronJobPod = (name: string): boolean => name.includes('-cron-');
+
 export class PodMonitor implements Monitor {
   name = 'pods';
 
@@ -19,9 +22,11 @@ export class PodMonitor implements Monitor {
   async check(): Promise<MonitorResult> {
     const unhealthy = await this.kube.getUnhealthyPods();
 
-    // Filter out known noisy pods
+    // Filter out known noisy pods and completed CronJob pods
     const actionable = unhealthy.filter(
-      (p) => !KNOWN_CRASHLOOP_PODS.some((known) => p.name.startsWith(known)),
+      (p) =>
+        !KNOWN_CRASHLOOP_PODS.some((known) => p.name.startsWith(known)) &&
+        !isCronJobPod(p.name),
     );
 
     if (actionable.length === 0) {
@@ -47,7 +52,10 @@ export class PodMonitor implements Monitor {
               message: `Pod ${pod.namespace}/${pod.name} is ${pod.status} with ${pod.restarts} restarts.\n\nRecent logs:\n${logs}`,
               context: { pod },
             });
-            message = analysis.analysis;
+            // Only use AI analysis if it's not an error message
+            if (!analysis.analysis.startsWith('Error analyzing')) {
+              message = analysis.analysis;
+            }
           } catch (err) {
             logger.warn(`Skipping Bedrock analysis for ${pod.name}: ${err}`);
           }
