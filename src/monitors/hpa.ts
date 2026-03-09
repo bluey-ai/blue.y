@@ -43,9 +43,9 @@ export class HPAMonitor implements Monitor {
           }
         }
 
-        // Check for ScalingLimited condition
+        // Check for ScalingLimited condition (skip TooFewReplicas — normal for low-traffic services)
         const limited = hpa.conditions.find((c) => c.type === 'ScalingLimited' && c.status === 'True');
-        if (limited) {
+        if (limited && limited.reason !== 'TooFewReplicas') {
           issues.push({
             resource: `${ns}/${hpa.name}`,
             message: `HPA ${hpa.name} scaling limited: ${limited.reason} — ${limited.message?.substring(0, 150)}`,
