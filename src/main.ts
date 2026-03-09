@@ -89,7 +89,8 @@ const TEAM_ALL = Object.values(TEAM_EMAILS);
 
 // Handle incoming Telegram commands
 async function handleTelegramCommand(text: string, chatId: string): Promise<void> {
-  const cmd = text.toLowerCase().trim();
+  // Strip @BotName suffix from commands (Telegram appends it in groups)
+  const cmd = text.toLowerCase().trim().replace(/@\w+/g, '');
 
   if (chatId !== config.telegram.chatId) {
     logger.warn(`Telegram message from unauthorized chat: ${chatId}`);
@@ -484,9 +485,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
   }
 
   // --- Email incident report ---
-  // Match: /email command, or any message with "email/send/forward/share" + email address or team name
+  // Match: /email command, or "email/send/forward/share" + email address or team name
   const hasEmailAddress = text.match(/[\w.-]+@[\w.-]+\.\w+/);
-  if (cmd.startsWith('/email ') || (hasEmailAddress && cmd.match(/\b(email|send|forward|share)\b/i))) {
+  const hasTeamName = cmd.match(/\b(email|send|forward|share)\b/i) &&
+    (cmd.match(/\b(team|all|everyone)\b/i) || Object.keys(TEAM_EMAILS).some((name) => cmd.includes(name)));
+  if (cmd.startsWith('/email ') || (hasEmailAddress && cmd.match(/\b(email|send|forward|share)\b/i)) || hasTeamName) {
     const emailArgs = cmd.startsWith('/email ') ? cmd.replace('/email ', '').trim() : text;
 
     // Resolve recipients: "team" → all, names → lookup, or raw email addresses
