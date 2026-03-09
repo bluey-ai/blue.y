@@ -13,6 +13,7 @@ export interface PodInfo {
   ready: boolean;
   age: string;
   containers: { name: string; state: string; reason?: string; restartCount: number }[];
+  isJobPod: boolean; // true if owned by a Job/CronJob (not a long-running service)
 }
 
 export interface NodeInfo {
@@ -58,6 +59,14 @@ export class KubeClient {
       const res = await this.coreApi.listNamespacedPod({ namespace });
       return (res.items || []).map((pod) => {
         const containerStatuses = pod.status?.containerStatuses || [];
+        // Detect if this pod is owned by a Job/CronJob (not a long-running service)
+        const owners = pod.metadata?.ownerReferences || [];
+        const isJobPod = owners.some((o) => o.kind === 'Job') ||
+          // Also check common CronJob/Job pod name patterns
+          /-(cron|backup|watchdog|restart|cleanup|migrate)-/.test(pod.metadata?.name || '') ||
+          // Completed/failed pods with no owner (orphan jobs)
+          (pod.status?.phase === 'Succeeded' || pod.status?.phase === 'Failed');
+
         return {
           name: pod.metadata?.name || 'unknown',
           namespace: pod.metadata?.namespace || namespace,
@@ -71,6 +80,7 @@ export class KubeClient {
             reason: c.state?.waiting?.reason || c.state?.terminated?.reason,
             restartCount: c.restartCount || 0,
           })),
+          isJobPod,
         };
       });
     } catch (err) {
@@ -86,9 +96,14 @@ export class KubeClient {
       const pods = await this.getPods(ns);
       const unhealthy = pods.filter(
         (p) =>
-          p.status !== 'Running' && p.status !== 'Succeeded' ||
-          !p.ready && p.status === 'Running' ||
-          p.restarts > 5,
+          // Skip Job/CronJob pods — they're expected to complete/fail
+          !p.isJobPod &&
+          // Actual health checks for long-running service pods
+          (
+            (p.status !== 'Running' && p.status !== 'Succeeded') ||
+            (!p.ready && p.status === 'Running') ||
+            p.restarts > 5
+          ),
       );
       allPods.push(...unhealthy);
     }
@@ -427,17 +442,31 @@ export class KubeClient {
     const nodes = await this.getNodes();
     lines.push(`🖥️ <b>Nodes:</b> ${nodes.length} (${nodes.filter((n) => n.status === 'Ready').length} ready)`);
 
-    // Pods per namespace
+    // Pods per namespace — separate service pods from job pods
     for (const ns of config.kube.namespaces) {
       const pods = await this.getPods(ns);
-      const running = pods.filter((p) => p.status === 'Running' && p.ready).length;
-      const unhealthy = pods.filter((p) =>
+      const servicePods = pods.filter((p) => !p.isJobPod);
+      const jobPods = pods.filter((p) => p.isJobPod);
+
+      const running = servicePods.filter((p) => p.status === 'Running' && p.ready).length;
+      const unhealthy = servicePods.filter((p) =>
         (p.status !== 'Running' && p.status !== 'Succeeded') ||
         (!p.ready && p.status === 'Running') ||
         p.restarts > 5,
       );
       const icon = unhealthy.length > 0 ? '❌' : '✅';
-      lines.push(`${icon} <b>${ns}:</b> ${running}/${pods.length} healthy${unhealthy.length > 0 ? ` (${unhealthy.length} issues)` : ''}`);
+      let line = `${icon} <b>${ns}:</b> ${running}/${servicePods.length} healthy`;
+      if (unhealthy.length > 0) {
+        line += ` (${unhealthy.length} issues)`;
+      }
+      if (jobPods.length > 0) {
+        const completedJobs = jobPods.filter((p) => p.status === 'Succeeded').length;
+        const failedJobs = jobPods.filter((p) => p.status === 'Failed').length;
+        line += ` + ${jobPods.length} jobs`;
+        if (failedJobs > 0) line += ` (${failedJobs} failed)`;
+        else if (completedJobs > 0) line += ` (${completedJobs} done)`;
+      }
+      lines.push(line);
     }
 
     return lines.join('\n');
