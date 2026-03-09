@@ -1538,44 +1538,9 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
 
     ticket.diagnosis = analysis.analysis;
 
-    // --- Create Jira ticket (with dedup) ---
-    let jiraKey = '';
-    let jiraUrl = '';
-    if (config.jira.apiToken) {
-      // Extract key words for dedup search (first 5 significant words)
-      const keywords = extractKeywords(userMessage);
-      const existing = await jiraClient.findDuplicate(keywords);
-
-      if (existing) {
-        // Duplicate found — add comment instead of creating new ticket
-        jiraKey = existing.key;
-        jiraUrl = existing.url;
-        await jiraClient.addComment(existing.key,
-          `[BLUE.Y] New report from ${userName} (Teams):\n\n"${userMessage}"\n\nDiagnosis: ${analysis.analysis}`);
-        logger.info(`[Teams] Jira duplicate found: ${existing.key}, added comment`);
-      } else {
-        // Create new ticket (include Loki data if available)
-        const lokiStatsStr = lokiProdStats ? lokiClient.formatStats(lokiProdStats, await lokiClient.getErrorTrend('prod', '.*').catch(() => 'unknown' as const)) : '';
-        const lokiPatternsStr = lokiProdPatterns.length > 0 ? lokiClient.formatPatterns(lokiProdPatterns) : '';
-        const jiraTicket = await jiraClient.createIncidentTicket({
-          summary: `[Teams] ${userName}: ${userMessage.substring(0, 80)}`,
-          description: `Reported by: ${userName} (via Microsoft Teams)\n\nOriginal message: "${userMessage}"`,
-          analysis: analysis.analysis,
-          severity: analysis.requiresAction ? 'critical' : undefined,
-          lokiStats: lokiStatsStr,
-          lokiPatterns: lokiPatternsStr,
-          lokiTrend: lokiProdStats ? await lokiClient.getErrorTrend('prod', '.*').catch(() => 'unknown') : undefined,
-        });
-        if (jiraTicket) {
-          jiraKey = jiraTicket.key;
-          jiraUrl = jiraTicket.url;
-          logger.info(`[Teams] Jira ticket created: ${jiraTicket.key}`);
-        }
-      }
-    }
-
-    const jiraInfo = jiraKey ? `\n\nJira: [${jiraKey}](${jiraUrl})` : '';
-    const jiraTgInfo = jiraKey ? `\n🎫 <a href="${jiraUrl}">${jiraKey}</a>` : '';
+    // NOTE: Jira tickets are NOT auto-created here. They are only created when:
+    // 1. Ops explicitly runs /jira
+    // 2. Ops declines an action (/no) — auto-creates ticket for tracking
 
     // Record BLUE.Y's diagnosis in conversation history
     teamsClient.addToHistory(userName, 'assistant', `Diagnosis: ${analysis.analysis}${analysis.suggestedAction ? ` | Suggested: ${analysis.suggestedAction}` : ''}`, id, ticket.status);
@@ -1586,8 +1551,6 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
       const diagCard = TeamsCards.diagnosis(analysis.analysis, 'awaiting_approval', id, {
         screenshotAnalysis: ticket.imageAnalysis || undefined,
         suggestedAction: analysis.suggestedAction || analysis.suggestedCommand,
-        jiraUrl: jiraUrl || undefined,
-        jiraKey: jiraKey || undefined,
       });
       await teamsClient.replyWithCard(id, diagCard);
       ticket.status = 'awaiting_approval';
@@ -1605,7 +1568,6 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
         `${ticket.imageAnalysis ? `📸 <b>Screenshot:</b> ${safeTg(ticket.imageAnalysis)}\n` : ''}` +
         `\n🧠 <b>Diagnosis:</b>\n${safeTg(analysis.analysis)}\n\n` +
         `🔧 <b>Suggested Fix:</b> <code>${safeTg(analysis.suggestedAction || 'none')}</code>\n` +
-        `${jiraTgInfo ? `${jiraTgInfo}\n` : ''}` +
         `\n━━━━━━━━━━━━━━━━━━━━━━\n` +
         `⚡ Reply /yes to approve or /no to decline\n` +
         `🆔 <code>${id}</code>`,
@@ -1616,24 +1578,21 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
       const actionName = actionParts[0]?.toLowerCase();
       if (actionName === 'restart' && actionParts[1]) {
         const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
-        pendingAction = { action: 'restart', target: dep, namespace: ns, timestamp: Date.now(), teamsTicketId: id, jiraKey };
+        pendingAction = { action: 'restart', target: dep, namespace: ns, timestamp: Date.now(), teamsTicketId: id };
       } else if (actionName === 'scale' && actionParts[1]) {
         const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
         const replicas = actionParts[2] || '2';
-        pendingAction = { action: 'scale', target: dep, namespace: ns, detail: replicas, timestamp: Date.now(), teamsTicketId: id, jiraKey };
+        pendingAction = { action: 'scale', target: dep, namespace: ns, detail: replicas, timestamp: Date.now(), teamsTicketId: id };
       } else if (actionName === 'diagnose' && actionParts[1]) {
         const [ns, pod] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
-        pendingAction = { action: 'diagnose', target: pod, namespace: ns, timestamp: Date.now(), teamsTicketId: id, jiraKey };
+        pendingAction = { action: 'diagnose', target: pod, namespace: ns, timestamp: Date.now(), teamsTicketId: id };
       } else {
-        // Fallback: store any suggested action so /yes doesn't say "no pending action"
-        pendingAction = { action: actionName || 'unknown', target: actionParts[1] || '', namespace: 'prod', timestamp: Date.now(), teamsTicketId: id, jiraKey };
+        pendingAction = { action: actionName || 'unknown', target: actionParts[1] || '', namespace: 'prod', timestamp: Date.now(), teamsTicketId: id };
       }
     } else {
       // No action needed — just inform the user and ops
       const resolvedCard = TeamsCards.diagnosis(analysis.analysis, 'resolved', id, {
         screenshotAnalysis: ticket.imageAnalysis || undefined,
-        jiraUrl: jiraUrl || undefined,
-        jiraKey: jiraKey || undefined,
       });
       await teamsClient.replyWithCard(id, resolvedCard);
       ticket.status = 'resolved';
@@ -1647,13 +1606,8 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
         `👤 <b>From:</b> ${safeTg(userName)}\n` +
         `💬 <b>Issue:</b> ${safeTg(userMessage)}\n\n` +
         `🧠 <b>Diagnosis:</b>\n${safeTg(analysis.analysis.substring(0, 300))}\n\n` +
-        `✅ No action required — auto-resolved${jiraTgInfo}`,
+        `✅ No action required — auto-resolved`,
       );
-
-      // Close Jira with resolution comment
-      if (jiraKey) {
-        await jiraClient.addComment(jiraKey, `[BLUE.Y] Auto-resolved — no action required.\n\nDiagnosis: ${analysis.analysis}`);
-      }
     }
   } catch (err) {
     logger.error(`[Teams] Failed to diagnose ticket ${id}`, err);
