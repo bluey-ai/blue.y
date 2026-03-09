@@ -39,7 +39,8 @@ export class TeamsClient {
     const authConfig: ConfigurationBotFrameworkAuthenticationOptions = {
       MicrosoftAppId: config.teams.appId,
       MicrosoftAppPassword: config.teams.appPassword,
-      MicrosoftAppType: 'MultiTenant',
+      MicrosoftAppTenantId: config.teams.tenantId,
+      MicrosoftAppType: 'SingleTenant',
     };
 
     const botAuth = new ConfigurationBotFrameworkAuthentication(authConfig);
