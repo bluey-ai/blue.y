@@ -20,6 +20,18 @@ export interface NodeInfo {
   conditions: { type: string; status: string; reason?: string }[];
 }
 
+export interface HPAInfo {
+  name: string;
+  namespace: string;
+  targetRef: string;
+  minReplicas: number;
+  maxReplicas: number;
+  currentReplicas: number;
+  desiredReplicas: number;
+  metrics: { type: string; name: string; current: number; target: number; unit: string }[];
+  conditions: { type: string; status: string; reason?: string; message?: string }[];
+}
+
 export class KubeClient {
   private coreApi: k8s.CoreV1Api;
   private appsApi: k8s.AppsV1Api;
@@ -323,6 +335,70 @@ export class KubeClient {
       }).sort((a: any, b: any) => parseInt(b.memory) - parseInt(a.memory));
     } catch (err) {
       logger.error(`Failed to get pod metrics for ${namespace}`, err);
+      return [];
+    }
+  }
+
+  async getHPAs(namespace: string): Promise<HPAInfo[]> {
+    try {
+      const autoscalingApi = this.kc.makeApiClient(k8s.AutoscalingV2Api);
+      const res = await autoscalingApi.listNamespacedHorizontalPodAutoscaler({ namespace });
+      return (res.items || []).map((hpa) => {
+        const metrics: HPAInfo['metrics'] = [];
+
+        // Parse current metrics from status
+        (hpa.status?.currentMetrics || []).forEach((cm) => {
+          if (cm.type === 'Resource' && cm.resource) {
+            const current = cm.resource.current?.averageUtilization || 0;
+            // Find matching target spec
+            const targetSpec = (hpa.spec?.metrics || []).find(
+              (m) => m.type === 'Resource' && m.resource?.name === cm.resource!.name,
+            );
+            const target = targetSpec?.resource?.target?.averageUtilization || 0;
+            metrics.push({
+              type: 'Resource',
+              name: cm.resource.name,
+              current,
+              target,
+              unit: '%',
+            });
+          }
+        });
+
+        // If no current metrics yet, at least show target specs
+        if (metrics.length === 0) {
+          (hpa.spec?.metrics || []).forEach((m) => {
+            if (m.type === 'Resource' && m.resource) {
+              metrics.push({
+                type: 'Resource',
+                name: m.resource.name,
+                current: 0,
+                target: m.resource.target?.averageUtilization || 0,
+                unit: '%',
+              });
+            }
+          });
+        }
+
+        return {
+          name: hpa.metadata?.name || 'unknown',
+          namespace: hpa.metadata?.namespace || namespace,
+          targetRef: `${hpa.spec?.scaleTargetRef?.kind}/${hpa.spec?.scaleTargetRef?.name}`,
+          minReplicas: hpa.spec?.minReplicas || 1,
+          maxReplicas: hpa.spec?.maxReplicas || 1,
+          currentReplicas: hpa.status?.currentReplicas || 0,
+          desiredReplicas: hpa.status?.desiredReplicas || 0,
+          metrics,
+          conditions: (hpa.status?.conditions || []).map((c) => ({
+            type: c.type,
+            status: c.status,
+            reason: c.reason,
+            message: c.message,
+          })),
+        };
+      });
+    } catch (err) {
+      logger.error(`Failed to get HPAs in ${namespace}`, err);
       return [];
     }
   }
