@@ -1,0 +1,67 @@
+clone:
+  depth: 1
+options:
+  docker: true
+  max-time: 15
+
+definitions:
+  services:
+    docker:
+      memory: 3072
+
+  scripts:
+    deploy: &deploy |
+      set -euo pipefail
+
+      # 1. AUTHENTICATE WITH AWS (OIDC)
+      export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
+      echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+      export AWS_ROLE_ARN=arn:aws:iam::716156543026:role/BitbucketPipelineRole
+      export AWS_REGION=ap-southeast-1
+
+      # 2. LOGIN TO ECR & UPDATE KUBECONFIG
+      aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 716156543026.dkr.ecr.$AWS_REGION.amazonaws.com
+      aws eks update-kubeconfig --region $AWS_REGION --name ${CLUSTERNAME}
+
+      # 3. DEFINE VARIABLES
+      appname="blue-y"
+      ECR=716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/blue.y
+
+      echo "Deploying BLUE.Y to $ENV ($TAG)..."
+
+      # 4. BUILD & PUSH IMAGE
+      docker build -f Dockerfile \
+        --no-cache \
+        -t ${ECR}:${TAG}-${BITBUCKET_COMMIT} .
+
+      docker push ${ECR}:${TAG}-${BITBUCKET_COMMIT}
+
+      # 5. GENERATE DEPLOYMENT YAML
+      cat deploy/deployment_"${TAG}".yaml | \
+        sed -e "s/<namespace>/${NAMESPACE}/g" | \
+        sed -e "s/<appname>/${appname}/g" | \
+        sed -e "s/<tag>/${TAG}/g" | \
+        sed -e "s/<HASH>/${BITBUCKET_COMMIT}/g" | \
+        sed -e "s#<ECR>#${ECR}#g" > deployment.yaml
+
+      # 6. APPLY & VERIFY
+      kubectl apply -f deployment.yaml
+      kubectl get svc --namespace ${NAMESPACE} | grep blue-y
+
+pipelines:
+  branches:
+    main:
+      - step:
+          name: 'Deploying Production'
+          deployment: Production
+          oidc: true
+          image:
+            name: 716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/backend-build-environment:latest
+            aws:
+              oidc-role: arn:aws:iam::716156543026:role/BitbucketPipelineRole
+          services: [docker]
+          caches: [docker]
+          script:
+            - export ENV=prod
+            - export TAG=production
+            - *deploy

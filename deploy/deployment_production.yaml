@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: <namespace>
+  name: blue-y
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::716156543026:role/BlueYBedrockRole
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: blue-y-readonly
+rules:
+  # Read-only access to pods, nodes, services, deployments, secrets (TLS only via code filter)
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "nodes", "services", "secrets", "events", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  # Allow restart (patch deployments only)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: blue-y-readonly-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: blue-y-readonly
+subjects:
+  - kind: ServiceAccount
+    name: blue-y
+    namespace: <namespace>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: <namespace>
+  name: blue-y-<tag>
+  labels:
+    app: "blue-y"
+    version: "<tag>"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "blue-y"
+      version: "<tag>"
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: "blue-y"
+        version: "<tag>"
+    spec:
+      serviceAccountName: blue-y
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      containers:
+        - image: <ECR>:<tag>-<HASH>
+          name: blue-y
+          imagePullPolicy: Always
+          env:
+            - name: PORT
+              value: "8000"
+            - name: AWS_REGION
+              value: "ap-southeast-1"
+            - name: BEDROCK_ROUTINE_MODEL
+              value: "anthropic.claude-sonnet-4-6"
+            - name: BEDROCK_INCIDENT_MODEL
+              value: "anthropic.claude-opus-4-6-v1"
+            - name: WATCH_NAMESPACES
+              value: "prod,doris,monitoring,wordpress"
+            - name: KUBE_IN_CLUSTER
+              value: "true"
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: telegram-bot-token
+            - name: TELEGRAM_CHAT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: telegram-chat-id
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: <namespace>
+  name: blue-y-<tag>
+spec:
+  type: ClusterIP
+  selector:
+    app: "blue-y"
+    version: "<tag>"
+  ports:
+    - port: 80
+      targetPort: 8000
+      protocol: TCP
