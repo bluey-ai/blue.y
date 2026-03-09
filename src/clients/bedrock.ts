@@ -3,7 +3,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 
 interface AnalysisRequest {
-  type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident';
+  type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident' | 'user_report';
   message: string;
   context?: Record<string, unknown>;
   from?: string;

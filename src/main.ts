@@ -12,6 +12,7 @@ import { PodMonitor } from './monitors/pods';
 import { NodeMonitor } from './monitors/nodes';
 import { CertMonitor } from './monitors/certs';
 import { HPAMonitor } from './monitors/hpa';
+import { TeamsClient, TeamsTicket } from './clients/teams';
 
 const app = express();
 app.use(express.json());
@@ -43,6 +44,7 @@ const telegram = new TelegramClient();
 const kube = new KubeClient();
 const emailClient = new EmailClient();
 const jiraClient = new JiraClient();
+const teamsClient = new TeamsClient();
 
 // Initialize monitors
 const monitors = [
@@ -55,8 +57,8 @@ const monitors = [
 // Initialize scheduler (pass kube for auto-diagnose)
 const scheduler = new MonitorScheduler(monitors, telegram, bedrock, kube);
 
-// Pending action confirmation
-let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number } | null = null;
+// Pending action confirmation (teamsTicketId links back to Teams user for cross-channel flow)
+let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number; teamsTicketId?: string } | null = null;
 
 // Last incident context (for email/jira commands)
 let lastIncident: {
@@ -570,7 +572,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       return;
     }
 
-    const { action, target, namespace, detail } = pendingAction;
+    const { action, target, namespace, detail, teamsTicketId } = pendingAction;
     pendingAction = null;
 
     if (action === 'restart') {
@@ -579,6 +581,12 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       await telegram.send(ok
         ? `✅ Restarted <code>${target}</code> in <b>${namespace}</b>. Rolling update in progress.`
         : `❌ Failed to restart <code>${target}</code>.`);
+      // Notify Teams user if this was from a Teams report
+      if (teamsTicketId) {
+        await teamsClient.updateTicket(teamsTicketId, 'resolved',
+          ok ? `Great news! The ops team has approved and executed a restart of **${target}**. The fix is rolling out now. Please allow a few minutes and try again.`
+            : `The ops team attempted to fix the issue but the restart failed. They're investigating further.`);
+      }
     } else if (action === 'scale') {
       const replicas = parseInt(detail || '1');
       await telegram.send(`📐 Scaling <code>${target}</code> to ${replicas}...`);
@@ -586,6 +594,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       await telegram.send(ok
         ? `✅ Scaled <code>${target}</code> to ${replicas} replicas.`
         : `❌ Failed to scale <code>${target}</code>.`);
+      if (teamsTicketId) {
+        await teamsClient.updateTicket(teamsTicketId, 'resolved',
+          ok ? `Great news! The ops team has scaled up **${target}** to ${replicas} replicas to handle the load. Things should improve shortly.`
+            : `The ops team attempted to scale the service but it failed. They're investigating further.`);
+      }
     } else {
       await telegram.send(`⚠️ Unknown action: ${action}`);
     }
@@ -594,8 +607,15 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
   if (cmd === '/no' || cmd === 'no' || cmd === 'n') {
     if (pendingAction) {
+      const { teamsTicketId } = pendingAction;
       pendingAction = null;
       await telegram.send('👌 Action cancelled.');
+      // Notify Teams user if this was from a Teams report
+      if (teamsTicketId) {
+        await teamsClient.updateTicket(teamsTicketId, 'escalated',
+          'The ops team has reviewed your issue and is handling it manually. ' +
+          'They\'ll follow up with you directly if needed. Thank you for reporting!');
+      }
     }
     return;
   }
@@ -750,6 +770,121 @@ async function startPolling(): Promise<void> {
     }
   }
 }
+
+// --- Microsoft Teams webhook endpoint ---
+if (config.teams.enabled) {
+  app.post('/api/messages', async (req, res) => {
+    try {
+      await teamsClient.getAdapter().process(req, res, async (context) => {
+        await teamsClient.handleMessage(context);
+      });
+    } catch (err) {
+      logger.error('[Teams] Webhook error', err);
+      res.status(500).send();
+    }
+  });
+  logger.info('Teams bot webhook registered at /api/messages');
+}
+
+// --- Teams user report handler (cross-channel flow) ---
+teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
+  const { id, userName, userMessage } = ticket;
+
+  // Status check — just return cluster summary
+  if (userMessage === 'status_check') {
+    const summary = await kube.getClusterSummary();
+    // Convert HTML to plain text for Teams
+    const plainSummary = summary.replace(/<b>/g, '**').replace(/<\/b>/g, '**').replace(/<[^>]+>/g, '');
+    await teamsClient.updateTicket(id, 'resolved', plainSummary);
+    return;
+  }
+
+  // Diagnose the reported issue using AI
+  await teamsClient.updateTicket(id, 'diagnosing');
+
+  try {
+    // Gather cluster context
+    const clusterSummary = await kube.getClusterSummary();
+    const unhealthy = await kube.getUnhealthyPods();
+
+    // Ask AI to analyze the user's report against cluster state
+    const analysis = await bedrock.analyze({
+      type: 'user_report',
+      message: `A user reported via Teams: "${userMessage}". Diagnose this issue.
+        If you can identify a specific pod or service that's affected, say so.
+        If an action (restart, scale) would fix it, suggest it clearly.
+        Keep your response concise and user-friendly.`,
+      context: {
+        clusterSummary,
+        unhealthyPods: unhealthy.map((p) => ({
+          name: p.name, namespace: p.namespace, status: p.status,
+          restarts: p.restarts, containers: p.containers,
+        })),
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    ticket.diagnosis = analysis.analysis;
+
+    // Check if AI suggests an action that needs ops approval
+    if (analysis.requiresAction && analysis.suggestedCommand) {
+      ticket.suggestedAction = analysis.suggestedAction || analysis.suggestedCommand;
+      await teamsClient.updateTicket(id, 'awaiting_approval',
+        `**Diagnosis:** ${analysis.analysis}\n\n` +
+        `I've identified a potential fix and sent it to the ops team for approval. ` +
+        `I'll update you once they respond.`,
+      );
+
+      // Alert ops on Telegram for approval
+      await telegram.send(
+        `📩 <b>Teams Report from ${userName}</b>\n\n` +
+        `<b>Issue:</b> ${userMessage}\n\n` +
+        `<b>Diagnosis:</b> ${analysis.analysis}\n\n` +
+        `<b>Suggested:</b> ${analysis.suggestedAction}\n\n` +
+        `Reply /yes to execute or /no to decline.\n` +
+        `<i>Ticket: ${id}</i>`,
+      );
+
+      // Parse the suggested action for pending approval
+      const actionParts = (analysis.suggestedCommand || '').split(' ');
+      if (actionParts[0] === 'restart' && actionParts[1]) {
+        const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
+        pendingAction = { action: 'restart', target: dep, namespace: ns, timestamp: Date.now(), teamsTicketId: id };
+      } else if (actionParts[0] === 'scale' && actionParts[1]) {
+        const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
+        const replicas = actionParts[2] || '2';
+        pendingAction = { action: 'scale', target: dep, namespace: ns, detail: replicas, timestamp: Date.now(), teamsTicketId: id };
+      }
+    } else {
+      // No action needed — just inform the user and ops
+      await teamsClient.updateTicket(id, 'resolved',
+        `**Diagnosis:** ${analysis.analysis}\n\n` +
+        `No immediate action required. If the issue persists, I'll escalate to the ops team.`,
+      );
+
+      // Notify ops on Telegram (FYI, no action needed)
+      await telegram.send(
+        `📩 <b>Teams Report from ${userName}</b> (resolved)\n\n` +
+        `<b>Issue:</b> ${userMessage}\n` +
+        `<b>Diagnosis:</b> ${analysis.analysis.substring(0, 300)}`,
+      );
+    }
+  } catch (err) {
+    logger.error(`[Teams] Failed to diagnose ticket ${id}`, err);
+
+    // Escalate to ops on failure
+    await teamsClient.updateTicket(id, 'escalated',
+      `I couldn't automatically diagnose this issue. ` +
+      `I've escalated it to the ops team — they'll look into it and get back to you.`,
+    );
+
+    await telegram.send(
+      `📩 <b>Teams Report from ${userName}</b> (escalated)\n\n` +
+      `<b>Issue:</b> ${userMessage}\n` +
+      `⚠️ Auto-diagnosis failed. Please investigate manually.`,
+    );
+  }
+});
 
 // Start
 app.listen(config.port, () => {

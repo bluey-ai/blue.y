@@ -101,6 +101,18 @@ spec:
                 secretKeyRef:
                   name: blue-y-secrets
                   key: telegram-chat-id
+            - name: TEAMS_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: teams-app-id
+                  optional: true
+            - name: TEAMS_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: teams-app-password
+                  optional: true
             - name: JIRA_BASE_URL
               value: "https://blueonion.atlassian.net"
             - name: JIRA_PROJECT_KEY

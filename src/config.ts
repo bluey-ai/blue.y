@@ -33,6 +33,13 @@ export const config = {
     certs: process.env.SCHEDULE_CERTS || '0 */6 * * *',     // every 6 hours
   },
 
+  // Microsoft Teams Bot
+  teams: {
+    appId: process.env.TEAMS_APP_ID || '',
+    appPassword: process.env.TEAMS_APP_PASSWORD || '',
+    enabled: !!process.env.TEAMS_APP_ID,
+  },
+
   // Jira
   jira: {
     baseUrl: process.env.JIRA_BASE_URL || 'https://blueonion.atlassian.net',
