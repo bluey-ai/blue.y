@@ -120,7 +120,7 @@ export class TeamsClient {
       return;
     }
 
-    if (cmd === 'status' || cmd === '/status') {
+    if (cmd === 'status' || cmd === '/status' || cmd === 'check status' || cmd === 'health check') {
       await context.sendActivity('Checking cluster health for you...');
       const ticket = this.createTicket(userName, 'status_check', context);
       ticket.status = 'diagnosing';
@@ -128,7 +128,9 @@ export class TeamsClient {
       return;
     }
 
-    if (cmd === 'smoketest' || cmd === '/smoketest' || cmd === 'smoke test') {
+    if (cmd === 'smoketest' || cmd === '/smoketest' || cmd === 'smoke test'
+      || cmd.includes('smoke test') || cmd.includes('smoketest')
+      || (cmd.includes('smoke') && cmd.includes('test'))) {
       await context.sendActivity('Running smoke tests on all production URLs...');
       const ticket = this.createTicket(userName, 'smoke_test', context);
       ticket.status = 'diagnosing';
@@ -136,7 +138,10 @@ export class TeamsClient {
       return;
     }
 
-    if (cmd === 'securityscan' || cmd === '/securityscan' || cmd === 'security scan') {
+    if (cmd === 'securityscan' || cmd === '/securityscan' || cmd === 'security scan'
+      || cmd.includes('security scan') || cmd.includes('securityscan')
+      || (cmd.includes('security') && cmd.includes('scan'))
+      || cmd.includes('owasp')) {
       await context.sendActivity('Running security scan on all production URLs...');
       const ticket = this.createTicket(userName, 'security_scan', context);
       ticket.status = 'diagnosing';
