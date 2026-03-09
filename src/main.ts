@@ -114,6 +114,9 @@ const monitors = [
 // Initialize scheduler
 const scheduler = new MonitorScheduler(monitors, telegram, bedrock);
 
+// Pending action confirmation
+let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number } | null = null;
+
 // Handle incoming Telegram commands
 async function handleTelegramCommand(text: string, chatId: string): Promise<void> {
   const cmd = text.toLowerCase().trim();
@@ -123,6 +126,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     return;
   }
 
+  // --- Core commands ---
   if (cmd === '/sleep' || cmd === 'sleep') {
     scheduler.pause();
     await telegram.send('😴 BLUE.Y is now sleeping. Send /wake to resume.');
@@ -136,8 +140,9 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
   }
 
   if (cmd === '/status' || cmd === 'status') {
-    const status = await scheduler.getStatus();
-    await telegram.send(status);
+    const summary = await kube.getClusterSummary();
+    const schedulerStatus = await scheduler.getStatus();
+    await telegram.send(`${summary}\n\n${schedulerStatus}`);
     return;
   }
 
@@ -151,18 +156,49 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     return;
   }
 
+  // --- Pod commands ---
   if (cmd.startsWith('/logs ')) {
     const podName = cmd.replace('/logs ', '').trim();
-    for (const ns of config.kube.namespaces) {
-      const pods = await kube.getPods(ns);
-      const match = pods.find((p: { name: string }) => p.name.includes(podName));
-      if (match) {
-        const logs = await kube.getPodLogs(ns, match.name, 20);
-        await telegram.send(`📋 <b>Logs: ${match.name}</b>\n\n<pre>${logs.substring(0, 3500)}</pre>`);
-        return;
+    const found = await kube.findPod(podName);
+    if (found) {
+      const logs = await kube.getPodLogs(found.namespace, found.pod.name, 30);
+      await telegram.send(`📋 <b>Logs: ${found.pod.name}</b> (${found.namespace})\n\n<pre>${logs.substring(0, 3500)}</pre>`);
+    } else {
+      await telegram.send(`❓ Pod matching "${podName}" not found`);
+    }
+    return;
+  }
+
+  if (cmd.startsWith('/describe ')) {
+    const podName = cmd.replace('/describe ', '').trim();
+    const found = await kube.findPod(podName);
+    if (found) {
+      const desc = await kube.describePod(found.namespace, found.pod.name);
+      await telegram.send(`🔎 <b>Describe:</b>\n\n${desc}`);
+    } else {
+      await telegram.send(`❓ Pod matching "${podName}" not found`);
+    }
+    return;
+  }
+
+  if (cmd.startsWith('/events')) {
+    const parts = cmd.replace('/events', '').trim().split(' ');
+    const nsOrPod = parts[0] || 'prod';
+    // Check if it's a namespace or pod name
+    const isNamespace = config.kube.namespaces.includes(nsOrPod);
+    if (isNamespace) {
+      const events = await kube.getEvents(nsOrPod, parts[1]);
+      await telegram.send(`📢 <b>Events: ${nsOrPod}</b>${parts[1] ? ` (${parts[1]})` : ''}\n\n${events}`);
+    } else {
+      // Treat as pod name, search across namespaces
+      const found = await kube.findPod(nsOrPod);
+      if (found) {
+        const events = await kube.getEvents(found.namespace, found.pod.name);
+        await telegram.send(`📢 <b>Events for ${found.pod.name}</b>\n\n${events}`);
+      } else {
+        await telegram.send(`❓ "${nsOrPod}" not found as namespace or pod`);
       }
     }
-    await telegram.send(`❓ Pod matching "${podName}" not found`);
     return;
   }
 
@@ -178,20 +214,208 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     return;
   }
 
-  // For unknown commands, pass to Bedrock for analysis
+  // --- Deployments ---
+  if (cmd.startsWith('/deployments') || cmd.startsWith('/deps')) {
+    const ns = cmd.split(' ')[1] || 'prod';
+    const deps = await kube.getDeployments(ns);
+    let msg = `📦 <b>Deployments: ${ns}</b>\n\n`;
+    deps.forEach((d) => {
+      const icon = d.ready === `${d.replicas}/${d.replicas}` ? '✅' : '❌';
+      msg += `${icon} <code>${d.name}</code> — ${d.ready} (${d.age})\n`;
+    });
+    await telegram.send(msg);
+    return;
+  }
+
+  // --- Diagnose (full diagnostic) ---
+  if (cmd.startsWith('/diagnose ')) {
+    const podName = cmd.replace('/diagnose ', '').trim();
+    const found = await kube.findPod(podName);
+    if (!found) {
+      await telegram.send(`❓ Pod matching "${podName}" not found`);
+      return;
+    }
+
+    await telegram.send(`🔬 Diagnosing <code>${found.pod.name}</code>...`);
+
+    // Gather all context
+    const [desc, logs, events] = await Promise.all([
+      kube.describePod(found.namespace, found.pod.name),
+      kube.getPodLogs(found.namespace, found.pod.name, 50),
+      kube.getEvents(found.namespace, found.pod.name),
+    ]);
+
+    // Send raw data first
+    await telegram.send(`🔎 <b>Pod Details:</b>\n${desc}`);
+    if (logs && logs.length > 10) {
+      await telegram.send(`📋 <b>Recent Logs:</b>\n<pre>${logs.substring(0, 3000)}</pre>`);
+    }
+    if (events && events !== 'No recent events found.') {
+      await telegram.send(`📢 <b>Events:</b>\n${events}`);
+    }
+
+    // Now ask Bedrock to analyze everything
+    try {
+      const analysis = await bedrock.analyze({
+        type: 'incident',
+        message: `Diagnose pod ${found.pod.name} in namespace ${found.namespace}`,
+        context: {
+          pod: found.pod,
+          description: desc,
+          recentLogs: logs.substring(0, 2000),
+          events: events,
+        },
+      });
+      await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysis.analysis}`);
+      if (analysis.suggestedAction) {
+        await telegram.send(`💡 <b>Suggested:</b> ${analysis.suggestedAction}\n\nReply /yes to execute.`);
+        pendingAction = {
+          action: analysis.suggestedCommand || analysis.suggestedAction || '',
+          target: found.pod.name,
+          namespace: found.namespace,
+          timestamp: Date.now(),
+        };
+      }
+    } catch (err) {
+      await telegram.send(`⚠️ AI analysis unavailable: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  // --- Action commands ---
+  if (cmd.startsWith('/restart ')) {
+    const name = cmd.replace('/restart ', '').trim();
+    const found = await kube.findDeployment(name);
+    if (!found) {
+      await telegram.send(`❓ Deployment matching "${name}" not found`);
+      return;
+    }
+    pendingAction = { action: 'restart', target: found.deployment, namespace: found.namespace, timestamp: Date.now() };
+    await telegram.send(`⚠️ Restart <code>${found.deployment}</code> in <b>${found.namespace}</b>?\n\nReply /yes to confirm or /no to cancel.`);
+    return;
+  }
+
+  if (cmd.startsWith('/scale ')) {
+    const parts = cmd.replace('/scale ', '').trim().split(' ');
+    const name = parts[0];
+    const replicas = parseInt(parts[1]);
+    if (!name || isNaN(replicas) || replicas < 0 || replicas > 10) {
+      await telegram.send('Usage: /scale &lt;deployment&gt; &lt;replicas 0-10&gt;');
+      return;
+    }
+    const found = await kube.findDeployment(name);
+    if (!found) {
+      await telegram.send(`❓ Deployment matching "${name}" not found`);
+      return;
+    }
+    pendingAction = { action: 'scale', target: found.deployment, namespace: found.namespace, detail: String(replicas), timestamp: Date.now() };
+    await telegram.send(`⚠️ Scale <code>${found.deployment}</code> in <b>${found.namespace}</b> to ${replicas} replicas?\n\nReply /yes to confirm or /no to cancel.`);
+    return;
+  }
+
+  // --- Confirmation flow ---
+  if (cmd === '/yes' || cmd === 'yes' || cmd === 'y') {
+    if (!pendingAction || Date.now() - pendingAction.timestamp > 120000) {
+      await telegram.send('❌ No pending action or it expired (2 min timeout).');
+      pendingAction = null;
+      return;
+    }
+
+    const { action, target, namespace, detail } = pendingAction;
+    pendingAction = null;
+
+    if (action === 'restart') {
+      await telegram.send(`🔄 Restarting <code>${target}</code>...`);
+      const ok = await kube.restartDeployment(namespace, target);
+      await telegram.send(ok
+        ? `✅ Restarted <code>${target}</code> in <b>${namespace}</b>. Rolling update in progress.`
+        : `❌ Failed to restart <code>${target}</code>.`);
+    } else if (action === 'scale') {
+      const replicas = parseInt(detail || '1');
+      await telegram.send(`📐 Scaling <code>${target}</code> to ${replicas}...`);
+      const ok = await kube.scaleDeployment(namespace, target, replicas);
+      await telegram.send(ok
+        ? `✅ Scaled <code>${target}</code> to ${replicas} replicas.`
+        : `❌ Failed to scale <code>${target}</code>.`);
+    } else {
+      await telegram.send(`⚠️ Unknown action: ${action}`);
+    }
+    return;
+  }
+
+  if (cmd === '/no' || cmd === 'no' || cmd === 'n') {
+    if (pendingAction) {
+      pendingAction = null;
+      await telegram.send('👌 Action cancelled.');
+    }
+    return;
+  }
+
+  // --- Help ---
+  if (cmd === '/help' || cmd === 'help') {
+    await telegram.send(
+      `👁️ <b>BLUE.Y Commands</b>\n\n` +
+      `<b>Monitoring:</b>\n` +
+      `/status — Cluster health overview\n` +
+      `/check — Run all monitors\n` +
+      `/nodes — Node resources\n\n` +
+      `<b>Pods & Deployments:</b>\n` +
+      `/logs &lt;pod&gt; — Tail pod logs\n` +
+      `/describe &lt;pod&gt; — Pod details\n` +
+      `/events [ns] [pod] — Recent events\n` +
+      `/deployments [ns] — List deployments\n` +
+      `/diagnose &lt;pod&gt; — Full AI diagnostic\n\n` +
+      `<b>Actions:</b>\n` +
+      `/restart &lt;deployment&gt; — Rolling restart\n` +
+      `/scale &lt;deployment&gt; &lt;N&gt; — Scale replicas\n\n` +
+      `<b>System:</b>\n` +
+      `/sleep — Pause monitoring\n` +
+      `/wake — Resume monitoring\n\n` +
+      `Or just ask me anything in plain English!`,
+    );
+    return;
+  }
+
+  // --- Natural language → Bedrock with cluster context ---
   try {
+    await telegram.send('🧠 Thinking...');
+
+    // Gather live cluster context for Bedrock
+    const clusterSummary = await kube.getClusterSummary();
+    const unhealthy = await kube.getUnhealthyPods();
+
     const response = await bedrock.analyze({
       type: 'user_command',
       message: text,
+      context: {
+        clusterSummary,
+        unhealthyPods: unhealthy.map((p) => ({ name: p.name, namespace: p.namespace, status: p.status, restarts: p.restarts, containers: p.containers })),
+        timestamp: new Date().toISOString(),
+      },
     });
 
-    if (response.requiresAction) {
-      await telegram.send(`🔍 <b>Analysis:</b>\n${response.analysis}\n\n⚠️ <b>Suggested action:</b>\n<code>${response.suggestedCommand || response.suggestedAction}</code>\n\nReply /yes to execute.`);
-    } else {
-      await telegram.send(response.analysis);
+    await telegram.send(response.analysis);
+
+    if (response.requiresAction && response.suggestedCommand) {
+      // Parse the suggested action
+      const actionParts = (response.suggestedCommand || '').split(' ');
+      if (actionParts[0] === 'restart' && actionParts[1]) {
+        const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
+        pendingAction = { action: 'restart', target: dep, namespace: ns, timestamp: Date.now() };
+        await telegram.send(`\n💡 <b>Suggested:</b> Restart <code>${dep}</code> in ${ns}\n\nReply /yes to execute or /no to cancel.`);
+      } else if (actionParts[0] === 'scale' && actionParts[1]) {
+        const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
+        const replicas = actionParts[2] || '1';
+        pendingAction = { action: 'scale', target: dep, namespace: ns, detail: replicas, timestamp: Date.now() };
+        await telegram.send(`\n💡 <b>Suggested:</b> Scale <code>${dep}</code> to ${replicas}\n\nReply /yes to execute or /no to cancel.`);
+      }
     }
   } catch (err) {
-    await telegram.send(`👁️ <b>BLUE.Y Commands</b>\n\n/status — Quick health overview\n/check — Full pod scan\n/nodes — Node resources\n/logs &lt;pod-name&gt; — Tail pod logs\n/sleep — Pause monitoring\n/wake — Resume monitoring`);
+    logger.error('Bedrock analysis failed', err);
+    await telegram.send(
+      `⚠️ AI unavailable right now. Here are the commands:\n\n` +
+      `/status /check /nodes /logs /describe /events /diagnose /restart /scale /help`,
+    );
   }
 }
 

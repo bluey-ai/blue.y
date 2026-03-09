@@ -153,6 +153,141 @@ export class KubeClient {
     }
   }
 
+  async describePod(namespace: string, podName: string): Promise<string> {
+    try {
+      const pod = await this.coreApi.readNamespacedPod({ name: podName, namespace });
+      const status = pod.status;
+      const spec = pod.spec;
+      const meta = pod.metadata;
+
+      const lines: string[] = [
+        `<b>Pod:</b> ${meta?.name}`,
+        `<b>Namespace:</b> ${meta?.namespace}`,
+        `<b>Node:</b> ${spec?.nodeName || 'unscheduled'}`,
+        `<b>Status:</b> ${status?.phase}`,
+        `<b>IP:</b> ${status?.podIP || 'none'}`,
+        `<b>Age:</b> ${this.getAge(meta?.creationTimestamp)}`,
+        '',
+      ];
+
+      (status?.containerStatuses || []).forEach((c) => {
+        const state = Object.keys(c.state || {})[0] || 'unknown';
+        const reason = c.state?.waiting?.reason || c.state?.terminated?.reason || '';
+        lines.push(`<b>Container:</b> ${c.name}`);
+        lines.push(`  State: ${state}${reason ? ` (${reason})` : ''}`);
+        lines.push(`  Ready: ${c.ready ? 'Yes' : 'No'}`);
+        lines.push(`  Restarts: ${c.restartCount}`);
+        lines.push(`  Image: <code>${c.image}</code>`);
+      });
+
+      return lines.join('\n');
+    } catch (err) {
+      return `Error describing pod: ${(err as Error).message}`;
+    }
+  }
+
+  async getEvents(namespace: string, podName?: string): Promise<string> {
+    try {
+      const res = await this.coreApi.listNamespacedEvent({ namespace });
+      let events = res.items || [];
+
+      if (podName) {
+        events = events.filter((e) => e.involvedObject?.name?.includes(podName));
+      }
+
+      // Sort by last timestamp, take last 15
+      events.sort((a, b) => {
+        const ta = new Date(a.lastTimestamp || a.eventTime || 0).getTime();
+        const tb = new Date(b.lastTimestamp || b.eventTime || 0).getTime();
+        return tb - ta;
+      });
+      events = events.slice(0, 15);
+
+      if (events.length === 0) return 'No recent events found.';
+
+      return events.map((e) => {
+        const icon = e.type === 'Warning' ? '⚠️' : 'ℹ️';
+        const ago = this.getAge(e.lastTimestamp || e.eventTime ? new Date(e.lastTimestamp || e.eventTime || '') : undefined);
+        return `${icon} ${ago} — ${e.reason}: ${e.message?.substring(0, 200)}`;
+      }).join('\n');
+    } catch (err) {
+      return `Error fetching events: ${(err as Error).message}`;
+    }
+  }
+
+  async getDeployments(namespace: string): Promise<{ name: string; ready: string; replicas: number; available: number; age: string }[]> {
+    try {
+      const res = await this.appsApi.listNamespacedDeployment({ namespace });
+      return (res.items || []).map((d) => ({
+        name: d.metadata?.name || 'unknown',
+        ready: `${d.status?.readyReplicas || 0}/${d.status?.replicas || 0}`,
+        replicas: d.status?.replicas || 0,
+        available: d.status?.availableReplicas || 0,
+        age: this.getAge(d.metadata?.creationTimestamp),
+      }));
+    } catch (err) {
+      logger.error(`Failed to get deployments in ${namespace}`, err);
+      return [];
+    }
+  }
+
+  async scaleDeployment(namespace: string, deploymentName: string, replicas: number): Promise<boolean> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (this.appsApi as any).patchNamespacedDeployment({
+        name: deploymentName,
+        namespace,
+        body: { spec: { replicas } },
+      });
+      logger.info(`Scaled ${namespace}/${deploymentName} to ${replicas} replicas`);
+      return true;
+    } catch (err) {
+      logger.error(`Failed to scale ${namespace}/${deploymentName}`, err);
+      return false;
+    }
+  }
+
+  async findPod(podName: string): Promise<{ pod: PodInfo; namespace: string } | null> {
+    for (const ns of config.kube.namespaces) {
+      const pods = await this.getPods(ns);
+      const match = pods.find((p) => p.name.includes(podName));
+      if (match) return { pod: match, namespace: ns };
+    }
+    return null;
+  }
+
+  async findDeployment(name: string): Promise<{ deployment: string; namespace: string } | null> {
+    for (const ns of config.kube.namespaces) {
+      const deps = await this.getDeployments(ns);
+      const match = deps.find((d) => d.name.includes(name));
+      if (match) return { deployment: match.name, namespace: ns };
+    }
+    return null;
+  }
+
+  async getClusterSummary(): Promise<string> {
+    const lines: string[] = ['<b>Cluster Summary</b>\n'];
+
+    // Nodes
+    const nodes = await this.getNodes();
+    lines.push(`🖥️ <b>Nodes:</b> ${nodes.length} (${nodes.filter((n) => n.status === 'Ready').length} ready)`);
+
+    // Pods per namespace
+    for (const ns of config.kube.namespaces) {
+      const pods = await this.getPods(ns);
+      const running = pods.filter((p) => p.status === 'Running' && p.ready).length;
+      const unhealthy = pods.filter((p) =>
+        (p.status !== 'Running' && p.status !== 'Succeeded') ||
+        (!p.ready && p.status === 'Running') ||
+        p.restarts > 5,
+      );
+      const icon = unhealthy.length > 0 ? '❌' : '✅';
+      lines.push(`${icon} <b>${ns}:</b> ${running}/${pods.length} healthy${unhealthy.length > 0 ? ` (${unhealthy.length} issues)` : ''}`);
+    }
+
+    return lines.join('\n');
+  }
+
   async getTLSSecrets(namespace: string): Promise<{ name: string; expiresAt: Date | null }[]> {
     try {
       const res = await this.coreApi.listNamespacedSecret({ namespace, fieldSelector: 'type=kubernetes.io/tls' });
