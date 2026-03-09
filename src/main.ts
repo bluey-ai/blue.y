@@ -989,6 +989,49 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
             'The ops team is investigating your issue manually. They\'ll follow up with you directly.');
         }
       }
+    } else if (action === 'create_jira') {
+      // Create Jira ticket for a declined action
+      if (!config.jira.apiToken) {
+        await telegram.send('❌ Jira not configured. Set JIRA_EMAIL and JIRA_API_TOKEN.');
+        return;
+      }
+
+      await telegram.send('🎫 Creating Jira ticket...');
+
+      // Get the Teams ticket for context
+      const teamsTicket = teamsTicketId ? teamsClient.getTicket(teamsTicketId) : null;
+      const summary = teamsTicket
+        ? `[Teams] ${teamsTicket.userName}: ${teamsTicket.userMessage.substring(0, 80)}`
+        : `[BLUE.Y] ${target || 'Issue'} — needs investigation`;
+      const description = teamsTicket
+        ? `Reported by: ${teamsTicket.userName} (via Microsoft Teams)\n\nOriginal message: "${teamsTicket.userMessage}"\n\nDiagnosis: ${teamsTicket.diagnosis || lastBotResponse || 'Pending investigation'}\n\nSuggested action was declined by ops (${detail || 'unknown action'}).`
+        : `Reported via BLUE.Y monitoring.\n\nTarget: ${namespace}/${target}\n\nSuggested action (${detail}) was declined by ops.`;
+
+      const jiraTicket = await jiraClient.createIncidentTicket({
+        summary,
+        description,
+        analysis: teamsTicket?.diagnosis || lastBotResponse || '',
+      });
+
+      if (jiraTicket) {
+        await telegram.send(`✅ Jira ticket created: <a href="${jiraTicket.url}">${jiraTicket.key}</a>`);
+
+        // Send Jira details back to the Teams user
+        if (teamsTicketId) {
+          const card = TeamsCards.diagnosis(
+            teamsTicket?.diagnosis || 'Your issue has been logged and the ops team will investigate.',
+            'escalated', teamsTicketId,
+            { jiraUrl: jiraTicket.url, jiraKey: jiraTicket.key },
+          );
+          await teamsClient.replyWithCard(teamsTicketId, card);
+        }
+      } else {
+        await telegram.send('❌ Failed to create Jira ticket. Check credentials.');
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'escalated',
+            'The ops team is tracking your issue and will follow up directly.');
+        }
+      }
     } else {
       await telegram.send(`⚠️ Unknown action: ${action}. Try running the command manually.`);
     }
@@ -997,19 +1040,58 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
   if (cmd === '/no' || cmd === 'no' || cmd === 'n') {
     if (pendingAction) {
-      const { teamsTicketId, jiraKey } = pendingAction;
+      const { teamsTicketId, jiraKey, action, target, namespace } = pendingAction;
+      const declinedAction = pendingAction;
       pendingAction = null;
-      await telegram.send('👌 Action cancelled.');
-      // Notify Teams user if this was from a Teams report
-      if (teamsTicketId) {
-        await teamsClient.updateTicket(teamsTicketId, 'escalated',
-          'The ops team has reviewed your issue and is handling it manually. ' +
-          'They\'ll follow up with you directly if needed. Thank you for reporting!');
-      }
-      // Update Jira
+
+      // If Jira ticket already exists from the Teams report flow, update it
       if (jiraKey) {
         await jiraClient.addComment(jiraKey,
           '[BLUE.Y] Suggested action declined by ops. Issue escalated for manual handling.');
+        await telegram.send(
+          `👌 Action cancelled.\n\n` +
+          `🎫 Jira ticket <b>${jiraKey}</b> has been updated with the declined action.`,
+        );
+
+        // Notify Teams user with Jira ticket details
+        if (teamsTicketId) {
+          const jiraUrl = `${config.jira.baseUrl}/browse/${jiraKey}`;
+          const card = TeamsCards.diagnosis(
+            'The ops team has reviewed your issue and decided on a different approach. ' +
+            'A Jira ticket has been created to track this — the team will follow up with you.',
+            'escalated', teamsTicketId, { jiraUrl, jiraKey },
+          );
+          await teamsClient.replyWithCard(teamsTicketId, card);
+          const t = teamsClient.getTicket(teamsTicketId);
+          if (t) t.status = 'escalated';
+        }
+      } else {
+        // No Jira ticket yet — offer to create one
+        await telegram.send(
+          `👌 Action cancelled.\n\n` +
+          `🎫 Create a Jira ticket for this issue?\n` +
+          `Reply /yes to create or /no to skip.`,
+        );
+
+        // Set up a new pending action for Jira creation
+        pendingAction = {
+          action: 'create_jira',
+          target: target || '',
+          namespace: namespace || 'prod',
+          detail: declinedAction.action, // remember what was declined
+          timestamp: Date.now(),
+          teamsTicketId,
+        };
+
+        // Update Teams with "being handled" status
+        if (teamsTicketId) {
+          const card = TeamsCards.statusUpdate('escalated',
+            'The ops team is reviewing your issue and will follow up shortly.',
+            teamsTicketId);
+          await teamsClient.replyWithCard(teamsTicketId, card);
+          const t = teamsClient.getTicket(teamsTicketId);
+          if (t) t.status = 'escalated';
+        }
       }
     }
     return;
