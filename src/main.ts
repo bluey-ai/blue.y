@@ -50,8 +50,8 @@ const monitors = [
   new CertMonitor(kube, bedrock),
 ];
 
-// Initialize scheduler
-const scheduler = new MonitorScheduler(monitors, telegram, bedrock);
+// Initialize scheduler (pass kube for auto-diagnose)
+const scheduler = new MonitorScheduler(monitors, telegram, bedrock, kube);
 
 // Pending action confirmation
 let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number } | null = null;
@@ -68,6 +68,9 @@ let lastIncident: {
   description?: string;
   timestamp?: string;
 } | null = null;
+
+// Wire up auto-diagnose → lastIncident
+scheduler.onIncident = (incident) => { lastIncident = incident; };
 
 // Handle incoming Telegram commands
 async function handleTelegramCommand(text: string, chatId: string): Promise<void> {
@@ -278,6 +281,136 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     return;
   }
 
+  // --- Rollout / deployment status ---
+  if (cmd.startsWith('/rollout ') || cmd.match(/^(did|has|is)\s+.*(deploy|rollout|build)/i)) {
+    const nameMatch = cmd.startsWith('/rollout ') ? cmd.replace('/rollout ', '').trim() : cmd.replace(/^(did|has|is)\s+/i, '').replace(/\s*(deploy|rollout|build|finish|complete|pass|done).*/i, '').trim();
+    const found = await kube.findDeployment(nameMatch);
+    if (!found) {
+      await telegram.send(`❓ Deployment matching "${nameMatch}" not found`);
+      return;
+    }
+    const detail = await kube.getDeploymentDetail(found.namespace, found.deployment);
+    if (!detail) {
+      await telegram.send(`❌ Could not get rollout status for ${found.deployment}`);
+      return;
+    }
+    const isReady = detail.readyReplicas === detail.replicas && detail.updatedReplicas === detail.replicas;
+    const icon = isReady ? '✅' : '🔄';
+    const progressing = detail.conditions.find((c) => c.type === 'Progressing');
+    let msg = `${icon} <b>Rollout: ${detail.name}</b> (${found.namespace})\n\n`;
+    msg += `<b>Replicas:</b> ${detail.readyReplicas}/${detail.replicas} ready, ${detail.updatedReplicas} updated\n`;
+    msg += `<b>Image:</b> <code>${detail.image.split('/').pop()}</code>\n`;
+    msg += `<b>Status:</b> ${isReady ? 'Complete' : 'In Progress'}\n`;
+    if (progressing) msg += `<b>Progress:</b> ${progressing.reason} — ${progressing.message?.substring(0, 200)}\n`;
+    await telegram.send(msg);
+    return;
+  }
+
+  // --- Resource usage ---
+  if (cmd === '/resources' || cmd.startsWith('/resources ') || cmd.match(/^(which|what|show).*(memory|cpu|resource|usage)/i)) {
+    const ns = cmd.startsWith('/resources ') ? cmd.replace('/resources ', '').trim() : 'prod';
+    await telegram.send(`📊 Fetching resource usage for <b>${ns}</b>...`);
+    const metrics = await kube.getTopPods(ns);
+    if (metrics.length === 0) {
+      await telegram.send(`❌ No metrics available for ${ns}. Metrics Server may not be installed.`);
+      return;
+    }
+    const top = metrics.slice(0, 15);
+    let msg = `📊 <b>Top Pods by Memory: ${ns}</b>\n\n`;
+    top.forEach((p, i) => {
+      const memMi = parseInt(p.memory);
+      const bar = memMi > 2000 ? '🔴' : memMi > 500 ? '🟡' : '🟢';
+      msg += `${bar} <code>${p.name.substring(0, 40)}</code>\n   CPU: ${p.cpu} | Mem: ${p.memory}\n`;
+    });
+    await telegram.send(msg);
+    return;
+  }
+
+  // --- Log search ---
+  if (cmd.startsWith('/logsearch ')) {
+    const parts = cmd.replace('/logsearch ', '').trim().split(' ');
+    if (parts.length < 2) {
+      await telegram.send('Usage: /logsearch &lt;pod&gt; &lt;pattern&gt;');
+      return;
+    }
+    const podName = parts[0];
+    const pattern = parts.slice(1).join(' ');
+    const found = await kube.findPod(podName);
+    if (!found) {
+      await telegram.send(`❓ Pod matching "${podName}" not found`);
+      return;
+    }
+    await telegram.send(`🔍 Searching logs of <code>${found.pod.name}</code> for "${pattern}"...`);
+    const logs = await kube.getPodLogs(found.namespace, found.pod.name, 500);
+    const matches = logs.split('\n').filter((line) => line.toLowerCase().includes(pattern.toLowerCase()));
+    if (matches.length === 0) {
+      await telegram.send(`No matches for "${pattern}" in last 500 lines.`);
+    } else {
+      const result = matches.slice(-20).join('\n');
+      await telegram.send(`🔍 Found ${matches.length} matches (showing last 20):\n\n<pre>${result.substring(0, 3500)}</pre>`);
+    }
+    return;
+  }
+
+  // --- Doris health ---
+  if (cmd === '/doris' || cmd.match(/^(doris|how.*doris)/i)) {
+    await telegram.send('🔍 Checking Doris health...');
+    const dorisPods = await kube.getPods('doris');
+    const fePods = dorisPods.filter((p) => p.name.includes('fe'));
+    const bePods = dorisPods.filter((p) => p.name.includes('be'));
+
+    let msg = '🗄️ <b>Doris Health</b>\n\n';
+
+    msg += '<b>Frontend (FE):</b>\n';
+    fePods.forEach((p) => {
+      const icon = p.status === 'Running' && p.ready ? '✅' : '❌';
+      msg += `${icon} <code>${p.name}</code> — ${p.status}, restarts: ${p.restarts}, age: ${p.age}\n`;
+    });
+
+    msg += '\n<b>Backend (BE):</b>\n';
+    bePods.forEach((p) => {
+      const icon = p.status === 'Running' && p.ready ? '✅' : '❌';
+      msg += `${icon} <code>${p.name}</code> — ${p.status}, restarts: ${p.restarts}, age: ${p.age}\n`;
+    });
+
+    // Check resource usage
+    const dorisMetrics = await kube.getTopPods('doris');
+    if (dorisMetrics.length > 0) {
+      msg += '\n<b>Resource Usage:</b>\n';
+      dorisMetrics.forEach((m) => {
+        const memMi = parseInt(m.memory);
+        const bar = memMi > 60000 ? '🔴' : memMi > 40000 ? '🟡' : '🟢';
+        msg += `${bar} <code>${m.name.substring(0, 35)}</code> — CPU: ${m.cpu}, Mem: ${m.memory}\n`;
+      });
+    }
+
+    const unhealthyDoris = dorisPods.filter((p) => p.status !== 'Running' || !p.ready || p.restarts > 3);
+    if (unhealthyDoris.length > 0) {
+      msg += '\n⚠️ <b>Issues detected!</b> Use <code>/diagnose doris-prod-be</code> to investigate.';
+    } else {
+      msg += '\n✅ All Doris pods healthy.';
+    }
+
+    await telegram.send(msg);
+    return;
+  }
+
+  // --- Incident timeline ---
+  if (cmd === '/incidents' || cmd.match(/^show\s+(me\s+)?incidents/i)) {
+    const incidents = scheduler.getIncidentLog();
+    if (incidents.length === 0) {
+      await telegram.send('✅ No incidents recorded since last restart.');
+      return;
+    }
+    let msg = `📋 <b>Incident Timeline</b> (${incidents.length} total)\n\n`;
+    incidents.slice(-10).forEach((inc) => {
+      const ts = inc.timestamp ? new Date(inc.timestamp).toLocaleString('en-SG', { timeZone: 'Asia/Singapore' }) : '?';
+      msg += `• <b>${ts}</b>\n  ${inc.namespace}/${inc.pod} — ${inc.status}\n  ${inc.analysis?.substring(0, 100) || 'No analysis'}${inc.analysis && inc.analysis.length > 100 ? '...' : ''}\n\n`;
+    });
+    await telegram.send(msg);
+    return;
+  }
+
   // --- Email incident report ---
   if (cmd.startsWith('/email ') || text.match(/email\s+(this\s+)?(incident\s+)?(report\s+)?to\s+/i) || text.match(/send\s+(an?\s+)?(email|report|incident)\s+/i)) {
     // Extract email address(es) from command
@@ -375,25 +508,30 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       `👁️ <b>BLUE.Y Commands</b>\n\n` +
       `<b>Monitoring:</b>\n` +
       `/status — Cluster health overview\n` +
-      `/check — Run all monitors\n` +
-      `/nodes — Node resources\n\n` +
+      `/check — Run all monitors now\n` +
+      `/nodes — Node resources\n` +
+      `/resources [ns] — Pod CPU/memory usage\n` +
+      `/doris — Doris cluster health\n\n` +
       `<b>Pods & Deployments:</b>\n` +
       `/logs &lt;pod&gt; — Tail pod logs\n` +
+      `/logsearch &lt;pod&gt; &lt;pattern&gt; — Search logs\n` +
       `/describe &lt;pod&gt; — Pod details\n` +
       `/events [ns] [pod] — Recent events\n` +
       `/deployments [ns] — List deployments\n` +
+      `/rollout &lt;deployment&gt; — Rollout status\n` +
       `/diagnose &lt;pod&gt; — Full AI diagnostic\n\n` +
       `<b>Actions:</b>\n` +
       `/restart &lt;deployment&gt; — Rolling restart\n` +
       `/scale &lt;deployment&gt; &lt;N&gt; — Scale replicas\n\n` +
       `<b>Reports:</b>\n` +
       `/email &lt;address&gt; — Email incident report\n` +
-      `/jira — Create Jira ticket from incident\n\n` +
+      `/jira — Create Jira ticket\n` +
+      `/incidents — Incident timeline\n\n` +
       `<b>System:</b>\n` +
       `/sleep — Pause monitoring\n` +
       `/wake — Resume monitoring\n\n` +
-      `Or just ask me anything in plain English!\n` +
-      `e.g. "email this incident report to syed.zeeshan@blueonion.today"`,
+      `💡 Auto-diagnose is ON — I'll automatically investigate unhealthy pods.\n` +
+      `Or just ask me anything in plain English!`,
     );
     return;
   }
@@ -450,6 +588,25 @@ async function startPolling(): Promise<void> {
   try {
     await axios.post(`${API}/deleteWebhook`);
     logger.info('Cleared any stale Telegram webhook');
+  } catch { /* ignore */ }
+
+  // Register bot commands menu (clickable list in Telegram)
+  try {
+    await axios.post(`${API}/setMyCommands`, {
+      commands: [
+        { command: 'status', description: 'Cluster health overview' },
+        { command: 'check', description: 'Run all monitors now' },
+        { command: 'nodes', description: 'Node resources' },
+        { command: 'resources', description: 'Pod CPU/memory usage' },
+        { command: 'doris', description: 'Doris cluster health' },
+        { command: 'deployments', description: 'List deployments' },
+        { command: 'incidents', description: 'Incident timeline' },
+        { command: 'help', description: 'Show all commands' },
+        { command: 'sleep', description: 'Pause monitoring' },
+        { command: 'wake', description: 'Resume monitoring' },
+      ],
+    });
+    logger.info('Telegram bot commands menu registered');
   } catch { /* ignore */ }
 
   // Small delay to let any previous poller's connection expire

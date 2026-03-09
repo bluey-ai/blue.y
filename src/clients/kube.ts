@@ -247,6 +247,86 @@ export class KubeClient {
     }
   }
 
+  async getDeploymentDetail(namespace: string, deploymentName: string): Promise<{
+    name: string;
+    replicas: number;
+    readyReplicas: number;
+    updatedReplicas: number;
+    availableReplicas: number;
+    image: string;
+    lastUpdated: string;
+    conditions: { type: string; status: string; reason?: string; message?: string }[];
+  } | null> {
+    try {
+      const dep = await this.appsApi.readNamespacedDeployment({ name: deploymentName, namespace });
+      const containers = dep.spec?.template?.spec?.containers || [];
+      const conditions = dep.status?.conditions || [];
+      return {
+        name: dep.metadata?.name || deploymentName,
+        replicas: dep.status?.replicas || 0,
+        readyReplicas: dep.status?.readyReplicas || 0,
+        updatedReplicas: dep.status?.updatedReplicas || 0,
+        availableReplicas: dep.status?.availableReplicas || 0,
+        image: containers[0]?.image || 'unknown',
+        lastUpdated: this.getAge(dep.metadata?.creationTimestamp),
+        conditions: conditions.map((c) => ({
+          type: c.type,
+          status: c.status,
+          reason: c.reason,
+          message: c.message,
+        })),
+      };
+    } catch (err) {
+      logger.error(`Failed to get deployment detail ${namespace}/${deploymentName}`, err);
+      return null;
+    }
+  }
+
+  async getTopPods(namespace: string): Promise<{ name: string; cpu: string; memory: string }[]> {
+    try {
+      // Use metrics API
+      const metricsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+      const res = await metricsApi.listNamespacedCustomObject({
+        group: 'metrics.k8s.io',
+        version: 'v1beta1',
+        namespace,
+        plural: 'pods',
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const items = (res as any).items || [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return items.map((item: any) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const containers = item.containers || [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const totalCpu = containers.reduce((sum: number, c: any) => {
+          const cpu = c.usage?.cpu || '0';
+          // Convert nanoCPU to millicores
+          if (cpu.endsWith('n')) return sum + parseInt(cpu) / 1_000_000;
+          if (cpu.endsWith('m')) return sum + parseInt(cpu);
+          return sum + parseInt(cpu) * 1000;
+        }, 0);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const totalMem = containers.reduce((sum: number, c: any) => {
+          const mem = c.usage?.memory || '0';
+          if (mem.endsWith('Ki')) return sum + parseInt(mem) / 1024;
+          if (mem.endsWith('Mi')) return sum + parseInt(mem);
+          if (mem.endsWith('Gi')) return sum + parseInt(mem) * 1024;
+          return sum + parseInt(mem) / (1024 * 1024);
+        }, 0);
+        return {
+          name: item.metadata?.name || 'unknown',
+          cpu: `${Math.round(totalCpu)}m`,
+          memory: `${Math.round(totalMem)}Mi`,
+        };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      }).sort((a: any, b: any) => parseInt(b.memory) - parseInt(a.memory));
+    } catch (err) {
+      logger.error(`Failed to get pod metrics for ${namespace}`, err);
+      return [];
+    }
+  }
+
   async findPod(podName: string): Promise<{ pod: PodInfo; namespace: string } | null> {
     for (const ns of config.kube.namespaces) {
       const pods = await this.getPods(ns);
