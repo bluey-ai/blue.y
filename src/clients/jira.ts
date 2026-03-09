@@ -7,13 +7,84 @@ interface JiraTicket {
   url: string;
 }
 
+// ADF (Atlassian Document Format) node helpers
+type AdfNode = Record<string, unknown>;
+
+function heading(level: number, text: string): AdfNode {
+  return { type: 'heading', attrs: { level }, content: [{ type: 'text', text }] };
+}
+
+function paragraph(...nodes: AdfNode[]): AdfNode {
+  return { type: 'paragraph', content: nodes };
+}
+
+function text(t: string, marks?: AdfNode[]): AdfNode {
+  const node: AdfNode = { type: 'text', text: t };
+  if (marks && marks.length) node.marks = marks;
+  return node;
+}
+
+function bold(t: string): AdfNode {
+  return text(t, [{ type: 'strong' }]);
+}
+
+function codeBlock(code: string, language?: string): AdfNode {
+  return {
+    type: 'codeBlock',
+    attrs: language ? { language } : {},
+    content: [{ type: 'text', text: code }],
+  };
+}
+
+function panel(panelType: 'info' | 'note' | 'warning' | 'error' | 'success', ...nodes: AdfNode[]): AdfNode {
+  return { type: 'panel', attrs: { panelType }, content: nodes };
+}
+
+function bulletList(...items: string[]): AdfNode {
+  return {
+    type: 'bulletList',
+    content: items.map((item) => ({
+      type: 'listItem',
+      content: [paragraph(text(item))],
+    })),
+  };
+}
+
+function table(headers: string[], rows: string[][]): AdfNode {
+  return {
+    type: 'table',
+    attrs: { isNumberColumnEnabled: false, layout: 'default' },
+    content: [
+      // Header row
+      {
+        type: 'tableRow',
+        content: headers.map((h) => ({
+          type: 'tableHeader',
+          content: [paragraph(bold(h))],
+        })),
+      },
+      // Data rows
+      ...rows.map((row) => ({
+        type: 'tableRow',
+        content: row.map((cell) => ({
+          type: 'tableCell',
+          content: [paragraph(text(cell))],
+        })),
+      })),
+    ],
+  };
+}
+
+function divider(): AdfNode {
+  return { type: 'rule' };
+}
+
 export class JiraClient {
   private baseUrl: string;
   private auth: string;
 
   constructor() {
     this.baseUrl = config.jira.baseUrl;
-    // Basic auth: email:api-token
     this.auth = Buffer.from(`${config.jira.email}:${config.jira.apiToken}`).toString('base64');
   }
 
@@ -29,7 +100,7 @@ export class JiraClient {
     severity?: string;
   }): Promise<JiraTicket | null> {
     try {
-      const description = this.buildDescription(incident);
+      const adfContent = this.buildAdfDescription(incident);
 
       const response = await axios.post(
         `${this.baseUrl}/rest/api/3/issue`,
@@ -38,16 +109,7 @@ export class JiraClient {
             project: { key: config.jira.projectKey },
             issuetype: { name: 'Bug' },
             summary: incident.summary,
-            description: {
-              type: 'doc',
-              version: 1,
-              content: [
-                {
-                  type: 'paragraph',
-                  content: [{ type: 'text', text: description }],
-                },
-              ],
-            },
+            description: { type: 'doc', version: 1, content: adfContent },
             labels: ['blue-y', 'incident', 'auto-created'],
             ...(incident.severity === 'critical' ? { priority: { name: 'High' } } : {}),
           },
@@ -71,10 +133,8 @@ export class JiraClient {
     }
   }
 
-  // Search for recent open tickets to avoid duplicates
   async findDuplicate(keywords: string): Promise<JiraTicket | null> {
     try {
-      // Search for open blue-y tickets created in last 24h with similar text
       const jql = `project = ${config.jira.projectKey} AND labels = "blue-y" AND status NOT IN (Done, Closed, Resolved) AND created >= -24h AND summary ~ "${keywords.replace(/"/g, '\\"').substring(0, 100)}" ORDER BY created DESC`;
       const response = await axios.get(
         `${this.baseUrl}/rest/api/3/search`,
@@ -99,23 +159,20 @@ export class JiraClient {
     }
   }
 
-  // Add a comment to an existing ticket
   async addComment(ticketKey: string, comment: string): Promise<boolean> {
     try {
+      // Build structured ADF comment instead of plain text
+      const sections = comment.split('\n\n');
+      const content: AdfNode[] = sections.map((section) => {
+        if (section.startsWith('[BLUE.Y]')) {
+          return panel('info', paragraph(text(section)));
+        }
+        return paragraph(text(section));
+      });
+
       await axios.post(
         `${this.baseUrl}/rest/api/3/issue/${ticketKey}/comment`,
-        {
-          body: {
-            type: 'doc',
-            version: 1,
-            content: [
-              {
-                type: 'paragraph',
-                content: [{ type: 'text', text: comment }],
-              },
-            ],
-          },
-        },
+        { body: { type: 'doc', version: 1, content } },
         {
           headers: {
             'Authorization': `Basic ${this.auth}`,
@@ -131,7 +188,7 @@ export class JiraClient {
     }
   }
 
-  private buildDescription(incident: {
+  private buildAdfDescription(incident: {
     pod?: string;
     namespace?: string;
     status?: string;
@@ -139,21 +196,73 @@ export class JiraClient {
     logs?: string;
     events?: string;
     description?: string;
-  }): string {
-    const parts: string[] = [
-      '🚨 Auto-created by BLUE.Y Incident Monitor\n',
-    ];
+  }): AdfNode[] {
+    const content: AdfNode[] = [];
 
-    if (incident.pod) parts.push(`Pod: ${incident.namespace}/${incident.pod}`);
-    if (incident.status) parts.push(`Status: ${incident.status}`);
-    if (incident.analysis) parts.push(`\nAI Analysis:\n${incident.analysis}`);
-    if (incident.description) parts.push(`\nPod Details:\n${incident.description}`);
-    if (incident.logs) parts.push(`\nRecent Logs (last 30 lines):\n${incident.logs.substring(0, 2000)}`);
-    if (incident.events) parts.push(`\nEvents:\n${incident.events}`);
+    // Header panel
+    content.push(
+      panel('info',
+        paragraph(bold('Auto-created by BLUE.Y Incident Monitor')),
+        paragraph(text(`Cluster: blo-cluster | Region: ap-southeast-1 | Time: ${new Date().toISOString()}`)),
+      ),
+    );
 
-    parts.push(`\nTimestamp: ${new Date().toISOString()}`);
-    parts.push('Cluster: blo-cluster | Region: ap-southeast-1');
+    // Environment info table
+    if (incident.pod || incident.namespace || incident.status) {
+      content.push(heading(2, 'Environment'));
+      const rows: string[][] = [];
+      if (incident.pod) rows.push(['Pod', `${incident.namespace || 'prod'}/${incident.pod}`]);
+      if (incident.namespace) rows.push(['Namespace', incident.namespace]);
+      if (incident.status) rows.push(['Status', incident.status]);
+      rows.push(['Cluster', 'blo-cluster']);
+      rows.push(['Region', 'ap-southeast-1']);
+      content.push(table(['Field', 'Value'], rows));
+    }
 
-    return parts.join('\n');
+    // AI Analysis (most important for developers)
+    if (incident.analysis) {
+      content.push(divider());
+      content.push(heading(2, 'AI Diagnosis'));
+      // Strip HTML tags from analysis
+      const cleanAnalysis = incident.analysis.replace(/<[^>]+>/g, '');
+      content.push(panel('note', paragraph(text(cleanAnalysis))));
+    }
+
+    // Description (user's original report or pod description)
+    if (incident.description) {
+      content.push(divider());
+      content.push(heading(2, 'Details'));
+      // Strip HTML and keep plain text
+      const cleanDesc = incident.description.replace(/<[^>]+>/g, '');
+      content.push(paragraph(text(cleanDesc)));
+    }
+
+    // Recent Logs
+    if (incident.logs && incident.logs.trim()) {
+      content.push(divider());
+      content.push(heading(2, 'Recent Logs'));
+      content.push(codeBlock(incident.logs.substring(0, 3000), 'text'));
+    }
+
+    // Events
+    if (incident.events && incident.events.trim() && incident.events !== 'No recent events found.') {
+      content.push(heading(3, 'Kubernetes Events'));
+      content.push(codeBlock(incident.events.substring(0, 2000), 'text'));
+    }
+
+    // Reproduction steps for developers
+    content.push(divider());
+    content.push(heading(2, 'For Developers'));
+    content.push(paragraph(text('Quick commands to investigate:')));
+    const cmds = [];
+    if (incident.pod && incident.namespace) {
+      cmds.push(`kubectl describe pod ${incident.pod} -n ${incident.namespace}`);
+      cmds.push(`kubectl logs ${incident.pod} -n ${incident.namespace} --tail=100`);
+      cmds.push(`kubectl get events -n ${incident.namespace} --field-selector involvedObject.name=${incident.pod}`);
+    }
+    cmds.push('kubectl get pods -A | grep -v Running');
+    content.push(codeBlock(cmds.join('\n'), 'bash'));
+
+    return content;
   }
 }

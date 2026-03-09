@@ -181,13 +181,36 @@ export class KubeClient {
     }
   }
 
-  async describePod(namespace: string, podName: string): Promise<string> {
+  async describePod(namespace: string, podName: string, format: 'html' | 'plain' = 'html'): Promise<string> {
     try {
       const pod = await this.coreApi.readNamespacedPod({ name: podName, namespace });
       const status = pod.status;
       const spec = pod.spec;
       const meta = pod.metadata;
 
+      if (format === 'plain') {
+        const lines: string[] = [
+          `Pod: ${meta?.name}`,
+          `Namespace: ${meta?.namespace}`,
+          `Node: ${spec?.nodeName || 'unscheduled'}`,
+          `Status: ${status?.phase}`,
+          `IP: ${status?.podIP || 'none'}`,
+          `Age: ${this.getAge(meta?.creationTimestamp)}`,
+          '',
+        ];
+        (status?.containerStatuses || []).forEach((c) => {
+          const state = Object.keys(c.state || {})[0] || 'unknown';
+          const reason = c.state?.waiting?.reason || c.state?.terminated?.reason || '';
+          lines.push(`Container: ${c.name}`);
+          lines.push(`  State: ${state}${reason ? ` (${reason})` : ''}`);
+          lines.push(`  Ready: ${c.ready ? 'Yes' : 'No'}`);
+          lines.push(`  Restarts: ${c.restartCount}`);
+          lines.push(`  Image: ${c.image}`);
+        });
+        return lines.join('\n');
+      }
+
+      // HTML format (for Telegram)
       const lines: string[] = [
         `<b>Pod:</b> ${meta?.name}`,
         `<b>Namespace:</b> ${meta?.namespace}`,
