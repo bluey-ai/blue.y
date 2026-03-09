@@ -8,9 +8,6 @@ const KNOWN_CRASHLOOP_PODS = [
   'doris-prod-be',  // Known OOM after nightly backup, auto-restarted by CronJob
 ];
 
-// Skip completed/errored CronJob pods (they have "-cron-" in the name)
-const isCronJobPod = (name: string): boolean => name.includes('-cron-');
-
 export class PodMonitor implements Monitor {
   name = 'pods';
 
@@ -20,13 +17,12 @@ export class PodMonitor implements Monitor {
   ) {}
 
   async check(): Promise<MonitorResult> {
+    // getUnhealthyPods already filters out Job/CronJob pods
     const unhealthy = await this.kube.getUnhealthyPods();
 
-    // Filter out known noisy pods and completed CronJob pods
+    // Filter out known noisy pods
     const actionable = unhealthy.filter(
-      (p) =>
-        !KNOWN_CRASHLOOP_PODS.some((known) => p.name.startsWith(known)) &&
-        !isCronJobPod(p.name),
+      (p) => !KNOWN_CRASHLOOP_PODS.some((known) => p.name.startsWith(known)),
     );
 
     if (actionable.length === 0) {
