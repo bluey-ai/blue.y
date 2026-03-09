@@ -58,7 +58,7 @@ const monitors = [
 const scheduler = new MonitorScheduler(monitors, telegram, bedrock, kube);
 
 // Pending action confirmation (teamsTicketId links back to Teams user for cross-channel flow)
-let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number; teamsTicketId?: string } | null = null;
+let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number; teamsTicketId?: string; jiraKey?: string } | null = null;
 
 // Last incident context (for email/jira commands)
 let lastIncident: {
@@ -572,7 +572,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       return;
     }
 
-    const { action, target, namespace, detail, teamsTicketId } = pendingAction;
+    const { action, target, namespace, detail, teamsTicketId, jiraKey } = pendingAction;
     pendingAction = null;
 
     if (action === 'restart') {
@@ -587,6 +587,12 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           ok ? `Great news! The ops team has approved and executed a restart of **${target}**. The fix is rolling out now. Please allow a few minutes and try again.`
             : `The ops team attempted to fix the issue but the restart failed. They're investigating further.`);
       }
+      // Update Jira with action outcome
+      if (jiraKey) {
+        await jiraClient.addComment(jiraKey,
+          ok ? `[BLUE.Y] Action approved by ops: restart ${namespace}/${target} — SUCCESS. Rolling update in progress.`
+            : `[BLUE.Y] Action approved by ops: restart ${namespace}/${target} — FAILED. Manual investigation needed.`);
+      }
     } else if (action === 'scale') {
       const replicas = parseInt(detail || '1');
       await telegram.send(`📐 Scaling <code>${target}</code> to ${replicas}...`);
@@ -599,6 +605,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           ok ? `Great news! The ops team has scaled up **${target}** to ${replicas} replicas to handle the load. Things should improve shortly.`
             : `The ops team attempted to scale the service but it failed. They're investigating further.`);
       }
+      if (jiraKey) {
+        await jiraClient.addComment(jiraKey,
+          ok ? `[BLUE.Y] Action approved by ops: scale ${namespace}/${target} to ${replicas} — SUCCESS.`
+            : `[BLUE.Y] Action approved by ops: scale ${namespace}/${target} to ${replicas} — FAILED. Manual investigation needed.`);
+      }
     } else {
       await telegram.send(`⚠️ Unknown action: ${action}`);
     }
@@ -607,7 +618,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
   if (cmd === '/no' || cmd === 'no' || cmd === 'n') {
     if (pendingAction) {
-      const { teamsTicketId } = pendingAction;
+      const { teamsTicketId, jiraKey } = pendingAction;
       pendingAction = null;
       await telegram.send('👌 Action cancelled.');
       // Notify Teams user if this was from a Teams report
@@ -615,6 +626,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
         await teamsClient.updateTicket(teamsTicketId, 'escalated',
           'The ops team has reviewed your issue and is handling it manually. ' +
           'They\'ll follow up with you directly if needed. Thank you for reporting!');
+      }
+      // Update Jira
+      if (jiraKey) {
+        await jiraClient.addComment(jiraKey,
+          '[BLUE.Y] Suggested action declined by ops. Issue escalated for manual handling.');
       }
     }
     return;
@@ -828,13 +844,47 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
 
     ticket.diagnosis = analysis.analysis;
 
+    // --- Create Jira ticket (with dedup) ---
+    let jiraKey = '';
+    let jiraUrl = '';
+    if (config.jira.apiToken) {
+      // Extract key words for dedup search (first 5 significant words)
+      const keywords = userMessage.replace(/[^a-zA-Z0-9 ]/g, '').split(/\s+/).slice(0, 5).join(' ');
+      const existing = await jiraClient.findDuplicate(keywords);
+
+      if (existing) {
+        // Duplicate found — add comment instead of creating new ticket
+        jiraKey = existing.key;
+        jiraUrl = existing.url;
+        await jiraClient.addComment(existing.key,
+          `[BLUE.Y] New report from ${userName} (Teams):\n\n"${userMessage}"\n\nDiagnosis: ${analysis.analysis}`);
+        logger.info(`[Teams] Jira duplicate found: ${existing.key}, added comment`);
+      } else {
+        // Create new ticket
+        const jiraTicket = await jiraClient.createIncidentTicket({
+          summary: `[Teams] ${userName}: ${userMessage.substring(0, 80)}`,
+          description: `Reported by: ${userName} (via Microsoft Teams)\n\nOriginal message: "${userMessage}"`,
+          analysis: analysis.analysis,
+          severity: analysis.requiresAction ? 'critical' : undefined,
+        });
+        if (jiraTicket) {
+          jiraKey = jiraTicket.key;
+          jiraUrl = jiraTicket.url;
+          logger.info(`[Teams] Jira ticket created: ${jiraTicket.key}`);
+        }
+      }
+    }
+
+    const jiraInfo = jiraKey ? `\n\nJira: [${jiraKey}](${jiraUrl})` : '';
+    const jiraTgInfo = jiraKey ? `\n🎫 <a href="${jiraUrl}">${jiraKey}</a>` : '';
+
     // Check if AI suggests an action that needs ops approval
     if (analysis.requiresAction && analysis.suggestedCommand) {
       ticket.suggestedAction = analysis.suggestedAction || analysis.suggestedCommand;
       await teamsClient.updateTicket(id, 'awaiting_approval',
         `**Diagnosis:** ${analysis.analysis}\n\n` +
         `I've identified a potential fix and sent it to the ops team for approval. ` +
-        `I'll update you once they respond.`,
+        `I'll update you once they respond.${jiraInfo}`,
       );
 
       // Alert ops on Telegram for approval
@@ -843,7 +893,7 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
         `<b>Issue:</b> ${safeTg(userMessage)}\n\n` +
         `<b>Diagnosis:</b> ${safeTg(analysis.analysis)}\n\n` +
         `<b>Suggested:</b> ${safeTg(analysis.suggestedAction || 'none')}\n\n` +
-        `Reply /yes to execute or /no to decline.\n` +
+        `Reply /yes to execute or /no to decline.${jiraTgInfo}\n` +
         `<i>Ticket: ${id}</i>`,
       );
 
@@ -851,25 +901,30 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
       const actionParts = (analysis.suggestedCommand || '').split(' ');
       if (actionParts[0] === 'restart' && actionParts[1]) {
         const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
-        pendingAction = { action: 'restart', target: dep, namespace: ns, timestamp: Date.now(), teamsTicketId: id };
+        pendingAction = { action: 'restart', target: dep, namespace: ns, timestamp: Date.now(), teamsTicketId: id, jiraKey };
       } else if (actionParts[0] === 'scale' && actionParts[1]) {
         const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
         const replicas = actionParts[2] || '2';
-        pendingAction = { action: 'scale', target: dep, namespace: ns, detail: replicas, timestamp: Date.now(), teamsTicketId: id };
+        pendingAction = { action: 'scale', target: dep, namespace: ns, detail: replicas, timestamp: Date.now(), teamsTicketId: id, jiraKey };
       }
     } else {
       // No action needed — just inform the user and ops
       await teamsClient.updateTicket(id, 'resolved',
         `**Diagnosis:** ${analysis.analysis}\n\n` +
-        `No immediate action required. If the issue persists, I'll escalate to the ops team.`,
+        `No immediate action required. If the issue persists, I'll escalate to the ops team.${jiraInfo}`,
       );
 
       // Notify ops on Telegram (FYI, no action needed)
       await telegram.send(
         `📩 <b>Teams Report from ${safeTg(userName)}</b> (resolved)\n\n` +
         `<b>Issue:</b> ${safeTg(userMessage)}\n` +
-        `<b>Diagnosis:</b> ${safeTg(analysis.analysis.substring(0, 300))}`,
+        `<b>Diagnosis:</b> ${safeTg(analysis.analysis.substring(0, 300))}${jiraTgInfo}`,
       );
+
+      // Close Jira with resolution comment
+      if (jiraKey) {
+        await jiraClient.addComment(jiraKey, `[BLUE.Y] Auto-resolved — no action required.\n\nDiagnosis: ${analysis.analysis}`);
+      }
     }
   } catch (err) {
     logger.error(`[Teams] Failed to diagnose ticket ${id}`, err);
