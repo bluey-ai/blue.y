@@ -139,6 +139,8 @@ spec:
                   name: blue-y-secrets
                   key: vision-api-key
                   optional: true
+            - name: LOKI_URL
+              value: "http://loki.monitoring.svc.cluster.local:3100"
             - name: SCHEDULE_DAILY_REPORT
               value: "0 9 * * *"
           ports:

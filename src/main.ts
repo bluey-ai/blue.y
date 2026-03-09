@@ -15,6 +15,7 @@ import { HPAMonitor } from './monitors/hpa';
 import { TeamsClient, TeamsTicket, TeamsCards } from './clients/teams';
 import { VisionClient } from './clients/vision';
 import { QAClient } from './clients/qa';
+import { LokiClient } from './clients/loki';
 import { CronJob } from 'cron';
 
 const app = express();
@@ -50,6 +51,7 @@ const jiraClient = new JiraClient();
 const teamsClient = new TeamsClient();
 const visionClient = new VisionClient();
 const qaClient = new QAClient();
+const lokiClient = new LokiClient();
 
 // Initialize monitors
 const monitors = [
@@ -59,8 +61,8 @@ const monitors = [
   new HPAMonitor(kube),
 ];
 
-// Initialize scheduler (pass kube for auto-diagnose)
-const scheduler = new MonitorScheduler(monitors, telegram, bedrock, kube);
+// Initialize scheduler (pass kube + loki for auto-diagnose)
+const scheduler = new MonitorScheduler(monitors, telegram, bedrock, kube, lokiClient);
 
 // Pending action confirmation (teamsTicketId links back to Teams user for cross-channel flow)
 let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number; teamsTicketId?: string; jiraKey?: string } | null = null;
@@ -168,6 +170,10 @@ let lastIncident: {
   events?: string;
   description?: string;
   timestamp?: string;
+  lokiErrorLogs?: string;
+  lokiStats?: string;
+  lokiPatterns?: string;
+  lokiTrend?: string;
 } | null = null;
 
 // Wire up auto-diagnose → lastIncident
@@ -310,12 +316,18 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
     await telegram.send(`🔬 Diagnosing <code>${found.pod.name}</code>...`);
 
-    // Gather all context
-    const [desc, logs, events] = await Promise.all([
+    // Gather all context (K8s + Loki in parallel)
+    const [desc, logs, events, lokiErrors, lokiStats, lokiTrend] = await Promise.all([
       kube.describePod(found.namespace, found.pod.name),
       kube.getPodLogs(found.namespace, found.pod.name, 50),
       kube.getEvents(found.namespace, found.pod.name),
+      lokiClient.getErrorLogs(found.namespace, found.pod.name, '1h', 30).catch(() => [] as string[]),
+      lokiClient.getLogStats(found.namespace, found.pod.name, '1h').catch(() => null),
+      lokiClient.getErrorTrend(found.namespace, found.pod.name).catch(() => 'unknown' as const),
     ]);
+
+    // Get Loki error patterns
+    const lokiPatterns = await lokiClient.getErrorPatterns(found.namespace, '1h', 100).catch(() => []);
 
     // Send raw data first
     await telegram.send(`🔎 <b>Pod Details:</b>\n${desc}`);
@@ -326,6 +338,24 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       await telegram.send(`📢 <b>Events:</b>\n${events}`);
     }
 
+    // Send Loki log analysis
+    if (lokiStats) {
+      const statsText = lokiClient.formatStats(lokiStats, lokiTrend);
+      await telegram.send(`📊 <b>Log Analysis (Loki):</b>\n<pre>${statsText}</pre>`);
+    }
+    if (lokiErrors.length > 0) {
+      await telegram.send(`🔴 <b>Error Logs (${lokiErrors.length} found):</b>\n<pre>${lokiErrors.slice(0, 10).join('\n').substring(0, 3000)}</pre>`);
+    }
+    if (lokiPatterns.length > 0) {
+      const patternsText = lokiClient.formatPatterns(lokiPatterns);
+      await telegram.send(`🔍 <b>Error Patterns:</b>\n<pre>${patternsText.substring(0, 3000)}</pre>`);
+    }
+
+    // Build Loki context strings for incident/AI
+    const lokiStatsStr = lokiStats ? lokiClient.formatStats(lokiStats, lokiTrend) : '';
+    const lokiPatternsStr = lokiPatterns.length > 0 ? lokiClient.formatPatterns(lokiPatterns) : '';
+    const lokiErrorsStr = lokiErrors.slice(0, 15).join('\n');
+
     // Save incident context for email/jira
     lastIncident = {
       pod: found.pod.name,
@@ -335,10 +365,18 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       logs: logs,
       events: events,
       timestamp: new Date().toISOString(),
+      lokiErrorLogs: lokiErrorsStr,
+      lokiStats: lokiStatsStr,
+      lokiPatterns: lokiPatternsStr,
+      lokiTrend: lokiTrend,
     };
 
-    // Now ask AI to analyze everything
+    // Now ask AI to analyze everything (including Loki data)
     try {
+      const lokiContext = lokiStatsStr
+        ? `\n\n=== LOKI LOG ANALYSIS ===\n${lokiStatsStr}\n\nError Trend: ${lokiTrend}\n\nTop Error Patterns:\n${lokiPatternsStr}\n\nRecent Error Logs:\n${lokiErrorsStr.substring(0, 1500)}`
+        : '';
+
       const analysis = await bedrock.analyze({
         type: 'incident',
         message: `Diagnose pod ${found.pod.name} in namespace ${found.namespace}`,
@@ -347,6 +385,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           description: desc,
           recentLogs: logs.substring(0, 2000),
           events: events,
+          lokiAnalysis: lokiContext || undefined,
         },
       });
       lastIncident.analysis = analysis.analysis;
@@ -752,6 +791,35 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     return;
   }
 
+  // --- Loki error analysis ---
+  if (cmd === '/loki' || cmd.startsWith('/loki ') || cmd.match(/^(log\s+)?errors?\s*(for|in)?\s/i)) {
+    const nsArg = cmd.replace(/^\/(loki|errors?)\s*/, '').replace(/^(log\s+)?errors?\s*(for|in)?\s*/i, '').trim() || 'prod';
+    await telegram.send(`📊 Querying Loki logs for <b>${nsArg}</b>...`);
+
+    const [stats, patterns, trend] = await Promise.all([
+      lokiClient.getLogStats(nsArg, '.*', '1h').catch(() => null),
+      lokiClient.getErrorPatterns(nsArg, '1h', 200).catch(() => []),
+      lokiClient.getErrorTrend(nsArg, '.*').catch(() => 'unknown' as const),
+    ]);
+
+    let msg = `━━━━━━━━━━━━━━━━━━━━━━\n📊 <b>LOKI LOG ANALYSIS</b> (${nsArg})\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (stats) {
+      msg += `<pre>${lokiClient.formatStats(stats, trend)}</pre>\n\n`;
+    } else {
+      msg += `⚠️ Could not fetch log stats (Loki may be unreachable)\n\n`;
+    }
+
+    if (patterns.length > 0) {
+      msg += `🔍 <b>Top Error Patterns:</b>\n<pre>${lokiClient.formatPatterns(patterns).substring(0, 3000)}</pre>`;
+    } else {
+      msg += `✅ No error patterns found in the last hour.`;
+    }
+
+    await telegram.send(msg);
+    return;
+  }
+
   // --- Incident timeline ---
   if (cmd === '/incidents' || cmd.match(/^show\s+(me\s+)?incidents/i)) {
     const incidents = scheduler.getIncidentLog();
@@ -936,11 +1004,14 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       }
       const found = await kube.findPod(target);
       if (found) {
-        const [desc, descPlain, logs, events] = await Promise.all([
+        const [desc, descPlain, logs, events, lokiErrors, lokiStats2, lokiTrend2] = await Promise.all([
           kube.describePod(found.namespace, found.pod.name, 'html'),
           kube.describePod(found.namespace, found.pod.name, 'plain'),
           kube.getPodLogs(found.namespace, found.pod.name, 50),
           kube.getEvents(found.namespace, found.pod.name),
+          lokiClient.getErrorLogs(found.namespace, found.pod.name, '1h', 30).catch(() => [] as string[]),
+          lokiClient.getLogStats(found.namespace, found.pod.name, '1h').catch(() => null),
+          lokiClient.getErrorTrend(found.namespace, found.pod.name).catch(() => 'unknown' as const),
         ]);
         await telegram.send(`🔎 <b>Pod Details:</b>\n${desc}`);
         if (logs && logs.length > 10) {
@@ -949,13 +1020,21 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
         if (events && events !== 'No recent events found.') {
           await telegram.send(`📢 <b>Events:</b>\n${events}`);
         }
+        // Loki data
+        const lokiStatsStr2 = lokiStats2 ? lokiClient.formatStats(lokiStats2, lokiTrend2) : '';
+        if (lokiStatsStr2) {
+          await telegram.send(`📊 <b>Log Analysis (Loki):</b>\n<pre>${lokiStatsStr2}</pre>`);
+        }
+        const lokiContext2 = lokiStatsStr2
+          ? `\n\n=== LOKI LOG ANALYSIS ===\n${lokiStatsStr2}\n\nRecent Error Logs:\n${lokiErrors.slice(0, 10).join('\n').substring(0, 1500)}`
+          : '';
         // AI analysis
         let analysisText = '';
         try {
           const analysis = await bedrock.analyze({
             type: 'incident',
             message: `Diagnose pod ${found.pod.name} in namespace ${found.namespace}`,
-            context: { pod: found.pod, description: descPlain, recentLogs: logs.substring(0, 2000), events },
+            context: { pod: found.pod, description: descPlain, recentLogs: logs.substring(0, 2000), events, lokiAnalysis: lokiContext2 || undefined },
           });
           analysisText = analysis.analysis || '';
           await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysisText}`);
@@ -1175,7 +1254,8 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       `/securityscan — OWASP security header scan\n` +
       `/restarts — Pod restart root cause analysis\n` +
       `/efficiency — Resource usage vs requests\n` +
-      `/dorisbackup — Doris backup health check\n\n` +
+      `/dorisbackup — Doris backup health check\n` +
+      `/loki [ns] — Loki log error analysis\n\n` +
       `<b>Reports:</b>\n` +
       `/report — Daily health report (manual trigger)\n` +
       `/email &lt;name|team&gt; — Email report (zeeshan, abdul, usama, wei, elsa, team)\n` +
@@ -1406,20 +1486,34 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
       imageContext = '\n\n⚠️ IMPORTANT: The user attached screenshot(s) but vision analysis is NOT available. You CANNOT see the images. Do NOT guess or hallucinate what the images show. Instead, tell the user you cannot analyze their screenshot yet and ask them to describe the issue in text. Be honest that image analysis is not currently configured.';
     }
 
-    // Gather cluster context
-    const clusterSummary = await kube.getClusterSummary();
-    const unhealthy = await kube.getUnhealthyPods();
+    // Gather cluster context + Loki data in parallel
+    const [clusterSummary, unhealthy, lokiProdStats, lokiProdPatterns] = await Promise.all([
+      kube.getClusterSummary(),
+      kube.getUnhealthyPods(),
+      lokiClient.getLogStats('prod', '.*', '1h').catch(() => null),
+      lokiClient.getErrorPatterns('prod', '1h', 100).catch(() => []),
+    ]);
+
+    // Build Loki context for AI
+    let lokiContext = '';
+    if (lokiProdStats) {
+      const lokiTrend = await lokiClient.getErrorTrend('prod', '.*').catch(() => 'unknown' as const);
+      lokiContext = `\n\n=== LOKI LOG ANALYSIS (prod, last 1h) ===\n${lokiClient.formatStats(lokiProdStats, lokiTrend)}`;
+      if (lokiProdPatterns.length > 0) {
+        lokiContext += `\n\nTop Error Patterns:\n${lokiClient.formatPatterns(lokiProdPatterns).substring(0, 1000)}`;
+      }
+    }
 
     // Get conversation history for this user (gives AI context of previous messages)
     const conversationContext = teamsClient.getConversationContext(userName);
 
-    // Ask AI to analyze the user's report against cluster state
+    // Ask AI to analyze the user's report against cluster state + logs
     const analysis = await bedrock.analyze({
       type: 'user_report',
       message: `A user reported via Teams: "${userMessage}". Diagnose this issue.
         If you can identify a specific pod or service that's affected, say so.
         If an action (restart, scale) would fix it, suggest it clearly.
-        Keep your response concise and user-friendly.${imageContext}
+        Keep your response concise and user-friendly.${imageContext}${lokiContext}
         ${conversationContext ? `\nIMPORTANT — This user has prior conversation context. Read it carefully. If the user is referring to a previous issue or asking a follow-up (e.g. "resubmit", "what about", "same issue", "try again"), use the history to understand what they mean. Do NOT treat follow-ups as new issues.\n\n${conversationContext}` : ''}`,
       context: {
         clusterSummary,
@@ -1449,12 +1543,17 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
           `[BLUE.Y] New report from ${userName} (Teams):\n\n"${userMessage}"\n\nDiagnosis: ${analysis.analysis}`);
         logger.info(`[Teams] Jira duplicate found: ${existing.key}, added comment`);
       } else {
-        // Create new ticket
+        // Create new ticket (include Loki data if available)
+        const lokiStatsStr = lokiProdStats ? lokiClient.formatStats(lokiProdStats, await lokiClient.getErrorTrend('prod', '.*').catch(() => 'unknown' as const)) : '';
+        const lokiPatternsStr = lokiProdPatterns.length > 0 ? lokiClient.formatPatterns(lokiProdPatterns) : '';
         const jiraTicket = await jiraClient.createIncidentTicket({
           summary: `[Teams] ${userName}: ${userMessage.substring(0, 80)}`,
           description: `Reported by: ${userName} (via Microsoft Teams)\n\nOriginal message: "${userMessage}"`,
           analysis: analysis.analysis,
           severity: analysis.requiresAction ? 'critical' : undefined,
+          lokiStats: lokiStatsStr,
+          lokiPatterns: lokiPatternsStr,
+          lokiTrend: lokiProdStats ? await lokiClient.getErrorTrend('prod', '.*').catch(() => 'unknown') : undefined,
         });
         if (jiraTicket) {
           jiraKey = jiraTicket.key;
@@ -1571,12 +1670,14 @@ async function generateDailyReport(): Promise<void> {
   const now = new Date().toLocaleDateString('en-SG', { timeZone: 'Asia/Singapore', weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
 
   try {
-    // Gather all data in parallel
-    const [clusterSummary, smokeResults, restarts, incidents] = await Promise.all([
+    // Gather all data in parallel (including Loki)
+    const [clusterSummary, smokeResults, restarts, incidents, lokiProdReport, lokiDorisReport] = await Promise.all([
       kube.getClusterSummary(),
       qaClient.smokeTest(),
       kube.getRecentlyRestartedPods(),
       Promise.resolve(scheduler.getIncidentLog()),
+      lokiClient.getLogStats('prod', '.*', '24h').catch(() => null),
+      lokiClient.getLogStats('doris', '.*', '24h').catch(() => null),
     ]);
 
     const healthyServices = smokeResults.filter((r) => r.healthy).length;
@@ -1617,6 +1718,19 @@ async function generateDailyReport(): Promise<void> {
       tgMsg += `\n🚨 <b>Incidents (since last restart):</b> ${incidents.length}\n`;
       for (const inc of incidents.slice(-3)) {
         tgMsg += `• ${inc.namespace}/${inc.pod} — ${inc.status}\n`;
+      }
+    }
+
+    // Loki log summary
+    if (lokiProdReport || lokiDorisReport) {
+      tgMsg += `\n📊 <b>Log Health (24h):</b>\n`;
+      if (lokiProdReport) {
+        const errIcon = lokiProdReport.errorRate > 5 ? '🔴' : lokiProdReport.errorRate > 1 ? '🟡' : '🟢';
+        tgMsg += `${errIcon} prod — ${lokiProdReport.totalLines.toLocaleString()} lines, ${lokiProdReport.errorLines} errors (${lokiProdReport.errorRate.toFixed(1)}%), ${lokiProdReport.warnLines} warns\n`;
+      }
+      if (lokiDorisReport) {
+        const errIcon = lokiDorisReport.errorRate > 5 ? '🔴' : lokiDorisReport.errorRate > 1 ? '🟡' : '🟢';
+        tgMsg += `${errIcon} doris — ${lokiDorisReport.totalLines.toLocaleString()} lines, ${lokiDorisReport.errorLines} errors (${lokiDorisReport.errorRate.toFixed(1)}%), ${lokiDorisReport.warnLines} warns\n`;
       }
     }
 

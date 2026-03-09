@@ -71,6 +71,11 @@ export const config = {
     { name: 'WordPress', url: 'https://www.blueonion.today', expect: 200 },
   ],
 
+  // Loki (log aggregation)
+  loki: {
+    baseUrl: process.env.LOKI_URL || 'http://loki.monitoring.svc.cluster.local:3100',
+  },
+
   // Safety
   safety: {
     maxActionsPerHour: parseInt(process.env.MAX_ACTIONS_PER_HOUR || '5', 10),

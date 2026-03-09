@@ -98,6 +98,10 @@ export class JiraClient {
     events?: string;
     description?: string;
     severity?: string;
+    lokiErrorLogs?: string;
+    lokiStats?: string;
+    lokiPatterns?: string;
+    lokiTrend?: string;
   }): Promise<JiraTicket | null> {
     try {
       const adfContent = this.buildAdfDescription(incident);
@@ -196,6 +200,10 @@ export class JiraClient {
     logs?: string;
     events?: string;
     description?: string;
+    lokiErrorLogs?: string;
+    lokiStats?: string;
+    lokiPatterns?: string;
+    lokiTrend?: string;
   }): AdfNode[] {
     const content: AdfNode[] = [];
 
@@ -248,6 +256,28 @@ export class JiraClient {
     if (incident.events && incident.events.trim() && incident.events !== 'No recent events found.') {
       content.push(heading(3, 'Kubernetes Events'));
       content.push(codeBlock(incident.events.substring(0, 2000), 'text'));
+    }
+
+    // Loki Log Analysis
+    if (incident.lokiStats || incident.lokiPatterns || incident.lokiErrorLogs) {
+      content.push(divider());
+      content.push(heading(2, 'Log Analysis (Loki)'));
+
+      if (incident.lokiStats) {
+        content.push(panel(incident.lokiTrend === 'increasing' ? 'warning' : 'info',
+          paragraph(text(incident.lokiStats)),
+        ));
+      }
+
+      if (incident.lokiPatterns) {
+        content.push(heading(3, 'Top Error Patterns'));
+        content.push(codeBlock(incident.lokiPatterns, 'text'));
+      }
+
+      if (incident.lokiErrorLogs) {
+        content.push(heading(3, 'Recent Error Logs'));
+        content.push(codeBlock(incident.lokiErrorLogs.substring(0, 3000), 'text'));
+      }
     }
 
     // Reproduction steps for developers
