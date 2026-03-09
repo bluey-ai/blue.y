@@ -72,6 +72,9 @@ let lastIncident: {
 // Wire up auto-diagnose → lastIncident
 scheduler.onIncident = (incident) => { lastIncident = incident; };
 
+// Track last bot response for "email this" context
+let lastBotResponse: string | null = null;
+
 // Handle incoming Telegram commands
 async function handleTelegramCommand(text: string, chatId: string): Promise<void> {
   const cmd = text.toLowerCase().trim();
@@ -97,7 +100,8 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
   if (cmd === '/status' || cmd === 'status') {
     const summary = await kube.getClusterSummary();
     const schedulerStatus = await scheduler.getStatus();
-    await telegram.send(`${summary}\n\n${schedulerStatus}`);
+    lastBotResponse = `${summary}\n\n${schedulerStatus}`;
+    await telegram.send(lastBotResponse);
     return;
   }
 
@@ -107,7 +111,8 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     const summary = results
       .map((r) => `${r.healthy ? '✅' : '❌'} ${r.monitor}: ${r.issues.length} issues`)
       .join('\n');
-    await telegram.send(summary || '✅ All checks passed');
+    lastBotResponse = summary || '✅ All checks passed';
+    await telegram.send(lastBotResponse);
     return;
   }
 
@@ -233,6 +238,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
         },
       });
       lastIncident.analysis = analysis.analysis;
+      lastBotResponse = analysis.analysis;
       await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysis.analysis}`);
       await telegram.send(`💡 Use <code>/email user@blueonion.today</code> or <code>/jira</code> to share this report.`);
       if (analysis.suggestedAction) {
@@ -422,11 +428,12 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       return;
     }
     if (!lastIncident) {
-      // No prior /diagnose — create a minimal incident from the message context
+      // No prior /diagnose — use the last bot response as the report content
       lastIncident = {
-        monitor: 'Manual Report',
-        status: 'Alert',
-        description: text,
+        monitor: 'BLUE.Y Report',
+        status: 'Info',
+        analysis: lastBotResponse || 'No recent analysis available.',
+        description: lastBotResponse ? undefined : text,
         timestamp: new Date().toISOString(),
       };
     }
@@ -556,6 +563,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       },
     });
 
+    lastBotResponse = response.analysis;
     await telegram.send(response.analysis);
 
     if (response.requiresAction && response.suggestedCommand) {
