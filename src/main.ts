@@ -6,6 +6,8 @@ import { MonitorScheduler } from './scheduler';
 import { BedrockClient } from './clients/bedrock';
 import { TelegramClient } from './clients/telegram';
 import { KubeClient } from './clients/kube';
+import { EmailClient } from './clients/email';
+import { JiraClient } from './clients/jira';
 import { PodMonitor } from './monitors/pods';
 import { NodeMonitor } from './monitors/nodes';
 import { CertMonitor } from './monitors/certs';
@@ -38,6 +40,8 @@ app.get('/audit', (_req, res) => {
 const bedrock = new BedrockClient();
 const telegram = new TelegramClient();
 const kube = new KubeClient();
+const emailClient = new EmailClient();
+const jiraClient = new JiraClient();
 
 // Initialize monitors
 const monitors = [
@@ -51,6 +55,19 @@ const scheduler = new MonitorScheduler(monitors, telegram, bedrock);
 
 // Pending action confirmation
 let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number } | null = null;
+
+// Last incident context (for email/jira commands)
+let lastIncident: {
+  monitor?: string;
+  pod?: string;
+  namespace?: string;
+  status?: string;
+  analysis?: string;
+  logs?: string;
+  events?: string;
+  description?: string;
+  timestamp?: string;
+} | null = null;
 
 // Handle incoming Telegram commands
 async function handleTelegramCommand(text: string, chatId: string): Promise<void> {
@@ -189,7 +206,18 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       await telegram.send(`📢 <b>Events:</b>\n${events}`);
     }
 
-    // Now ask Bedrock to analyze everything
+    // Save incident context for email/jira
+    lastIncident = {
+      pod: found.pod.name,
+      namespace: found.namespace,
+      status: found.pod.status,
+      description: desc,
+      logs: logs,
+      events: events,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Now ask AI to analyze everything
     try {
       const analysis = await bedrock.analyze({
         type: 'incident',
@@ -201,7 +229,9 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           events: events,
         },
       });
+      lastIncident.analysis = analysis.analysis;
       await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysis.analysis}`);
+      await telegram.send(`💡 Use <code>/email user@blueonion.today</code> or <code>/jira</code> to share this report.`);
       if (analysis.suggestedAction) {
         await telegram.send(`💡 <b>Suggested:</b> ${analysis.suggestedAction}\n\nReply /yes to execute.`);
         pendingAction = {
@@ -245,6 +275,54 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     }
     pendingAction = { action: 'scale', target: found.deployment, namespace: found.namespace, detail: String(replicas), timestamp: Date.now() };
     await telegram.send(`⚠️ Scale <code>${found.deployment}</code> in <b>${found.namespace}</b> to ${replicas} replicas?\n\nReply /yes to confirm or /no to cancel.`);
+    return;
+  }
+
+  // --- Email incident report ---
+  if (cmd.startsWith('/email ') || cmd.match(/^email\s+(this\s+)?(incident\s+)?(report\s+)?to\s+/i)) {
+    // Extract email address(es) from command
+    const emailMatch = text.match(/[\w.-]+@[\w.-]+\.\w+/g);
+    if (!emailMatch || emailMatch.length === 0) {
+      await telegram.send('Usage: /email user@blueonion.today [user2@blueonion.today ...]');
+      return;
+    }
+    if (!lastIncident) {
+      await telegram.send('❌ No recent incident to email. Run /diagnose first.');
+      return;
+    }
+
+    await telegram.send(`📧 Sending incident report to ${emailMatch.join(', ')}...`);
+    const { subject, body } = emailClient.formatIncidentEmail(lastIncident);
+    const ok = await emailClient.sendIncidentReport(emailMatch, subject, body);
+    await telegram.send(ok
+      ? `✅ Incident report sent to ${emailMatch.join(', ')}`
+      : `❌ Failed to send email. Check SES permissions.`);
+    return;
+  }
+
+  // --- Create Jira ticket ---
+  if (cmd === '/jira' || cmd.match(/^(create\s+)?(a\s+)?jira\s+(ticket|issue)/i)) {
+    if (!lastIncident) {
+      await telegram.send('❌ No recent incident to create ticket for. Run /diagnose first.');
+      return;
+    }
+    if (!config.jira.apiToken) {
+      await telegram.send('❌ Jira not configured. Set JIRA_EMAIL and JIRA_API_TOKEN env vars.');
+      return;
+    }
+
+    await telegram.send('🎫 Creating Jira ticket...');
+    const summary = `[BLUE.Y] ${lastIncident.pod || 'Cluster'} — ${lastIncident.status || 'Incident'}`;
+    const ticket = await jiraClient.createIncidentTicket({
+      summary,
+      ...lastIncident,
+    });
+
+    if (ticket) {
+      await telegram.send(`✅ Jira ticket created: <a href="${ticket.url}">${ticket.key}</a>`);
+    } else {
+      await telegram.send('❌ Failed to create Jira ticket. Check credentials.');
+    }
     return;
   }
 
@@ -303,10 +381,14 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       `<b>Actions:</b>\n` +
       `/restart &lt;deployment&gt; — Rolling restart\n` +
       `/scale &lt;deployment&gt; &lt;N&gt; — Scale replicas\n\n` +
+      `<b>Reports:</b>\n` +
+      `/email &lt;address&gt; — Email incident report\n` +
+      `/jira — Create Jira ticket from incident\n\n` +
       `<b>System:</b>\n` +
       `/sleep — Pause monitoring\n` +
       `/wake — Resume monitoring\n\n` +
-      `Or just ask me anything in plain English!`,
+      `Or just ask me anything in plain English!\n` +
+      `e.g. "email this incident report to syed.zeeshan@blueonion.today"`,
     );
     return;
   }

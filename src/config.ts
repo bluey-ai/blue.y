@@ -33,6 +33,14 @@ export const config = {
     certs: process.env.SCHEDULE_CERTS || '0 */6 * * *',     // every 6 hours
   },
 
+  // Jira
+  jira: {
+    baseUrl: process.env.JIRA_BASE_URL || 'https://blueonion.atlassian.net',
+    email: process.env.JIRA_EMAIL || '',
+    apiToken: process.env.JIRA_API_TOKEN || '',
+    projectKey: process.env.JIRA_PROJECT_KEY || 'HUBS',
+  },
+
   // Safety
   safety: {
     maxActionsPerHour: parseInt(process.env.MAX_ACTIONS_PER_HOUR || '5', 10),

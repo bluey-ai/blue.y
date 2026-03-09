@@ -93,6 +93,20 @@ spec:
                 secretKeyRef:
                   name: blue-y-secrets
                   key: telegram-chat-id
+            - name: JIRA_BASE_URL
+              value: "https://blueonion.atlassian.net"
+            - name: JIRA_PROJECT_KEY
+              value: "HUBS"
+            - name: JIRA_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: jira-email
+            - name: JIRA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: jira-api-token
           ports:
             - containerPort: 8000
           readinessProbe:
