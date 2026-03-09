@@ -465,6 +465,128 @@ export class KubeClient {
     }
   }
 
+  // Get pods that have recently restarted, with root cause analysis
+  async getRecentlyRestartedPods(): Promise<{
+    name: string;
+    namespace: string;
+    restarts: number;
+    lastRestartReason: string;
+    lastExitCode: number;
+    lastRestartTime: string;
+    oomKilled: boolean;
+  }[]> {
+    const results: {
+      name: string; namespace: string; restarts: number;
+      lastRestartReason: string; lastExitCode: number;
+      lastRestartTime: string; oomKilled: boolean;
+    }[] = [];
+
+    for (const ns of config.kube.namespaces) {
+      try {
+        const res = await this.coreApi.listNamespacedPod({ namespace: ns });
+        for (const pod of (res.items || [])) {
+          for (const cs of (pod.status?.containerStatuses || [])) {
+            if ((cs.restartCount || 0) > 0 && cs.lastState?.terminated) {
+              const term = cs.lastState.terminated;
+              const oomKilled = term.reason === 'OOMKilled';
+              const restartTime = term.finishedAt ? new Date(term.finishedAt).toISOString() : 'unknown';
+
+              // Only include pods restarted in last 24 hours
+              if (term.finishedAt) {
+                const hoursSinceRestart = (Date.now() - new Date(term.finishedAt).getTime()) / (1000 * 60 * 60);
+                if (hoursSinceRestart > 24) continue;
+              }
+
+              results.push({
+                name: pod.metadata?.name || 'unknown',
+                namespace: ns,
+                restarts: cs.restartCount || 0,
+                lastRestartReason: term.reason || 'Unknown',
+                lastExitCode: term.exitCode ?? -1,
+                lastRestartTime: restartTime,
+                oomKilled,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(`Failed to get restart info for ${ns}`, err);
+      }
+    }
+
+    return results.sort((a, b) => b.restarts - a.restarts);
+  }
+
+  // Get resource usage vs requests/limits for efficiency analysis
+  async getResourceEfficiency(namespace: string): Promise<{
+    name: string;
+    cpuRequest: string;
+    cpuLimit: string;
+    cpuUsage: string;
+    memRequest: string;
+    memLimit: string;
+    memUsage: string;
+    cpuEfficiency: number;
+    memEfficiency: number;
+  }[]> {
+    try {
+      const metrics = await this.getTopPods(namespace);
+      const res = await this.coreApi.listNamespacedPod({ namespace });
+      const results = [];
+
+      for (const pod of (res.items || [])) {
+        if (pod.status?.phase !== 'Running') continue;
+
+        const podName = pod.metadata?.name || '';
+        const metric = metrics.find((m) => m.name === podName);
+        if (!metric) continue;
+
+        let cpuReq = 0, cpuLim = 0, memReq = 0, memLim = 0;
+        for (const c of (pod.spec?.containers || [])) {
+          cpuReq += this.parseCpu(c.resources?.requests?.cpu);
+          cpuLim += this.parseCpu(c.resources?.limits?.cpu);
+          memReq += this.parseMem(c.resources?.requests?.memory);
+          memLim += this.parseMem(c.resources?.limits?.memory);
+        }
+
+        const cpuUsage = this.parseCpu(metric.cpu);
+        const memUsage = this.parseMem(metric.memory);
+
+        results.push({
+          name: podName,
+          cpuRequest: `${cpuReq}m`,
+          cpuLimit: `${cpuLim}m`,
+          cpuUsage: metric.cpu,
+          memRequest: `${memReq}Mi`,
+          memLimit: `${memLim}Mi`,
+          memUsage: metric.memory,
+          cpuEfficiency: cpuReq > 0 ? Math.round((cpuUsage / cpuReq) * 100) : 0,
+          memEfficiency: memReq > 0 ? Math.round((memUsage / memReq) * 100) : 0,
+        });
+      }
+
+      return results;
+    } catch (err) {
+      logger.error(`Failed to get resource efficiency for ${namespace}`, err);
+      return [];
+    }
+  }
+
+  private parseCpu(cpu?: string): number {
+    if (!cpu) return 0;
+    if (cpu.endsWith('m')) return parseInt(cpu);
+    if (cpu.endsWith('n')) return Math.round(parseInt(cpu) / 1_000_000);
+    return Math.round(parseFloat(cpu) * 1000);
+  }
+
+  private parseMem(mem?: string): number {
+    if (!mem) return 0;
+    if (mem.endsWith('Ki')) return Math.round(parseInt(mem) / 1024);
+    if (mem.endsWith('Mi')) return parseInt(mem);
+    if (mem.endsWith('Gi')) return parseInt(mem) * 1024;
+    return Math.round(parseInt(mem) / (1024 * 1024));
+  }
+
   private getAge(creationTimestamp?: Date): string {
     if (!creationTimestamp) return 'unknown';
     const diff = Date.now() - new Date(creationTimestamp).getTime();
