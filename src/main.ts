@@ -1224,7 +1224,8 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
       const analyses = [];
       for (const att of ticket.attachments) {
         const result = await visionClient.analyzeImageUrl(att.contentUrl);
-        if (result.extractedText || result.description) {
+        // Only include successful analyses (not download failures or errors)
+        if (result.extractedText || (result.description && !result.description.startsWith('Could not download') && !result.description.startsWith('Vision analysis failed'))) {
           analyses.push(result);
         }
       }
@@ -1238,9 +1239,12 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
           if (a.errorScreenshot) imageContext += `- ERROR DETECTED: ${a.detectedIssue || 'yes'}\n`;
         }
         ticket.imageAnalysis = analyses.map((a) => a.detectedIssue || a.description).join('; ');
+      } else {
+        // Vision was enabled but all image analyses failed (download error, API error, etc.)
+        imageContext = '\n\n⚠️ IMPORTANT: The user attached screenshot(s) but image analysis FAILED (could not download or process the images). You CANNOT see the images. Do NOT guess what the images show. Ask the user to describe the issue in text instead.';
       }
     } else if (ticket.attachments && ticket.attachments.length > 0 && !visionClient.isEnabled()) {
-      imageContext = '\n\n[User attached image(s) but vision analysis is not configured]';
+      imageContext = '\n\n⚠️ IMPORTANT: The user attached screenshot(s) but vision analysis is NOT available. You CANNOT see the images. Do NOT guess or hallucinate what the images show. Instead, tell the user you cannot analyze their screenshot yet and ask them to describe the issue in text. Be honest that image analysis is not currently configured.';
     }
 
     // Gather cluster context
