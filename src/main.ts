@@ -279,7 +279,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
   }
 
   // --- Email incident report ---
-  if (cmd.startsWith('/email ') || cmd.match(/^email\s+(this\s+)?(incident\s+)?(report\s+)?to\s+/i)) {
+  if (cmd.startsWith('/email ') || text.match(/email\s+(this\s+)?(incident\s+)?(report\s+)?to\s+/i) || text.match(/send\s+(an?\s+)?(email|report|incident)\s+/i)) {
     // Extract email address(es) from command
     const emailMatch = text.match(/[\w.-]+@[\w.-]+\.\w+/g);
     if (!emailMatch || emailMatch.length === 0) {
@@ -287,8 +287,13 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       return;
     }
     if (!lastIncident) {
-      await telegram.send('❌ No recent incident to email. Run /diagnose first.');
-      return;
+      // No prior /diagnose — create a minimal incident from the message context
+      lastIncident = {
+        monitor: 'Manual Report',
+        status: 'Alert',
+        description: text,
+        timestamp: new Date().toISOString(),
+      };
     }
 
     await telegram.send(`📧 Sending incident report to ${emailMatch.join(', ')}...`);
@@ -301,7 +306,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
   }
 
   // --- Create Jira ticket ---
-  if (cmd === '/jira' || cmd.match(/^(create\s+)?(a\s+)?jira\s+(ticket|issue)/i)) {
+  if (cmd === '/jira' || text.match(/(create|make|open|raise)\s+(a\s+)?jira\s+(ticket|issue)/i) || text.match(/jira\s+(ticket|issue)/i)) {
     if (!lastIncident) {
       await telegram.send('❌ No recent incident to create ticket for. Run /diagnose first.');
       return;
