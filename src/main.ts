@@ -11,6 +11,7 @@ import { JiraClient } from './clients/jira';
 import { PodMonitor } from './monitors/pods';
 import { NodeMonitor } from './monitors/nodes';
 import { CertMonitor } from './monitors/certs';
+import { HPAMonitor } from './monitors/hpa';
 
 const app = express();
 app.use(express.json());
@@ -48,6 +49,7 @@ const monitors = [
   new PodMonitor(kube, bedrock),
   new NodeMonitor(kube, bedrock),
   new CertMonitor(kube, bedrock),
+  new HPAMonitor(kube),
 ];
 
 // Initialize scheduler (pass kube for auto-diagnose)
@@ -323,11 +325,65 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     }
     const top = metrics.slice(0, 15);
     let msg = `📊 <b>Top Pods by Memory: ${ns}</b>\n\n`;
-    top.forEach((p, i) => {
+    top.forEach((p) => {
       const memMi = parseInt(p.memory);
       const bar = memMi > 2000 ? '🔴' : memMi > 500 ? '🟡' : '🟢';
       msg += `${bar} <code>${p.name.substring(0, 40)}</code>\n   CPU: ${p.cpu} | Mem: ${p.memory}\n`;
     });
+
+    // Include HPA summary
+    const hpas = await kube.getHPAs(ns);
+    if (hpas.length > 0) {
+      msg += '\n<b>HPA Autoscalers:</b>\n';
+      for (const hpa of hpas) {
+        const atMax = hpa.currentReplicas >= hpa.maxReplicas;
+        const icon = atMax ? '🔴' : '🟢';
+        const metricStr = hpa.metrics.map((m) => `${m.name}: ${m.current}%/${m.target}%`).join(', ');
+        msg += `${icon} <code>${hpa.name}</code> — ${hpa.currentReplicas}/${hpa.maxReplicas} replicas${metricStr ? ` | ${metricStr}` : ''}\n`;
+      }
+    }
+
+    await telegram.send(msg);
+    return;
+  }
+
+  // --- HPA status ---
+  if (cmd === '/hpa' || cmd.startsWith('/hpa ') || cmd.match(/^(show|check|what).*(hpa|autoscal)/i)) {
+    const ns = cmd.startsWith('/hpa ') ? cmd.replace('/hpa ', '').trim() : '';
+    const namespaces = ns ? [ns] : config.kube.namespaces;
+    await telegram.send('📊 Fetching HPA status...');
+
+    let msg = '📊 <b>HPA (Horizontal Pod Autoscaler)</b>\n\n';
+    let totalHPAs = 0;
+
+    for (const namespace of namespaces) {
+      const hpas = await kube.getHPAs(namespace);
+      if (hpas.length === 0) continue;
+      totalHPAs += hpas.length;
+
+      msg += `<b>${namespace}:</b>\n`;
+      for (const hpa of hpas) {
+        const atMax = hpa.currentReplicas >= hpa.maxReplicas;
+        const icon = atMax ? '🔴' : '🟢';
+        msg += `${icon} <code>${hpa.name}</code>\n`;
+        msg += `   Target: ${hpa.targetRef} | Replicas: ${hpa.currentReplicas} (${hpa.minReplicas}-${hpa.maxReplicas})\n`;
+
+        for (const m of hpa.metrics) {
+          const bar = m.current >= 85 ? '🔴' : m.current >= 70 ? '🟡' : '🟢';
+          msg += `   ${bar} ${m.name}: ${m.current}% / ${m.target}% target\n`;
+        }
+
+        if (atMax) {
+          msg += `   ⚠️ At max replicas!\n`;
+        }
+        msg += '\n';
+      }
+    }
+
+    if (totalHPAs === 0) {
+      msg += 'No HPAs found in monitored namespaces.';
+    }
+
     await telegram.send(msg);
     return;
   }
@@ -520,6 +576,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       `/check — Run all monitors now\n` +
       `/nodes — Node resources\n` +
       `/resources [ns] — Pod CPU/memory usage\n` +
+      `/hpa [ns] — HPA autoscaler status\n` +
       `/doris — Doris cluster health\n\n` +
       `<b>Pods & Deployments:</b>\n` +
       `/logs &lt;pod&gt; — Tail pod logs\n` +
@@ -608,6 +665,7 @@ async function startPolling(): Promise<void> {
         { command: 'check', description: 'Run all monitors now' },
         { command: 'nodes', description: 'Node resources' },
         { command: 'resources', description: 'Pod CPU/memory usage' },
+        { command: 'hpa', description: 'HPA autoscaler status' },
         { command: 'doris', description: 'Doris cluster health' },
         { command: 'deployments', description: 'List deployments' },
         { command: 'incidents', description: 'Incident timeline' },
