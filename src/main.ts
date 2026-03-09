@@ -1000,36 +1000,58 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
       // Get the Teams ticket for context
       const teamsTicket = teamsTicketId ? teamsClient.getTicket(teamsTicketId) : null;
-      const summary = teamsTicket
-        ? `[Teams] ${teamsTicket.userName}: ${teamsTicket.userMessage.substring(0, 80)}`
-        : `[BLUE.Y] ${target || 'Issue'} — needs investigation`;
-      const description = teamsTicket
-        ? `Reported by: ${teamsTicket.userName} (via Microsoft Teams)\n\nOriginal message: "${teamsTicket.userMessage}"\n\nDiagnosis: ${teamsTicket.diagnosis || lastBotResponse || 'Pending investigation'}\n\nSuggested action was declined by ops (${detail || 'unknown action'}).`
-        : `Reported via BLUE.Y monitoring.\n\nTarget: ${namespace}/${target}\n\nSuggested action (${detail}) was declined by ops.`;
+      const issueText = teamsTicket?.userMessage || target || 'issue';
 
-      const jiraTicket = await jiraClient.createIncidentTicket({
-        summary,
-        description,
-        analysis: teamsTicket?.diagnosis || lastBotResponse || '',
-      });
+      // Dedup: check for existing ticket with similar keywords
+      const keywords = issueText.replace(/[^a-zA-Z0-9 ]/g, '').split(/\s+/).slice(0, 5).join(' ');
+      const existing = await jiraClient.findDuplicate(keywords);
 
-      if (jiraTicket) {
-        await telegram.send(`✅ Jira ticket created: <a href="${jiraTicket.url}">${jiraTicket.key}</a>`);
+      if (existing) {
+        // Duplicate found — add comment instead of creating new ticket
+        await jiraClient.addComment(existing.key,
+          `[BLUE.Y] Follow-up report (action declined by ops):\n\n"${issueText}"\n\nDiagnosis: ${teamsTicket?.diagnosis || lastBotResponse || 'N/A'}`);
+        await telegram.send(`🔄 Existing ticket found: <a href="${existing.url}">${existing.key}</a> — added comment instead of creating duplicate.`);
 
-        // Send Jira details back to the Teams user
         if (teamsTicketId) {
           const card = TeamsCards.diagnosis(
-            teamsTicket?.diagnosis || 'Your issue has been logged and the ops team will investigate.',
+            teamsTicket?.diagnosis || 'Your issue is being tracked.',
             'escalated', teamsTicketId,
-            { jiraUrl: jiraTicket.url, jiraKey: jiraTicket.key },
+            { jiraUrl: existing.url, jiraKey: existing.key },
           );
           await teamsClient.replyWithCard(teamsTicketId, card);
         }
       } else {
-        await telegram.send('❌ Failed to create Jira ticket. Check credentials.');
-        if (teamsTicketId) {
-          await teamsClient.updateTicket(teamsTicketId, 'escalated',
-            'The ops team is tracking your issue and will follow up directly.');
+        // No duplicate — create new ticket
+        const summary = teamsTicket
+          ? `[Teams] ${teamsTicket.userName}: ${teamsTicket.userMessage.substring(0, 80)}`
+          : `[BLUE.Y] ${target || 'Issue'} — needs investigation`;
+        const description = teamsTicket
+          ? `Reported by: ${teamsTicket.userName} (via Microsoft Teams)\n\nOriginal message: "${teamsTicket.userMessage}"\n\nDiagnosis: ${teamsTicket.diagnosis || lastBotResponse || 'Pending investigation'}\n\nSuggested action was declined by ops (${detail || 'unknown action'}).`
+          : `Reported via BLUE.Y monitoring.\n\nTarget: ${namespace}/${target}\n\nSuggested action (${detail}) was declined by ops.`;
+
+        const jiraTicket = await jiraClient.createIncidentTicket({
+          summary,
+          description,
+          analysis: teamsTicket?.diagnosis || lastBotResponse || '',
+        });
+
+        if (jiraTicket) {
+          await telegram.send(`✅ Jira ticket created: <a href="${jiraTicket.url}">${jiraTicket.key}</a>`);
+
+          if (teamsTicketId) {
+            const card = TeamsCards.diagnosis(
+              teamsTicket?.diagnosis || 'Your issue has been logged and the ops team will investigate.',
+              'escalated', teamsTicketId,
+              { jiraUrl: jiraTicket.url, jiraKey: jiraTicket.key },
+            );
+            await teamsClient.replyWithCard(teamsTicketId, card);
+          }
+        } else {
+          await telegram.send('❌ Failed to create Jira ticket. Check credentials.');
+          if (teamsTicketId) {
+            await teamsClient.updateTicket(teamsTicketId, 'escalated',
+              'The ops team is tracking your issue and will follow up directly.');
+          }
         }
       }
     } else {
@@ -1065,32 +1087,57 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           const t = teamsClient.getTicket(teamsTicketId);
           if (t) t.status = 'escalated';
         }
+      } else if (config.jira.apiToken) {
+        // No Jira ticket yet — create one automatically
+        const teamsTicket = teamsTicketId ? teamsClient.getTicket(teamsTicketId) : null;
+        const issueText = teamsTicket?.userMessage || target || 'issue';
+
+        // Dedup check
+        const keywords = issueText.replace(/[^a-zA-Z0-9 ]/g, '').split(/\s+/).slice(0, 5).join(' ');
+        const existing = await jiraClient.findDuplicate(keywords);
+
+        if (existing) {
+          await jiraClient.addComment(existing.key,
+            `[BLUE.Y] Action declined by ops. Issue escalated for manual handling.\n\nOriginal: "${issueText}"`);
+          await telegram.send(
+            `👌 Action cancelled.\n\n` +
+            `🎫 Existing Jira ticket: <a href="${existing.url}">${existing.key}</a> — updated.`,
+          );
+          if (teamsTicketId) {
+            const card = TeamsCards.diagnosis(
+              'The ops team is handling your issue. A Jira ticket is tracking this.',
+              'escalated', teamsTicketId, { jiraUrl: existing.url, jiraKey: existing.key });
+            await teamsClient.replyWithCard(teamsTicketId, card);
+          }
+        } else {
+          const summary = teamsTicket
+            ? `[Teams] ${teamsTicket.userName}: ${issueText.substring(0, 80)}`
+            : `[BLUE.Y] ${target || 'Issue'} — needs investigation`;
+          const jiraTicket = await jiraClient.createIncidentTicket({
+            summary,
+            description: `Action (${declinedAction.action}) was declined by ops. Escalated for manual handling.\n\nOriginal: "${issueText}"`,
+            analysis: teamsTicket?.diagnosis || lastBotResponse || '',
+          });
+          if (jiraTicket) {
+            await telegram.send(
+              `👌 Action cancelled.\n\n` +
+              `🎫 Jira ticket created: <a href="${jiraTicket.url}">${jiraTicket.key}</a>`,
+            );
+            if (teamsTicketId) {
+              const card = TeamsCards.diagnosis(
+                'The ops team is handling your issue. A Jira ticket has been created to track it.',
+                'escalated', teamsTicketId, { jiraUrl: jiraTicket.url, jiraKey: jiraTicket.key });
+              await teamsClient.replyWithCard(teamsTicketId, card);
+            }
+          } else {
+            await telegram.send('👌 Action cancelled.\n\n⚠️ Failed to create Jira ticket.');
+          }
+        }
       } else {
-        // No Jira ticket yet — offer to create one
-        await telegram.send(
-          `👌 Action cancelled.\n\n` +
-          `🎫 Create a Jira ticket for this issue?\n` +
-          `Reply /yes to create or /no to skip.`,
-        );
-
-        // Set up a new pending action for Jira creation
-        pendingAction = {
-          action: 'create_jira',
-          target: target || '',
-          namespace: namespace || 'prod',
-          detail: declinedAction.action, // remember what was declined
-          timestamp: Date.now(),
-          teamsTicketId,
-        };
-
-        // Update Teams with "being handled" status
+        await telegram.send('👌 Action cancelled.');
         if (teamsTicketId) {
-          const card = TeamsCards.statusUpdate('escalated',
-            'The ops team is reviewing your issue and will follow up shortly.',
-            teamsTicketId);
-          await teamsClient.replyWithCard(teamsTicketId, card);
-          const t = teamsClient.getTicket(teamsTicketId);
-          if (t) t.status = 'escalated';
+          await teamsClient.updateTicket(teamsTicketId, 'escalated',
+            'The ops team is handling your issue and will follow up directly.');
         }
       }
     }
