@@ -412,7 +412,9 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
   }
 
   // --- Email incident report ---
-  if (cmd.startsWith('/email ') || text.match(/email\s+(this\s+)?(incident\s+)?(report\s+)?to\s+/i) || text.match(/send\s+(an?\s+)?(email|report|incident)\s+/i)) {
+  // Match: any message containing "email" + an email address
+  const hasEmailAddress = text.match(/[\w.-]+@[\w.-]+\.\w+/);
+  if (cmd.startsWith('/email ') || (hasEmailAddress && cmd.match(/\b(email|send|forward|share)\b/i))) {
     // Extract email address(es) from command
     const emailMatch = text.match(/[\w.-]+@[\w.-]+\.\w+/g);
     if (!emailMatch || emailMatch.length === 0) {
