@@ -139,23 +139,40 @@ export class JiraClient {
 
   async findDuplicate(keywords: string): Promise<JiraTicket | null> {
     try {
-      const jql = `project = ${config.jira.projectKey} AND labels = "blue-y" AND status NOT IN (Done, Closed, Resolved) AND created >= -24h AND summary ~ "${keywords.replace(/"/g, '\\"').substring(0, 100)}" ORDER BY created DESC`;
-      const response = await axios.get(
+      // Try keyword match first
+      const escaped = keywords.replace(/"/g, '\\"').substring(0, 100);
+      const jqlKeyword = `project = ${config.jira.projectKey} AND labels = "blue-y" AND status NOT IN (Done, Closed, Resolved) AND created >= -24h AND summary ~ "${escaped}" ORDER BY created DESC`;
+      const res1 = await axios.get(
         `${this.baseUrl}/rest/api/3/search`,
         {
-          params: { jql, maxResults: 1, fields: 'key,summary' },
-          headers: {
-            'Authorization': `Basic ${this.auth}`,
-            'Content-Type': 'application/json',
-          },
+          params: { jql: jqlKeyword, maxResults: 1, fields: 'key,summary' },
+          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
           timeout: 10000,
         },
-      );
+      ).catch(() => null);
 
-      if (response.data.total > 0) {
-        const issue = response.data.issues[0];
+      if (res1 && res1.data?.total > 0) {
+        const issue = res1.data.issues[0];
         return { key: issue.key, url: `${this.baseUrl}/browse/${issue.key}` };
       }
+
+      // Fallback: any blue-y ticket from last 2 hours (likely same incident)
+      const jqlRecent = `project = ${config.jira.projectKey} AND labels = "blue-y" AND labels = "auto-created" AND status NOT IN (Done, Closed, Resolved) AND created >= -2h ORDER BY created DESC`;
+      const res2 = await axios.get(
+        `${this.baseUrl}/rest/api/3/search`,
+        {
+          params: { jql: jqlRecent, maxResults: 1, fields: 'key,summary' },
+          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+          timeout: 10000,
+        },
+      ).catch(() => null);
+
+      if (res2 && res2.data?.total > 0) {
+        const issue = res2.data.issues[0];
+        logger.info(`[Jira] Dedup fallback: found recent ticket ${issue.key}`);
+        return { key: issue.key, url: `${this.baseUrl}/browse/${issue.key}` };
+      }
+
       return null;
     } catch (err) {
       logger.warn(`Jira duplicate search failed: ${err}`);

@@ -67,6 +67,17 @@ const scheduler = new MonitorScheduler(monitors, telegram, bedrock, kube, lokiCl
 // Pending action confirmation (teamsTicketId links back to Teams user for cross-channel flow)
 let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number; teamsTicketId?: string; jiraKey?: string } | null = null;
 
+// Extract meaningful keywords for Jira dedup (strips filler words)
+const FILLER_WORDS = new Set(['a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'and', 'but', 'or', 'nor', 'not', 'so', 'yet', 'both', 'either', 'neither', 'each', 'every', 'all', 'any', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'only', 'own', 'same', 'than', 'too', 'very', 'just', 'because', 'if', 'when', 'where', 'how', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'she', 'it', 'its', 'they', 'them', 'their', 'hi', 'hello', 'hey', 'please', 'thanks', 'again', 'also', 'still', 'already', 'issue', 'problem', 'help', 'need', 'want', 'like', 'get', 'got', 'getting']);
+function extractKeywords(text: string): string {
+  return text
+    .replace(/[^a-zA-Z0-9 ]/g, '')
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !FILLER_WORDS.has(w.toLowerCase()))
+    .slice(0, 5)
+    .join(' ');
+}
+
 // Estimated resolution times by action + target pattern
 function getETA(action: string, target: string): { seconds: number; label: string } {
   if (action === 'restart') {
@@ -1086,7 +1097,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       const issueText = teamsTicket?.userMessage || target || 'issue';
 
       // Dedup: check for existing ticket with similar keywords
-      const keywords = issueText.replace(/[^a-zA-Z0-9 ]/g, '').split(/\s+/).slice(0, 5).join(' ');
+      const keywords = extractKeywords(issueText);
       const existing = await jiraClient.findDuplicate(keywords);
 
       if (existing) {
@@ -1176,7 +1187,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
         const issueText = teamsTicket?.userMessage || target || 'issue';
 
         // Dedup check
-        const keywords = issueText.replace(/[^a-zA-Z0-9 ]/g, '').split(/\s+/).slice(0, 5).join(' ');
+        const keywords = extractKeywords(issueText);
         const existing = await jiraClient.findDuplicate(keywords);
 
         if (existing) {
@@ -1532,7 +1543,7 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
     let jiraUrl = '';
     if (config.jira.apiToken) {
       // Extract key words for dedup search (first 5 significant words)
-      const keywords = userMessage.replace(/[^a-zA-Z0-9 ]/g, '').split(/\s+/).slice(0, 5).join(' ');
+      const keywords = extractKeywords(userMessage);
       const existing = await jiraClient.findDuplicate(keywords);
 
       if (existing) {
