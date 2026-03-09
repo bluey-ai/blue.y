@@ -113,6 +113,8 @@ spec:
                   name: blue-y-secrets
                   key: teams-app-password
                   optional: true
+            - name: TEAMS_TENANT_ID
+              value: "7ef59ba4-e80a-48fd-841e-72fe93f5f3f4"
             - name: JIRA_BASE_URL
               value: "https://blueonion.atlassian.net"
             - name: JIRA_PROJECT_KEY
