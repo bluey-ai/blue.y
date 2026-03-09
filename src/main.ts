@@ -98,7 +98,14 @@ async function monitorActionOutcome(opts: {
       if (detail && detail.readyReplicas >= detail.replicas && detail.updatedReplicas >= detail.replicas) {
         // Healthy!
         const elapsed = Math.round((Date.now() - startTime) / 1000);
-        const msg = `✅ <b>Verified:</b> <code>${target}</code> is healthy after ${action}. All ${detail.replicas} replica(s) ready. (${elapsed}s elapsed)`;
+        const msg =
+          `━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `✅ <b>VERIFIED HEALTHY</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `📦 <code>${target}</code>\n` +
+          `🔄 Action: ${action}\n` +
+          `📊 Replicas: ${detail.readyReplicas}/${detail.replicas} ready\n` +
+          `⏱️ Resolved in: <b>${elapsed}s</b>`;
         await telegram.send(msg);
 
         if (teamsTicketId) {
@@ -115,7 +122,14 @@ async function monitorActionOutcome(opts: {
       // Not ready yet — check if we've exceeded timeout
       if (Date.now() - startTime > timeout) {
         const readyInfo = detail ? `${detail.readyReplicas}/${detail.replicas} ready` : 'status unknown';
-        const msg = `⚠️ <b>Timeout:</b> <code>${target}</code> still not fully healthy after ${action}. ${readyInfo}. May need manual investigation.`;
+        const msg =
+          `━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `⚠️ <b>RECOVERY TIMEOUT</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `📦 <code>${target}</code>\n` +
+          `🔄 Action: ${action}\n` +
+          `📊 Status: ${readyInfo}\n\n` +
+          `🔍 Manual investigation may be needed`;
         await telegram.send(msg);
 
         if (teamsTicketId) {
@@ -653,10 +667,17 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
     if (action === 'restart') {
       const eta = getETA('restart', target);
-      await telegram.send(`🔄 Restarting <code>${target}</code>...\n⏱️ <b>ETA:</b> ${eta.label}`);
+      await telegram.send(
+        `⚡ <b>EXECUTING ACTION</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🔄 <b>Action:</b> Restart\n` +
+        `📦 <b>Target:</b> <code>${target}</code>\n` +
+        `🏷️ <b>Namespace:</b> ${namespace}\n` +
+        `⏱️ <b>ETA:</b> ${eta.label}`,
+      );
       const ok = await kube.restartDeployment(namespace, target);
       if (ok) {
-        await telegram.send(`✅ Restart initiated for <code>${target}</code> in <b>${namespace}</b>. Monitoring recovery...`);
+        await telegram.send(`✅ Restart initiated — monitoring <code>${target}</code> for recovery...`);
         if (teamsTicketId) {
           await teamsClient.updateTicket(teamsTicketId, 'in_progress',
             `The ops team has approved and initiated a restart of **${target}**. Estimated time to resolve: **${eta.label}**. I'll update you once it's verified healthy.`);
@@ -682,10 +703,17 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     } else if (action === 'scale') {
       const replicas = parseInt(detail || '1');
       const eta = getETA('scale', target);
-      await telegram.send(`📐 Scaling <code>${target}</code> to ${replicas}...\n⏱️ <b>ETA:</b> ${eta.label}`);
+      await telegram.send(
+        `⚡ <b>EXECUTING ACTION</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📐 <b>Action:</b> Scale to ${replicas}\n` +
+        `📦 <b>Target:</b> <code>${target}</code>\n` +
+        `🏷️ <b>Namespace:</b> ${namespace}\n` +
+        `⏱️ <b>ETA:</b> ${eta.label}`,
+      );
       const ok = await kube.scaleDeployment(namespace, target, replicas);
       if (ok) {
-        await telegram.send(`✅ Scale initiated for <code>${target}</code> to ${replicas} replicas. Monitoring recovery...`);
+        await telegram.send(`✅ Scale initiated — monitoring <code>${target}</code> for recovery...`);
         if (teamsTicketId) {
           await teamsClient.updateTicket(teamsTicketId, 'in_progress',
             `The ops team has approved scaling **${target}** to ${replicas} replicas. Estimated time: **${eta.label}**. I'll update you once it's ready.`);
@@ -1039,13 +1067,20 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
       );
 
       // Alert ops on Telegram for approval
+      const severityIcon = analysis.severity === 'critical' ? '🔴' : analysis.severity === 'warning' ? '🟡' : '🟢';
+      const severityLabel = analysis.severity?.toUpperCase() || 'INFO';
       await telegram.send(
-        `📩 <b>Teams Report from ${safeTg(userName)}</b>\n\n` +
-        `<b>Issue:</b> ${safeTg(userMessage)}\n\n` +
-        `<b>Diagnosis:</b> ${safeTg(analysis.analysis)}\n\n` +
-        `<b>Suggested:</b> ${safeTg(analysis.suggestedAction || 'none')}\n\n` +
-        `Reply /yes to execute or /no to decline.${jiraTgInfo}\n` +
-        `<i>Ticket: ${id}</i>`,
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📩 <b>TEAMS REPORT</b> ${severityIcon} ${severityLabel}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `👤 <b>From:</b> ${safeTg(userName)}\n` +
+        `💬 <b>Issue:</b> ${safeTg(userMessage)}\n\n` +
+        `🧠 <b>Diagnosis:</b>\n${safeTg(analysis.analysis)}\n\n` +
+        `🔧 <b>Suggested Fix:</b> <code>${safeTg(analysis.suggestedAction || 'none')}</code>\n` +
+        `${jiraTgInfo ? `${jiraTgInfo}\n` : ''}` +
+        `\n━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `⚡ Reply /yes to approve or /no to decline\n` +
+        `🆔 <code>${id}</code>`,
       );
 
       // Parse the suggested action for pending approval
@@ -1074,9 +1109,13 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
 
       // Notify ops on Telegram (FYI, no action needed)
       await telegram.send(
-        `📩 <b>Teams Report from ${safeTg(userName)}</b> (resolved)\n\n` +
-        `<b>Issue:</b> ${safeTg(userMessage)}\n` +
-        `<b>Diagnosis:</b> ${safeTg(analysis.analysis.substring(0, 300))}${jiraTgInfo}`,
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📩 <b>TEAMS REPORT</b> 🟢 RESOLVED\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `👤 <b>From:</b> ${safeTg(userName)}\n` +
+        `💬 <b>Issue:</b> ${safeTg(userMessage)}\n\n` +
+        `🧠 <b>Diagnosis:</b>\n${safeTg(analysis.analysis.substring(0, 300))}\n\n` +
+        `✅ No action required — auto-resolved${jiraTgInfo}`,
       );
 
       // Close Jira with resolution comment
@@ -1094,9 +1133,12 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
     );
 
     await telegram.send(
-      `📩 <b>Teams Report from ${safeTg(userName)}</b> (escalated)\n\n` +
-      `<b>Issue:</b> ${safeTg(userMessage)}\n` +
-      `⚠️ Auto-diagnosis failed. Please investigate manually.`,
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📩 <b>TEAMS REPORT</b> 🔴 ESCALATED\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `👤 <b>From:</b> ${safeTg(userName)}\n` +
+      `💬 <b>Issue:</b> ${safeTg(userMessage)}\n\n` +
+      `⚠️ Auto-diagnosis failed — please investigate manually`,
     );
   }
 });
