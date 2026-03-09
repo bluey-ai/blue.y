@@ -928,6 +928,10 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     } else if (action === 'diagnose') {
       // Run full diagnostic on the target pod
       await telegram.send(`🔬 Running full diagnostic on <code>${target}</code>...`);
+      if (teamsTicketId) {
+        await teamsClient.updateTicket(teamsTicketId, 'in_progress',
+          'The ops team has approved a diagnostic. Running full analysis now...');
+      }
       const found = await kube.findPod(target);
       if (found) {
         const [desc, logs, events] = await Promise.all([
@@ -943,19 +947,38 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           await telegram.send(`📢 <b>Events:</b>\n${events}`);
         }
         // AI analysis
-        const analysis = await bedrock.analyze({
-          type: 'incident',
-          message: `Diagnose pod ${found.pod.name} in namespace ${found.namespace}`,
-          context: { pod: found.pod, description: desc, recentLogs: logs.substring(0, 2000), events },
-        });
-        await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysis.analysis}`);
+        let analysisText = '';
+        try {
+          const analysis = await bedrock.analyze({
+            type: 'incident',
+            message: `Diagnose pod ${found.pod.name} in namespace ${found.namespace}`,
+            context: { pod: found.pod, description: desc, recentLogs: logs.substring(0, 2000), events },
+          });
+          analysisText = analysis.analysis || '';
+          await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysisText}`);
+        } catch (aiErr) {
+          logger.error(`[Diagnose] AI analysis failed for ${target}`, aiErr);
+          analysisText = `AI analysis unavailable. Raw findings:\n\n${desc}\n\nRecent logs show: ${logs.substring(0, 500)}`;
+          await telegram.send(`⚠️ AI analysis failed. Raw data shown above.`);
+        }
+
+        // Always send back to Teams — even if AI failed, send the raw summary
         if (teamsTicketId) {
-          await teamsClient.updateTicket(teamsTicketId, 'resolved',
-            `The ops team ran a full diagnostic. Here's the summary:\n\n${analysis.analysis}`);
+          try {
+            const teamsSummary = analysisText
+              ? `**Diagnostic Results for ${found.pod.name}:**\n\n${analysisText}`
+              : `**Diagnostic Results for ${found.pod.name}:**\n\nPod is running in ${found.namespace}. ` +
+                `${desc.substring(0, 500)}\n\nPlease check with the ops team for more details.`;
+            await teamsClient.updateTicket(teamsTicketId, 'resolved', teamsSummary);
+            logger.info(`[Teams] Sent diagnostic summary to ticket ${teamsTicketId}`);
+          } catch (teamsErr) {
+            logger.error(`[Teams] Failed to send diagnostic to ticket ${teamsTicketId}`, teamsErr);
+          }
         }
         if (jiraKey) {
-          await jiraClient.addComment(jiraKey, `[BLUE.Y] Diagnostic completed for ${found.namespace}/${found.pod.name}.\n\n${analysis.analysis}`);
+          await jiraClient.addComment(jiraKey, `[BLUE.Y] Diagnostic completed for ${found.namespace}/${found.pod.name}.\n\n${analysisText}`);
         }
+        await telegram.send(`💡 Use <code>/email user@blueonion.today</code> or <code>/jira</code> to share this report.`);
       } else {
         await telegram.send(`❓ Pod matching "${target}" not found. Try /diagnose manually.`);
         if (teamsTicketId) {
