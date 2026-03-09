@@ -5,6 +5,8 @@ import {
   TurnContext,
   ActivityTypes,
   ConversationReference,
+  CardFactory,
+  MessageFactory,
 } from 'botbuilder';
 import { config } from '../config';
 import { logger } from '../utils/logger';
@@ -100,23 +102,55 @@ export class TeamsClient {
     const cmd = text.toLowerCase();
 
     if (cmd === 'help' || cmd === '/help') {
-      await context.sendActivity(
-        '**BLUE.Y - IT Support Assistant** \n\n' +
-        'I can help you with infrastructure issues. Just describe your problem in plain English:\n\n' +
-        '- "The website is slow"\n' +
-        '- "PDF service is not working"\n' +
-        '- "I can\'t log in to the platform"\n' +
-        '- "Backend is returning errors"\n' +
-        '- "Data is not loading on the dashboard"\n\n' +
-        'I\'ll diagnose the issue and work with the ops team to fix it. ' +
-        'You\'ll get updates right here in Teams.\n\n' +
-        '**Commands:**\n' +
-        '- `status` - Quick cluster health check\n' +
-        '- `smoketest` - Test all production URLs\n' +
-        '- `securityscan` - OWASP security header scan\n' +
-        '- `help` - Show this message\n\n' +
-        '**Tip:** You can also attach screenshots — I\'ll analyze them automatically!',
-      );
+      const helpCard = {
+        type: 'AdaptiveCard',
+        $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+        version: '1.5',
+        body: [
+          {
+            type: 'ColumnSet',
+            columns: [
+              { type: 'Column', width: 'auto', items: [{ type: 'TextBlock', text: '👁️', size: 'extraLarge' }] },
+              {
+                type: 'Column', width: 'stretch',
+                items: [
+                  { type: 'TextBlock', text: 'BLUE.Y', weight: 'bolder', size: 'large', color: 'accent' },
+                  { type: 'TextBlock', text: 'IT Support & Infrastructure Assistant', spacing: 'none', isSubtle: true, size: 'small' },
+                ],
+              },
+            ],
+          },
+          { type: 'TextBlock', text: 'Just describe your issue in plain English:', weight: 'bolder', size: 'small', spacing: 'medium', separator: true },
+          {
+            type: 'Container',
+            style: 'emphasis',
+            items: [
+              { type: 'TextBlock', text: '"The website is slow"', isSubtle: true, size: 'small' },
+              { type: 'TextBlock', text: '"PDF service is not working"', isSubtle: true, size: 'small', spacing: 'small' },
+              { type: 'TextBlock', text: '"I can\'t log in to the platform"', isSubtle: true, size: 'small', spacing: 'small' },
+              { type: 'TextBlock', text: '"Data is not loading on the dashboard"', isSubtle: true, size: 'small', spacing: 'small' },
+            ],
+          },
+          { type: 'TextBlock', text: '⚡ Quick Commands', weight: 'bolder', size: 'small', color: 'accent', spacing: 'medium', separator: true },
+          {
+            type: 'FactSet',
+            facts: [
+              { title: 'status', value: 'Cluster health overview' },
+              { title: 'smoke test', value: 'Test all production URLs' },
+              { title: 'security scan', value: 'OWASP security headers check' },
+              { title: 'help', value: 'Show this message' },
+            ],
+          },
+          {
+            type: 'Container',
+            style: 'accent',
+            spacing: 'medium',
+            items: [{ type: 'TextBlock', text: '📸 Tip: Attach screenshots — I\'ll analyze them with AI vision!', wrap: true, size: 'small' }],
+          },
+        ],
+      };
+      const attachment = CardFactory.adaptiveCard(helpCard);
+      await context.sendActivity(MessageFactory.attachment(attachment));
       return;
     }
 
@@ -261,6 +295,31 @@ export class TeamsClient {
     }
   }
 
+  // Send an Adaptive Card to the Teams user
+  async replyWithCard(ticketId: string, card: Record<string, unknown>): Promise<boolean> {
+    const ticket = this.tickets.get(ticketId);
+    if (!ticket || !this.adapter) {
+      logger.warn(`[Teams] Ticket ${ticketId} not found or adapter not initialized`);
+      return false;
+    }
+
+    try {
+      await this.adapter.continueConversationAsync(
+        config.teams.appId,
+        ticket.conversationRef,
+        async (context: TurnContext) => {
+          const attachment = CardFactory.adaptiveCard(card);
+          const activity = MessageFactory.attachment(attachment);
+          await context.sendActivity(activity);
+        },
+      );
+      return true;
+    } catch (err) {
+      logger.error(`[Teams] Failed to send card to ticket ${ticketId}`, err);
+      return false;
+    }
+  }
+
   // Update ticket status and notify the user
   async updateTicket(ticketId: string, status: TeamsTicket['status'], message?: string): Promise<void> {
     const ticket = this.tickets.get(ticketId);
@@ -269,7 +328,13 @@ export class TeamsClient {
     ticket.status = status;
 
     if (message) {
-      await this.replyToTicket(ticketId, message);
+      // Send as Adaptive Card for rich formatting
+      const card = TeamsCards.statusUpdate(status, message, ticketId);
+      const sent = await this.replyWithCard(ticketId, card);
+      if (!sent) {
+        // Fallback to plain text if card fails
+        await this.replyToTicket(ticketId, message);
+      }
       // Record status updates in conversation history
       this.addToHistory(ticket.userName, 'assistant', `[${status}] ${message.substring(0, 200)}`, ticketId, status);
     }
@@ -333,5 +398,333 @@ export class TeamsClient {
     }
 
     return context;
+  }
+}
+
+// --- Adaptive Card templates for rich Teams messages ---
+
+const STATUS_COLORS: Record<string, { color: string; icon: string; label: string }> = {
+  pending:           { color: 'default',   icon: '⏳', label: 'Pending' },
+  diagnosing:        { color: 'accent',    icon: '🔍', label: 'Diagnosing' },
+  awaiting_approval: { color: 'warning',   icon: '⚡', label: 'Awaiting Approval' },
+  in_progress:       { color: 'accent',    icon: '🔧', label: 'In Progress' },
+  resolved:          { color: 'good',      icon: '✅', label: 'Resolved' },
+  escalated:         { color: 'attention',  icon: '🚨', label: 'Escalated' },
+};
+
+export class TeamsCards {
+  // Generic status update card
+  static statusUpdate(status: string, message: string, ticketId: string): Record<string, unknown> {
+    const s = STATUS_COLORS[status] || STATUS_COLORS.pending;
+
+    // Split message into sections if it has markdown headers
+    const sections = this.parseMessageSections(message);
+
+    const body: Record<string, unknown>[] = [
+      // Header with status badge
+      {
+        type: 'ColumnSet',
+        columns: [
+          {
+            type: 'Column',
+            width: 'auto',
+            items: [{ type: 'TextBlock', text: s.icon, size: 'large' }],
+          },
+          {
+            type: 'Column',
+            width: 'stretch',
+            items: [
+              { type: 'TextBlock', text: 'BLUE.Y', weight: 'bolder', size: 'medium', color: 'accent' },
+              { type: 'TextBlock', text: s.label, spacing: 'none', isSubtle: true, size: 'small' },
+            ],
+          },
+          {
+            type: 'Column',
+            width: 'auto',
+            items: [{ type: 'TextBlock', text: `#${ticketId.split('-').pop()}`, isSubtle: true, size: 'small' }],
+          },
+        ],
+      },
+      // Divider
+      {
+        type: 'ColumnSet',
+        separator: true,
+        spacing: 'small',
+        columns: [],
+      },
+    ];
+
+    // Add content sections
+    for (const section of sections) {
+      if (section.heading) {
+        body.push({
+          type: 'TextBlock',
+          text: section.heading,
+          weight: 'bolder',
+          size: 'small',
+          spacing: 'medium',
+          color: 'accent',
+        });
+      }
+      body.push({
+        type: 'TextBlock',
+        text: section.content,
+        wrap: true,
+        spacing: section.heading ? 'small' : 'medium',
+        size: 'default',
+      });
+    }
+
+    // Add timestamp footer
+    body.push({
+      type: 'TextBlock',
+      text: `Updated: ${new Date().toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit' })} SGT`,
+      isSubtle: true,
+      size: 'small',
+      spacing: 'medium',
+      separator: true,
+    });
+
+    return {
+      type: 'AdaptiveCard',
+      $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+      version: '1.5',
+      body,
+    };
+  }
+
+  // Diagnosis card with structured findings
+  static diagnosis(diagnosis: string, status: string, ticketId: string, opts?: {
+    screenshotAnalysis?: string;
+    suggestedAction?: string;
+    jiraUrl?: string;
+    jiraKey?: string;
+  }): Record<string, unknown> {
+    const s = STATUS_COLORS[status] || STATUS_COLORS.diagnosing;
+
+    const body: Record<string, unknown>[] = [
+      // Header
+      {
+        type: 'ColumnSet',
+        columns: [
+          { type: 'Column', width: 'auto', items: [{ type: 'TextBlock', text: s.icon, size: 'large' }] },
+          {
+            type: 'Column', width: 'stretch',
+            items: [
+              { type: 'TextBlock', text: 'BLUE.Y Diagnosis', weight: 'bolder', size: 'medium', color: 'accent' },
+              { type: 'TextBlock', text: s.label, spacing: 'none', isSubtle: true, size: 'small' },
+            ],
+          },
+        ],
+      },
+    ];
+
+    // Screenshot analysis
+    if (opts?.screenshotAnalysis) {
+      body.push(
+        { type: 'TextBlock', text: '📸 Screenshot Analysis', weight: 'bolder', size: 'small', color: 'accent', spacing: 'medium', separator: true },
+        { type: 'TextBlock', text: opts.screenshotAnalysis, wrap: true, spacing: 'small', isSubtle: true },
+      );
+    }
+
+    // Diagnosis
+    body.push(
+      { type: 'TextBlock', text: '🧠 Analysis', weight: 'bolder', size: 'small', color: 'accent', spacing: 'medium', separator: true },
+      { type: 'TextBlock', text: diagnosis, wrap: true, spacing: 'small' },
+    );
+
+    // Suggested action
+    if (opts?.suggestedAction) {
+      body.push(
+        { type: 'TextBlock', text: '🔧 Recommended Action', weight: 'bolder', size: 'small', color: 'accent', spacing: 'medium', separator: true },
+        {
+          type: 'Container',
+          style: 'emphasis',
+          items: [{ type: 'TextBlock', text: opts.suggestedAction, wrap: true, weight: 'bolder' }],
+        },
+      );
+    }
+
+    // Status message based on current state
+    if (status === 'awaiting_approval') {
+      body.push({
+        type: 'Container',
+        style: 'warning',
+        spacing: 'medium',
+        items: [{ type: 'TextBlock', text: '⏳ Sent to ops team for approval. You\'ll get an update once they respond.', wrap: true, size: 'small' }],
+      });
+    } else if (status === 'resolved') {
+      body.push({
+        type: 'Container',
+        style: 'good',
+        spacing: 'medium',
+        items: [{ type: 'TextBlock', text: '✅ No immediate action required. If the issue persists, let me know!', wrap: true, size: 'small' }],
+      });
+    }
+
+    // Jira link
+    if (opts?.jiraUrl && opts?.jiraKey) {
+      body.push({
+        type: 'ActionSet',
+        spacing: 'medium',
+        actions: [{ type: 'Action.OpenUrl', title: `📋 ${opts.jiraKey} — View in Jira`, url: opts.jiraUrl }],
+      });
+    }
+
+    // Footer
+    body.push({
+      type: 'TextBlock',
+      text: `Ticket: ${ticketId} • ${new Date().toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit' })} SGT`,
+      isSubtle: true, size: 'small', spacing: 'medium', separator: true,
+    });
+
+    return {
+      type: 'AdaptiveCard',
+      $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+      version: '1.5',
+      body,
+    };
+  }
+
+  // Diagnostic results card (after /yes → diagnose)
+  static diagnosticResults(podName: string, namespace: string, analysis: string, ticketId: string): Record<string, unknown> {
+    return {
+      type: 'AdaptiveCard',
+      $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+      version: '1.5',
+      body: [
+        {
+          type: 'ColumnSet',
+          columns: [
+            { type: 'Column', width: 'auto', items: [{ type: 'TextBlock', text: '🔬', size: 'large' }] },
+            {
+              type: 'Column', width: 'stretch',
+              items: [
+                { type: 'TextBlock', text: 'Diagnostic Results', weight: 'bolder', size: 'medium', color: 'accent' },
+                { type: 'TextBlock', text: `${namespace}/${podName}`, spacing: 'none', isSubtle: true, size: 'small', fontType: 'monospace' },
+              ],
+            },
+          ],
+        },
+        { type: 'TextBlock', text: '📊 Findings', weight: 'bolder', size: 'small', color: 'accent', spacing: 'medium', separator: true },
+        { type: 'TextBlock', text: analysis, wrap: true, spacing: 'small' },
+        {
+          type: 'Container',
+          style: 'good',
+          spacing: 'medium',
+          items: [{ type: 'TextBlock', text: '✅ Diagnostic complete. The ops team has been notified.', wrap: true, size: 'small' }],
+        },
+        {
+          type: 'TextBlock',
+          text: `${new Date().toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit' })} SGT`,
+          isSubtle: true, size: 'small', spacing: 'medium', separator: true,
+        },
+      ],
+    };
+  }
+
+  // Action progress card (restart/scale in progress)
+  static actionProgress(action: string, target: string, eta: string): Record<string, unknown> {
+    const actionLabel = action === 'restart' ? '🔄 Restarting' : action === 'scale' ? '📈 Scaling' : `🔧 ${action}`;
+    return {
+      type: 'AdaptiveCard',
+      $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+      version: '1.5',
+      body: [
+        {
+          type: 'ColumnSet',
+          columns: [
+            { type: 'Column', width: 'auto', items: [{ type: 'TextBlock', text: '🔧', size: 'large' }] },
+            {
+              type: 'Column', width: 'stretch',
+              items: [
+                { type: 'TextBlock', text: `${actionLabel} ${target}`, weight: 'bolder', size: 'medium' },
+                { type: 'TextBlock', text: 'Approved by ops team', spacing: 'none', isSubtle: true, size: 'small' },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'FactSet',
+          separator: true,
+          spacing: 'medium',
+          facts: [
+            { title: 'Action', value: action.charAt(0).toUpperCase() + action.slice(1) },
+            { title: 'Target', value: target },
+            { title: 'ETA', value: eta },
+            { title: 'Status', value: '⏳ In progress...' },
+          ],
+        },
+        {
+          type: 'Container',
+          style: 'accent',
+          spacing: 'medium',
+          items: [{ type: 'TextBlock', text: "I'll update you automatically once it's verified healthy.", wrap: true, size: 'small' }],
+        },
+      ],
+    };
+  }
+
+  // Resolution card (fix verified)
+  static resolved(target: string, message: string, elapsed?: number): Record<string, unknown> {
+    return {
+      type: 'AdaptiveCard',
+      $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+      version: '1.5',
+      body: [
+        {
+          type: 'ColumnSet',
+          columns: [
+            { type: 'Column', width: 'auto', items: [{ type: 'TextBlock', text: '✅', size: 'large' }] },
+            {
+              type: 'Column', width: 'stretch',
+              items: [
+                { type: 'TextBlock', text: 'Issue Resolved', weight: 'bolder', size: 'medium', color: 'good' },
+                { type: 'TextBlock', text: target, spacing: 'none', isSubtle: true, size: 'small' },
+              ],
+            },
+          ],
+        },
+        { type: 'TextBlock', text: message, wrap: true, spacing: 'medium', separator: true },
+        ...(elapsed ? [{
+          type: 'FactSet' as const,
+          spacing: 'medium' as const,
+          facts: [{ title: 'Resolved in', value: `${elapsed} seconds` }],
+        }] : []),
+        {
+          type: 'TextBlock',
+          text: `${new Date().toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit' })} SGT`,
+          isSubtle: true, size: 'small', spacing: 'medium', separator: true,
+        },
+      ],
+    };
+  }
+
+  // Parse markdown-ish message into sections
+  private static parseMessageSections(message: string): { heading?: string; content: string }[] {
+    const sections: { heading?: string; content: string }[] = [];
+    // Split on **Header:** patterns
+    const parts = message.split(/\*\*([^*]+):\*\*\s*/);
+
+    if (parts.length <= 1) {
+      // No markdown headers — return as single section
+      return [{ content: message }];
+    }
+
+    // First part (before any header) as intro
+    if (parts[0].trim()) {
+      sections.push({ content: parts[0].trim() });
+    }
+
+    // Pairs of heading + content
+    for (let i = 1; i < parts.length; i += 2) {
+      const heading = parts[i];
+      const content = (parts[i + 1] || '').trim();
+      if (content) {
+        sections.push({ heading, content });
+      }
+    }
+
+    return sections.length > 0 ? sections : [{ content: message }];
   }
 }

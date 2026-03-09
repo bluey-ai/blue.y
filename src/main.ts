@@ -12,7 +12,7 @@ import { PodMonitor } from './monitors/pods';
 import { NodeMonitor } from './monitors/nodes';
 import { CertMonitor } from './monitors/certs';
 import { HPAMonitor } from './monitors/hpa';
-import { TeamsClient, TeamsTicket } from './clients/teams';
+import { TeamsClient, TeamsTicket, TeamsCards } from './clients/teams';
 import { VisionClient } from './clients/vision';
 import { QAClient } from './clients/qa';
 import { CronJob } from 'cron';
@@ -114,8 +114,10 @@ async function monitorActionOutcome(opts: {
         await telegram.send(msg);
 
         if (teamsTicketId) {
-          await teamsClient.updateTicket(teamsTicketId, 'resolved',
-            `Good news! The fix has been verified — **${target}** is back to normal with all ${detail.replicas} replica(s) running. Resolved in ${elapsed} seconds.`);
+          const card = TeamsCards.resolved(target,
+            `The fix has been verified — **${target}** is back to normal with all ${detail.replicas} replica(s) running.`,
+            elapsed);
+          await teamsClient.replyWithCard(teamsTicketId, card);
         }
         if (jiraKey) {
           await jiraClient.addComment(jiraKey,
@@ -869,8 +871,8 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       if (ok) {
         await telegram.send(`✅ Restart initiated — monitoring <code>${target}</code> for recovery...`);
         if (teamsTicketId) {
-          await teamsClient.updateTicket(teamsTicketId, 'in_progress',
-            `The ops team has approved and initiated a restart of **${target}**. Estimated time to resolve: **${eta.label}**. I'll update you once it's verified healthy.`);
+          const card = TeamsCards.actionProgress('restart', target, eta.label);
+          await teamsClient.replyWithCard(teamsTicketId, card);
         }
         if (jiraKey) {
           await jiraClient.addComment(jiraKey,
@@ -905,8 +907,8 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       if (ok) {
         await telegram.send(`✅ Scale initiated — monitoring <code>${target}</code> for recovery...`);
         if (teamsTicketId) {
-          await teamsClient.updateTicket(teamsTicketId, 'in_progress',
-            `The ops team has approved scaling **${target}** to ${replicas} replicas. Estimated time: **${eta.label}**. I'll update you once it's ready.`);
+          const card = TeamsCards.actionProgress('scale', `${target} → ${replicas} replicas`, eta.label);
+          await teamsClient.replyWithCard(teamsTicketId, card);
         }
         if (jiraKey) {
           await jiraClient.addComment(jiraKey,
@@ -965,12 +967,13 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
         // Always send back to Teams — even if AI failed, send the raw summary
         if (teamsTicketId) {
           try {
-            const teamsSummary = analysisText
-              ? `**Diagnostic Results for ${found.pod.name}:**\n\n${analysisText}`
-              : `**Diagnostic Results for ${found.pod.name}:**\n\nPod is running in ${found.namespace}. ` +
-                `${desc.substring(0, 500)}\n\nPlease check with the ops team for more details.`;
-            await teamsClient.updateTicket(teamsTicketId, 'resolved', teamsSummary);
-            logger.info(`[Teams] Sent diagnostic summary to ticket ${teamsTicketId}`);
+            const diagCard = TeamsCards.diagnosticResults(
+              found.pod.name, found.namespace,
+              analysisText || `Pod is running. ${desc.substring(0, 500)}`,
+              teamsTicketId,
+            );
+            await teamsClient.replyWithCard(teamsTicketId, diagCard);
+            logger.info(`[Teams] Sent diagnostic card to ticket ${teamsTicketId}`);
           } catch (teamsErr) {
             logger.error(`[Teams] Failed to send diagnostic to ticket ${teamsTicketId}`, teamsErr);
           }
@@ -1337,11 +1340,15 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
     // Check if AI suggests an action that needs ops approval
     if (analysis.requiresAction && analysis.suggestedCommand) {
       ticket.suggestedAction = analysis.suggestedAction || analysis.suggestedCommand;
-      await teamsClient.updateTicket(id, 'awaiting_approval',
-        `**Diagnosis:** ${analysis.analysis}\n\n` +
-        `I've identified a potential fix and sent it to the ops team for approval. ` +
-        `I'll update you once they respond.${jiraInfo}`,
-      );
+      const diagCard = TeamsCards.diagnosis(analysis.analysis, 'awaiting_approval', id, {
+        screenshotAnalysis: ticket.imageAnalysis || undefined,
+        suggestedAction: analysis.suggestedAction || analysis.suggestedCommand,
+        jiraUrl: jiraUrl || undefined,
+        jiraKey: jiraKey || undefined,
+      });
+      await teamsClient.replyWithCard(id, diagCard);
+      ticket.status = 'awaiting_approval';
+      teamsClient.addToHistory(userName, 'assistant', `[awaiting_approval] Diagnosis sent`, id, 'awaiting_approval');
 
       // Alert ops on Telegram for approval
       const severityIcon = analysis.severity === 'critical' ? '🔴' : analysis.severity === 'warning' ? '🟡' : '🟢';
@@ -1380,10 +1387,14 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
       }
     } else {
       // No action needed — just inform the user and ops
-      await teamsClient.updateTicket(id, 'resolved',
-        `**Diagnosis:** ${analysis.analysis}\n\n` +
-        `No immediate action required. If the issue persists, I'll escalate to the ops team.${jiraInfo}`,
-      );
+      const resolvedCard = TeamsCards.diagnosis(analysis.analysis, 'resolved', id, {
+        screenshotAnalysis: ticket.imageAnalysis || undefined,
+        jiraUrl: jiraUrl || undefined,
+        jiraKey: jiraKey || undefined,
+      });
+      await teamsClient.replyWithCard(id, resolvedCard);
+      ticket.status = 'resolved';
+      teamsClient.addToHistory(userName, 'assistant', `[resolved] ${analysis.analysis.substring(0, 200)}`, id, 'resolved');
 
       // Notify ops on Telegram (FYI, no action needed)
       await telegram.send(
