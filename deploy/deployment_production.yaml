@@ -74,9 +74,9 @@ spec:
             - name: AWS_REGION
               value: "ap-southeast-1"
             - name: BEDROCK_ROUTINE_MODEL
-              value: "anthropic.claude-sonnet-4-6"
+              value: "apac.amazon.nova-lite-v1:0"
             - name: BEDROCK_INCIDENT_MODEL
-              value: "anthropic.claude-opus-4-6-v1"
+              value: "apac.amazon.nova-pro-v1:0"
             - name: WATCH_NAMESPACES
               value: "prod,doris,monitoring,wordpress"
             - name: KUBE_IN_CLUSTER
