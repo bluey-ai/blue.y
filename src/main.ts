@@ -789,6 +789,8 @@ if (teamsClient.isEnabled()) {
 // --- Teams user report handler (cross-channel flow) ---
 teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
   const { id, userName, userMessage } = ticket;
+  // Sanitize text for Telegram HTML — strip tags, escape special chars
+  const safeTg = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   // Status check — just return cluster summary
   if (userMessage === 'status_check') {
@@ -837,10 +839,10 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
 
       // Alert ops on Telegram for approval
       await telegram.send(
-        `📩 <b>Teams Report from ${userName}</b>\n\n` +
-        `<b>Issue:</b> ${userMessage}\n\n` +
-        `<b>Diagnosis:</b> ${analysis.analysis}\n\n` +
-        `<b>Suggested:</b> ${analysis.suggestedAction}\n\n` +
+        `📩 <b>Teams Report from ${safeTg(userName)}</b>\n\n` +
+        `<b>Issue:</b> ${safeTg(userMessage)}\n\n` +
+        `<b>Diagnosis:</b> ${safeTg(analysis.analysis)}\n\n` +
+        `<b>Suggested:</b> ${safeTg(analysis.suggestedAction || 'none')}\n\n` +
         `Reply /yes to execute or /no to decline.\n` +
         `<i>Ticket: ${id}</i>`,
       );
@@ -864,9 +866,9 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
 
       // Notify ops on Telegram (FYI, no action needed)
       await telegram.send(
-        `📩 <b>Teams Report from ${userName}</b> (resolved)\n\n` +
-        `<b>Issue:</b> ${userMessage}\n` +
-        `<b>Diagnosis:</b> ${analysis.analysis.substring(0, 300)}`,
+        `📩 <b>Teams Report from ${safeTg(userName)}</b> (resolved)\n\n` +
+        `<b>Issue:</b> ${safeTg(userMessage)}\n` +
+        `<b>Diagnosis:</b> ${safeTg(analysis.analysis.substring(0, 300))}`,
       );
     }
   } catch (err) {
@@ -879,8 +881,8 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
     );
 
     await telegram.send(
-      `📩 <b>Teams Report from ${userName}</b> (escalated)\n\n` +
-      `<b>Issue:</b> ${userMessage}\n` +
+      `📩 <b>Teams Report from ${safeTg(userName)}</b> (escalated)\n\n` +
+      `<b>Issue:</b> ${safeTg(userMessage)}\n` +
       `⚠️ Auto-diagnosis failed. Please investigate manually.`,
     );
   }
