@@ -424,6 +424,15 @@ async function startPolling(): Promise<void> {
   let lastUpdateId = 0;
   const API = `https://api.telegram.org/bot${config.telegram.botToken}`;
 
+  // Clear any stale webhook first
+  try {
+    await axios.post(`${API}/deleteWebhook`);
+    logger.info('Cleared any stale Telegram webhook');
+  } catch { /* ignore */ }
+
+  // Small delay to let any previous poller's connection expire
+  await new Promise((r) => setTimeout(r, 3000));
+
   logger.info('Telegram polling started — listening for commands...');
 
   while (true) {
@@ -449,8 +458,14 @@ async function startPolling(): Promise<void> {
         }
       }
     } catch (err) {
-      if ((err as { code?: string }).code !== 'ECONNABORTED') {
+      const status = (err as { response?: { status?: number } }).response?.status;
+      if (status === 409) {
+        // 409 = another poller active — wait longer before retrying
+        logger.warn('Telegram 409 conflict — another poller active, waiting 10s...');
+        await new Promise((r) => setTimeout(r, 10000));
+      } else if ((err as { code?: string }).code !== 'ECONNABORTED') {
         logger.error('Poll error', err);
+        await new Promise((r) => setTimeout(r, 2000));
       }
     }
   }
