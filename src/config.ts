@@ -31,6 +31,7 @@ export const config = {
     pods: process.env.SCHEDULE_PODS || '*/2 * * * *',       // every 2 min
     nodes: process.env.SCHEDULE_NODES || '*/5 * * * *',     // every 5 min
     certs: process.env.SCHEDULE_CERTS || '0 */6 * * *',     // every 6 hours
+    dailyReport: process.env.SCHEDULE_DAILY_REPORT || '0 9 * * *',  // daily at 9 AM SGT
   },
 
   // Microsoft Teams Bot
@@ -48,6 +49,27 @@ export const config = {
     apiToken: process.env.JIRA_API_TOKEN || '',
     projectKey: process.env.JIRA_PROJECT_KEY || 'HUBS',
   },
+
+  // Vision AI (for screenshot/image analysis — Google Gemini free tier)
+  vision: {
+    baseUrl: process.env.VISION_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai',
+    apiKey: process.env.VISION_API_KEY || '',
+    model: process.env.VISION_MODEL || 'gemini-2.0-flash',
+    enabled: !!process.env.VISION_API_KEY,
+  },
+
+  // Production URLs for QA smoke tests
+  productionUrls: [
+    { name: 'Backend API', url: 'https://api-hubs.blueonion.today', expect: 200 },
+    { name: 'Frontend', url: 'https://hubs.blueonion.today', expect: 200 },
+    { name: 'User Mgmt API', url: 'https://api-users.blueonion.today', expect: 200 },
+    { name: 'User Mgmt UI', url: 'https://users.blueonion.today', expect: 200 },
+    { name: 'PDF Service', url: 'https://hubspdf.blueonion.today', expect: 200 },
+    { name: 'BLUE.AI', url: 'https://ai.blueonion.today', expect: 200 },
+    { name: 'Grafana', url: 'https://grafana.blueonion.today', expect: 200 },
+    { name: 'Status Page', url: 'https://status.blueonion.today', expect: 200 },
+    { name: 'WordPress', url: 'https://www.blueonion.today', expect: 200 },
+  ],
 
   // Safety
   safety: {

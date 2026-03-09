@@ -9,11 +9,19 @@ import {
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
+export interface TeamsAttachment {
+  contentType: string;
+  contentUrl: string;
+  name?: string;
+}
+
 export interface TeamsTicket {
   id: string;
   userName: string;
   userMessage: string;
   conversationRef: Partial<ConversationReference>;
+  attachments?: TeamsAttachment[];
+  imageAnalysis?: string;
   diagnosis?: string;
   suggestedAction?: string;
   status: 'pending' | 'diagnosing' | 'awaiting_approval' | 'in_progress' | 'resolved' | 'escalated';
@@ -104,15 +112,33 @@ export class TeamsClient {
         'You\'ll get updates right here in Teams.\n\n' +
         '**Commands:**\n' +
         '- `status` - Quick cluster health check\n' +
-        '- `help` - Show this message',
+        '- `smoketest` - Test all production URLs\n' +
+        '- `securityscan` - OWASP security header scan\n' +
+        '- `help` - Show this message\n\n' +
+        '**Tip:** You can also attach screenshots — I\'ll analyze them automatically!',
       );
       return;
     }
 
     if (cmd === 'status' || cmd === '/status') {
       await context.sendActivity('Checking cluster health for you...');
-      // We'll fill this in via the callback
       const ticket = this.createTicket(userName, 'status_check', context);
+      ticket.status = 'diagnosing';
+      if (this.onUserReport) await this.onUserReport(ticket);
+      return;
+    }
+
+    if (cmd === 'smoketest' || cmd === '/smoketest' || cmd === 'smoke test') {
+      await context.sendActivity('Running smoke tests on all production URLs...');
+      const ticket = this.createTicket(userName, 'smoke_test', context);
+      ticket.status = 'diagnosing';
+      if (this.onUserReport) await this.onUserReport(ticket);
+      return;
+    }
+
+    if (cmd === 'securityscan' || cmd === '/securityscan' || cmd === 'security scan') {
+      await context.sendActivity('Running security scan on all production URLs...');
+      const ticket = this.createTicket(userName, 'security_scan', context);
       ticket.status = 'diagnosing';
       if (this.onUserReport) await this.onUserReport(ticket);
       return;
@@ -122,17 +148,64 @@ export class TeamsClient {
     // Record user message in conversation history
     this.addToHistory(userName, 'user', text);
 
+    // Extract image attachments (screenshots, photos)
+    const imageAttachments = this.extractImageAttachments(context);
+    const hasImages = imageAttachments.length > 0;
+
     await context.sendActivity(
-      `Got it, **${userName}**. I'm looking into: "${text}"\n\n` +
-      'I\'ll diagnose this and get back to you shortly.',
+      `Got it, **${userName}**. I'm looking into: "${text}"` +
+      (hasImages ? `\n\nI also see ${imageAttachments.length} image(s) — I'll analyze those too.` : '') +
+      '\n\nI\'ll diagnose this and get back to you shortly.',
     );
 
     const ticket = this.createTicket(userName, text, context);
-    logger.info(`[Teams] New ticket ${ticket.id} from ${userName}: ${text}`);
+    if (hasImages) {
+      ticket.attachments = imageAttachments;
+    }
+    logger.info(`[Teams] New ticket ${ticket.id} from ${userName}: ${text}${hasImages ? ` (${imageAttachments.length} images)` : ''}`);
 
     if (this.onUserReport) {
       await this.onUserReport(ticket);
     }
+  }
+
+  // Extract image attachments from a Teams message
+  private extractImageAttachments(context: TurnContext): TeamsAttachment[] {
+    const attachments: TeamsAttachment[] = [];
+
+    // Check activity.attachments (inline images, file uploads)
+    if (context.activity.attachments) {
+      for (const att of context.activity.attachments) {
+        const ct = att.contentType || '';
+        if (ct.startsWith('image/') || ct === 'application/octet-stream') {
+          if (att.contentUrl) {
+            attachments.push({
+              contentType: ct,
+              contentUrl: att.contentUrl,
+              name: att.name,
+            });
+          }
+        }
+      }
+    }
+
+    // Check for inline images in HTML content (Teams pastes screenshots as <img> tags)
+    const htmlContent = context.activity.text || '';
+    const imgMatches = htmlContent.match(/<img[^>]+src="([^"]+)"/gi);
+    if (imgMatches) {
+      for (const imgTag of imgMatches) {
+        const srcMatch = imgTag.match(/src="([^"]+)"/);
+        if (srcMatch?.[1] && !attachments.some((a) => a.contentUrl === srcMatch[1])) {
+          attachments.push({
+            contentType: 'image/png',
+            contentUrl: srcMatch[1],
+            name: 'inline-screenshot',
+          });
+        }
+      }
+    }
+
+    return attachments;
   }
 
   private createTicket(userName: string, message: string, context: TurnContext): TeamsTicket {

@@ -129,6 +129,18 @@ spec:
                 secretKeyRef:
                   name: blue-y-secrets
                   key: jira-api-token
+            - name: VISION_API_BASE_URL
+              value: "https://generativelanguage.googleapis.com/v1beta/openai"
+            - name: VISION_MODEL
+              value: "gemini-2.0-flash"
+            - name: VISION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: vision-api-key
+                  optional: true
+            - name: SCHEDULE_DAILY_REPORT
+              value: "0 9 * * *"
           ports:
             - containerPort: 8000
           readinessProbe:

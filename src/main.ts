@@ -13,6 +13,9 @@ import { NodeMonitor } from './monitors/nodes';
 import { CertMonitor } from './monitors/certs';
 import { HPAMonitor } from './monitors/hpa';
 import { TeamsClient, TeamsTicket } from './clients/teams';
+import { VisionClient } from './clients/vision';
+import { QAClient } from './clients/qa';
+import { CronJob } from 'cron';
 
 const app = express();
 app.use(express.json());
@@ -45,6 +48,8 @@ const kube = new KubeClient();
 const emailClient = new EmailClient();
 const jiraClient = new JiraClient();
 const teamsClient = new TeamsClient();
+const visionClient = new VisionClient();
+const qaClient = new QAClient();
 
 // Initialize monitors
 const monitors = [
@@ -560,6 +565,191 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     return;
   }
 
+  // --- QA Smoke Test ---
+  if (cmd === '/smoketest' || cmd === '/smoke' || cmd.match(/^(run\s+)?smoke\s*test/i)) {
+    await telegram.send('🧪 Running smoke tests on all production URLs...');
+    const results = await qaClient.smokeTest();
+    await telegram.send(qaClient.formatSmokeTestTelegram(results));
+
+    // If any service is down, trigger AI analysis
+    const failing = results.filter((r) => !r.healthy);
+    if (failing.length > 0) {
+      const failList = failing.map((f) => `${f.name} (${f.url}): ${f.error || `HTTP ${f.status}`}`).join('\n');
+      const analysis = await bedrock.analyze({
+        type: 'incident',
+        message: `Smoke test detected ${failing.length} failing service(s):\n${failList}`,
+        context: { smokeTestResults: results },
+      });
+      await telegram.send(`🧠 <b>AI Analysis:</b>\n${analysis.analysis}`);
+      if (analysis.suggestedCommand) {
+        await telegram.send(`💡 <b>Suggested:</b> <code>${analysis.suggestedCommand}</code>\n\nReply /yes to execute.`);
+        const parts = (analysis.suggestedCommand || '').split(' ');
+        pendingAction = { action: parts[0], target: parts[1]?.split('/')[1] || parts[1] || '', namespace: parts[1]?.split('/')[0] || 'prod', timestamp: Date.now() };
+      }
+    }
+    return;
+  }
+
+  // --- Security Scan ---
+  if (cmd === '/securityscan' || cmd === '/security' || cmd.match(/^(run\s+)?(security|owasp)\s*scan/i)) {
+    const targetUrl = cmd.replace(/^\/(securityscan|security)\s*/, '').trim();
+    await telegram.send(`🔐 Running security scan${targetUrl ? ` on ${targetUrl}` : ' on all production URLs'}...`);
+    const results = await qaClient.securityScan(targetUrl || undefined);
+    await telegram.send(qaClient.formatSecurityScanTelegram(results));
+    return;
+  }
+
+  // --- Daily report (manual trigger) ---
+  if (cmd === '/report' || cmd.match(/^(daily\s+)?(health\s+)?report/i)) {
+    await generateDailyReport();
+    return;
+  }
+
+  // --- Pod restart root cause ---
+  if (cmd === '/restarts' || cmd.match(/^(show\s+)?(pod\s+)?restarts/i) || cmd.match(/^why\s+(did|was)\s+.*(restart|crash)/i)) {
+    await telegram.send('🔍 Analyzing recent pod restarts...');
+    const restarts = await kube.getRecentlyRestartedPods();
+
+    if (restarts.length === 0) {
+      await telegram.send('✅ No pod restarts in the last 24 hours.');
+      return;
+    }
+
+    let msg = `━━━━━━━━━━━━━━━━━━━━━━\n🔄 <b>POD RESTARTS</b> (last 24h)\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    for (const r of restarts.slice(0, 10)) {
+      const icon = r.oomKilled ? '💥' : r.lastExitCode !== 0 ? '❌' : '🔄';
+      const reason = r.oomKilled ? 'OOM Killed (out of memory)' :
+        r.lastRestartReason === 'Error' ? `Error (exit code: ${r.lastExitCode})` :
+        r.lastRestartReason;
+      const time = r.lastRestartTime !== 'unknown'
+        ? new Date(r.lastRestartTime).toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit' })
+        : '?';
+
+      msg += `${icon} <code>${r.name.substring(0, 40)}</code>\n`;
+      msg += `   ${r.namespace} | ${r.restarts} restarts | Last: ${time}\n`;
+      msg += `   Reason: <b>${reason}</b>\n\n`;
+    }
+
+    // AI analysis of restart patterns
+    if (restarts.length > 0) {
+      const analysis = await bedrock.analyze({
+        type: 'pod_issue',
+        message: `Analyze these pod restarts from the last 24 hours and identify patterns or root causes:\n${JSON.stringify(restarts.slice(0, 10))}`,
+        context: { totalRestarts: restarts.length },
+      });
+      msg += `🧠 <b>Analysis:</b>\n${analysis.analysis}`;
+    }
+
+    await telegram.send(msg);
+    return;
+  }
+
+  // --- Resource efficiency ---
+  if (cmd === '/resources' || cmd === '/efficiency' || cmd.match(/^(show\s+)?(resource|cpu|memory)\s*(usage|efficiency)/i)) {
+    const ns = cmd.match(/\s(prod|doris|monitoring|wordpress)\s*$/)?.[1] || 'prod';
+    await telegram.send(`📊 Analyzing resource efficiency in <b>${ns}</b>...`);
+    const efficiency = await kube.getResourceEfficiency(ns);
+
+    if (efficiency.length === 0) {
+      await telegram.send('No resource data available (metrics-server may not be running).');
+      return;
+    }
+
+    let msg = `━━━━━━━━━━━━━━━━━━━━━━\n📊 <b>RESOURCE EFFICIENCY</b> (${ns})\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    // Sort by memory efficiency (descending — show over-provisioned first)
+    efficiency.sort((a, b) => a.memEfficiency - b.memEfficiency);
+
+    for (const r of efficiency.slice(0, 15)) {
+      const cpuIcon = r.cpuEfficiency > 80 ? '🔴' : r.cpuEfficiency > 50 ? '🟡' : r.cpuEfficiency < 10 ? '💤' : '🟢';
+      const memIcon = r.memEfficiency > 80 ? '🔴' : r.memEfficiency > 50 ? '🟡' : r.memEfficiency < 10 ? '💤' : '🟢';
+      const shortName = r.name.length > 35 ? r.name.substring(0, 35) + '…' : r.name;
+
+      msg += `<code>${shortName}</code>\n`;
+      msg += `   ${cpuIcon} CPU: ${r.cpuUsage} / ${r.cpuRequest} (${r.cpuEfficiency}%)\n`;
+      msg += `   ${memIcon} Mem: ${r.memUsage} / ${r.memRequest} (${r.memEfficiency}%)\n\n`;
+    }
+
+    // Flag issues
+    const overProvisioned = efficiency.filter((r) => r.cpuEfficiency < 10 && r.memEfficiency < 10);
+    const nearLimit = efficiency.filter((r) => r.cpuEfficiency > 90 || r.memEfficiency > 90);
+
+    if (overProvisioned.length > 0) {
+      msg += `💤 <b>${overProvisioned.length} pod(s) heavily over-provisioned</b> (&lt;10% usage)\n`;
+    }
+    if (nearLimit.length > 0) {
+      msg += `🔴 <b>${nearLimit.length} pod(s) near resource limits</b> (&gt;90% usage)\n`;
+    }
+
+    await telegram.send(msg);
+    return;
+  }
+
+  // --- Doris backup health check ---
+  if (cmd === '/dorisbackup' || cmd.match(/^(check\s+)?doris\s*backup/i)) {
+    await telegram.send('🗄️ Checking Doris backup health...');
+
+    // Check Doris pods health
+    const dorisPods = await kube.getPods('doris');
+    const bePods = dorisPods.filter((p) => p.name.includes('be'));
+    const fePods = dorisPods.filter((p) => p.name.includes('fe'));
+
+    // Check for the backup CronJob
+    const events = await kube.getEvents('doris');
+    const backupEvents = events.split('\n').filter((e) =>
+      e.toLowerCase().includes('backup') ||
+      e.toLowerCase().includes('cronjob') ||
+      e.toLowerCase().includes('job')
+    );
+
+    // Check recent restarts (backup runs at 2AM, issues at ~9AM)
+    const restarts = await kube.getRecentlyRestartedPods();
+    const dorisRestarts = restarts.filter((r) => r.namespace === 'doris');
+
+    let msg = `━━━━━━━━━━━━━━━━━━━━━━\n🗄️ <b>DORIS BACKUP HEALTH</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    msg += `<b>Doris Pods:</b>\n`;
+    for (const p of [...fePods, ...bePods]) {
+      const icon = p.status === 'Running' && p.ready ? '✅' : '❌';
+      msg += `${icon} <code>${p.name}</code> — ${p.status}, ${p.restarts} restarts\n`;
+    }
+
+    msg += `\n<b>Recent Doris Restarts:</b>\n`;
+    if (dorisRestarts.length > 0) {
+      for (const r of dorisRestarts) {
+        const icon = r.oomKilled ? '💥' : '🔄';
+        msg += `${icon} <code>${r.name}</code> — ${r.lastRestartReason} at ${r.lastRestartTime !== 'unknown' ? new Date(r.lastRestartTime).toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore' }) : '?'}\n`;
+      }
+    } else {
+      msg += `✅ No recent restarts\n`;
+    }
+
+    if (backupEvents.length > 0) {
+      msg += `\n<b>Backup-Related Events:</b>\n`;
+      msg += backupEvents.slice(0, 5).join('\n');
+    }
+
+    // Check BE pod memory (if >60GB, fragmentation risk after backup)
+    const dorisMetrics = await kube.getTopPods('doris');
+    const beMetrics = dorisMetrics.filter((m) => m.name.includes('be'));
+    if (beMetrics.length > 0) {
+      msg += `\n\n<b>BE Memory Usage:</b>\n`;
+      for (const m of beMetrics) {
+        const memMi = parseInt(m.memory);
+        const memGi = (memMi / 1024).toFixed(1);
+        const icon = memMi > 60000 ? '🔴 HIGH' : memMi > 40000 ? '🟡 MODERATE' : '🟢 OK';
+        msg += `${icon} — <code>${m.name}</code>: ${memGi}Gi (${m.memory})\n`;
+        if (memMi > 60000) {
+          msg += `   ⚠️ High memory — possible post-backup fragmentation\n`;
+        }
+      }
+    }
+
+    await telegram.send(msg);
+    return;
+  }
+
   // --- Incident timeline ---
   if (cmd === '/incidents' || cmd.match(/^show\s+(me\s+)?incidents/i)) {
     const incidents = scheduler.getIncidentLog();
@@ -821,7 +1011,14 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       `<b>Actions:</b>\n` +
       `/restart &lt;deployment&gt; — Rolling restart\n` +
       `/scale &lt;deployment&gt; &lt;N&gt; — Scale replicas\n\n` +
+      `<b>QA & Security:</b>\n` +
+      `/smoketest — Test all production URLs\n` +
+      `/securityscan — OWASP security header scan\n` +
+      `/restarts — Pod restart root cause analysis\n` +
+      `/efficiency — Resource usage vs requests\n` +
+      `/dorisbackup — Doris backup health check\n\n` +
       `<b>Reports:</b>\n` +
+      `/report — Daily health report (manual trigger)\n` +
       `/email &lt;name|team&gt; — Email report (zeeshan, abdul, usama, wei, elsa, team)\n` +
       `/jira — Create Jira ticket\n` +
       `/incidents — Incident timeline\n\n` +
@@ -829,6 +1026,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       `/sleep — Pause monitoring\n` +
       `/wake — Resume monitoring\n\n` +
       `💡 Auto-diagnose is ON — I'll automatically investigate unhealthy pods.\n` +
+      `📸 Teams users can attach screenshots — I'll analyze them with AI vision.\n` +
       `Or just ask me anything in plain English!`,
     );
     return;
@@ -882,7 +1080,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     logger.error('Bedrock analysis failed', err);
     await telegram.send(
       `⚠️ AI unavailable right now. Here are the commands:\n\n` +
-      `/status /check /nodes /logs /describe /events /diagnose /restart /scale /help`,
+      `/status /check /nodes /smoketest /securityscan /restarts /efficiency /report /help`,
     );
   }
 }
@@ -909,6 +1107,11 @@ async function startPolling(): Promise<void> {
         { command: 'hpa', description: 'HPA autoscaler status' },
         { command: 'doris', description: 'Doris cluster health' },
         { command: 'deployments', description: 'List deployments' },
+        { command: 'smoketest', description: 'Test all production URLs' },
+        { command: 'securityscan', description: 'OWASP security scan' },
+        { command: 'restarts', description: 'Pod restart root cause' },
+        { command: 'efficiency', description: 'Resource usage analysis' },
+        { command: 'report', description: 'Daily health report' },
         { command: 'incidents', description: 'Incident timeline' },
         { command: 'help', description: 'Show all commands' },
         { command: 'sleep', description: 'Pause monitoring' },
@@ -983,9 +1186,30 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
   // Status check — just return cluster summary
   if (userMessage === 'status_check') {
     const summary = await kube.getClusterSummary();
-    // Convert HTML to plain text for Teams
     const plainSummary = summary.replace(/<b>/g, '**').replace(/<\/b>/g, '**').replace(/<[^>]+>/g, '');
     await teamsClient.updateTicket(id, 'resolved', plainSummary);
+    return;
+  }
+
+  // Smoke test — run HTTP health checks on all prod URLs
+  if (userMessage === 'smoke_test') {
+    const results = await qaClient.smokeTest();
+    const teamsMsg = qaClient.formatSmokeTestTeams(results);
+    await teamsClient.updateTicket(id, 'resolved', teamsMsg);
+
+    // Also notify ops on Telegram
+    await telegram.send(qaClient.formatSmokeTestTelegram(results));
+    return;
+  }
+
+  // Security scan — OWASP header checks
+  if (userMessage === 'security_scan') {
+    const results = await qaClient.securityScan();
+    const teamsMsg = qaClient.formatSecurityScanTeams(results);
+    await teamsClient.updateTicket(id, 'resolved', teamsMsg);
+
+    // Also notify ops on Telegram
+    await telegram.send(qaClient.formatSecurityScanTelegram(results));
     return;
   }
 
@@ -993,6 +1217,32 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
   await teamsClient.updateTicket(id, 'diagnosing');
 
   try {
+    // Analyze attached images (screenshots) if any
+    let imageContext = '';
+    if (ticket.attachments && ticket.attachments.length > 0 && visionClient.isEnabled()) {
+      logger.info(`[Teams] Analyzing ${ticket.attachments.length} image(s) for ticket ${id}`);
+      const analyses = [];
+      for (const att of ticket.attachments) {
+        const result = await visionClient.analyzeImageUrl(att.contentUrl);
+        if (result.extractedText || result.description) {
+          analyses.push(result);
+        }
+      }
+      if (analyses.length > 0) {
+        imageContext = '\n\n=== SCREENSHOT ANALYSIS ===\n';
+        for (let i = 0; i < analyses.length; i++) {
+          const a = analyses[i];
+          imageContext += `Image ${i + 1}:\n`;
+          imageContext += `- Description: ${a.description}\n`;
+          if (a.extractedText) imageContext += `- Extracted text: ${a.extractedText}\n`;
+          if (a.errorScreenshot) imageContext += `- ERROR DETECTED: ${a.detectedIssue || 'yes'}\n`;
+        }
+        ticket.imageAnalysis = analyses.map((a) => a.detectedIssue || a.description).join('; ');
+      }
+    } else if (ticket.attachments && ticket.attachments.length > 0 && !visionClient.isEnabled()) {
+      imageContext = '\n\n[User attached image(s) but vision analysis is not configured]';
+    }
+
     // Gather cluster context
     const clusterSummary = await kube.getClusterSummary();
     const unhealthy = await kube.getUnhealthyPods();
@@ -1006,7 +1256,7 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
       message: `A user reported via Teams: "${userMessage}". Diagnose this issue.
         If you can identify a specific pod or service that's affected, say so.
         If an action (restart, scale) would fix it, suggest it clearly.
-        Keep your response concise and user-friendly.
+        Keep your response concise and user-friendly.${imageContext}
         ${conversationContext ? `\nIMPORTANT — This user has prior conversation context. Read it carefully. If the user is referring to a previous issue or asking a follow-up (e.g. "resubmit", "what about", "same issue", "try again"), use the history to understand what they mean. Do NOT treat follow-ups as new issues.\n\n${conversationContext}` : ''}`,
       context: {
         clusterSummary,
@@ -1074,8 +1324,9 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
         `📩 <b>TEAMS REPORT</b> ${severityIcon} ${severityLabel}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `👤 <b>From:</b> ${safeTg(userName)}\n` +
-        `💬 <b>Issue:</b> ${safeTg(userMessage)}\n\n` +
-        `🧠 <b>Diagnosis:</b>\n${safeTg(analysis.analysis)}\n\n` +
+        `💬 <b>Issue:</b> ${safeTg(userMessage)}\n` +
+        `${ticket.imageAnalysis ? `📸 <b>Screenshot:</b> ${safeTg(ticket.imageAnalysis)}\n` : ''}` +
+        `\n🧠 <b>Diagnosis:</b>\n${safeTg(analysis.analysis)}\n\n` +
         `🔧 <b>Suggested Fix:</b> <code>${safeTg(analysis.suggestedAction || 'none')}</code>\n` +
         `${jiraTgInfo ? `${jiraTgInfo}\n` : ''}` +
         `\n━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -1143,10 +1394,110 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
   }
 });
 
+// --- Daily Health Report ---
+async function generateDailyReport(): Promise<void> {
+  logger.info('[Report] Generating daily health report...');
+  const now = new Date().toLocaleDateString('en-SG', { timeZone: 'Asia/Singapore', weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
+
+  try {
+    // Gather all data in parallel
+    const [clusterSummary, smokeResults, restarts, incidents] = await Promise.all([
+      kube.getClusterSummary(),
+      qaClient.smokeTest(),
+      kube.getRecentlyRestartedPods(),
+      Promise.resolve(scheduler.getIncidentLog()),
+    ]);
+
+    const healthyServices = smokeResults.filter((r) => r.healthy).length;
+    const totalServices = smokeResults.length;
+    const allHealthy = healthyServices === totalServices;
+    const oomRestarts = restarts.filter((r) => r.oomKilled);
+
+    // --- Telegram report ---
+    let tgMsg = `━━━━━━━━━━━━━━━━━━━━━━\n`;
+    tgMsg += `📋 <b>DAILY HEALTH REPORT</b>\n`;
+    tgMsg += `📅 ${now}\n`;
+    tgMsg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    // Cluster health
+    tgMsg += clusterSummary + '\n\n';
+
+    // Service health
+    tgMsg += `🧪 <b>Service Health:</b> ${allHealthy ? '✅ All pass' : `⚠️ ${totalServices - healthyServices} failing`}\n`;
+    for (const r of smokeResults) {
+      const icon = r.healthy ? '✅' : '❌';
+      const speed = r.responseTime < 500 ? '' : r.responseTime < 2000 ? ' 🟡' : ' 🐢';
+      tgMsg += `${icon} ${r.name} — ${r.status || 'TIMEOUT'} (${r.responseTime}ms)${speed}\n`;
+    }
+
+    // Restarts
+    tgMsg += `\n🔄 <b>Pod Restarts (24h):</b> ${restarts.length}`;
+    if (oomRestarts.length > 0) {
+      tgMsg += ` (${oomRestarts.length} OOM)`;
+    }
+    tgMsg += '\n';
+    for (const r of restarts.slice(0, 5)) {
+      const icon = r.oomKilled ? '💥' : '🔄';
+      tgMsg += `${icon} <code>${r.name.substring(0, 35)}</code> — ${r.lastRestartReason} (${r.restarts}x)\n`;
+    }
+
+    // Incidents
+    if (incidents.length > 0) {
+      tgMsg += `\n🚨 <b>Incidents (since last restart):</b> ${incidents.length}\n`;
+      for (const inc of incidents.slice(-3)) {
+        tgMsg += `• ${inc.namespace}/${inc.pod} — ${inc.status}\n`;
+      }
+    }
+
+    // SSL expiry warnings
+    const sslWarnings = smokeResults.filter((r) => r.sslDaysLeft !== undefined && r.sslDaysLeft < 30);
+    if (sslWarnings.length > 0) {
+      tgMsg += `\n🔒 <b>SSL Expiry Warnings:</b>\n`;
+      for (const r of sslWarnings) {
+        tgMsg += `⚠️ ${r.name} — ${r.sslDaysLeft} days left\n`;
+      }
+    }
+
+    tgMsg += `\n━━━━━━━━━━━━━━━━━━━━━━`;
+    await telegram.send(tgMsg);
+
+    // --- Teams report (for users) ---
+    if (teamsClient.isEnabled()) {
+      let teamsMsg = `**Daily Health Report — ${now}**\n\n`;
+      teamsMsg += `**Services:** ${healthyServices}/${totalServices} healthy\n`;
+      for (const r of smokeResults) {
+        teamsMsg += `${r.healthy ? '✅' : '❌'} ${r.name}\n`;
+      }
+      if (restarts.length > 0) {
+        teamsMsg += `\n**Pod Restarts (24h):** ${restarts.length}`;
+        if (oomRestarts.length > 0) teamsMsg += ` (${oomRestarts.length} memory issues)`;
+        teamsMsg += '\n';
+      }
+      // Note: Teams daily report is only sent via Telegram for ops.
+      // Uncomment below to also send to Teams channel:
+      // await teamsClient.replyToTicket(..., teamsMsg);
+    }
+
+    logger.info('[Report] Daily health report sent');
+  } catch (err) {
+    logger.error('[Report] Failed to generate daily report', err);
+    await telegram.send('❌ Daily health report failed. Check logs.');
+  }
+}
+
 // Start
 app.listen(config.port, () => {
   logger.info(`BLUE.Y started on port ${config.port}`);
   scheduler.start();
+
+  // Schedule daily health report
+  CronJob.from({
+    cronTime: config.schedules.dailyReport,
+    onTick: generateDailyReport,
+    start: true,
+    timeZone: 'Asia/Singapore',
+  });
+  logger.info(`Daily health report scheduled: ${config.schedules.dailyReport} (SGT)`);
 
   // Start Telegram polling if bot token is configured
   if (config.telegram.botToken) {
