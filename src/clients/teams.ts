@@ -16,7 +16,7 @@ export interface TeamsTicket {
   conversationRef: Partial<ConversationReference>;
   diagnosis?: string;
   suggestedAction?: string;
-  status: 'pending' | 'diagnosing' | 'awaiting_approval' | 'resolved' | 'escalated';
+  status: 'pending' | 'diagnosing' | 'awaiting_approval' | 'in_progress' | 'resolved' | 'escalated';
   createdAt: Date;
 }
 

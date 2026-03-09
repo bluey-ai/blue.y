@@ -60,6 +60,82 @@ const scheduler = new MonitorScheduler(monitors, telegram, bedrock, kube);
 // Pending action confirmation (teamsTicketId links back to Teams user for cross-channel flow)
 let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number; teamsTicketId?: string; jiraKey?: string } | null = null;
 
+// Estimated resolution times by action + target pattern
+function getETA(action: string, target: string): { seconds: number; label: string } {
+  if (action === 'restart') {
+    if (target.includes('backend') || target.includes('blo-backend')) return { seconds: 300, label: '3-5 minutes (4 JVMs boot sequentially)' };
+    if (target.includes('doris')) return { seconds: 180, label: '2-3 minutes' };
+    if (target.includes('blue-ai')) return { seconds: 90, label: '1-2 minutes (ChromaDB reload)' };
+    return { seconds: 60, label: '30-60 seconds' };
+  }
+  if (action === 'scale') return { seconds: 120, label: '1-2 minutes (pod scheduling + startup)' };
+  return { seconds: 120, label: '1-2 minutes' };
+}
+
+// Post-action health monitor — runs in background after action execution
+async function monitorActionOutcome(opts: {
+  action: string;
+  target: string;
+  namespace: string;
+  teamsTicketId?: string;
+  jiraKey?: string;
+  eta: { seconds: number; label: string };
+}): Promise<void> {
+  const { action, target, namespace, teamsTicketId, jiraKey, eta } = opts;
+  const maxChecks = 6;
+  const checkInterval = Math.max(Math.ceil(eta.seconds / maxChecks), 15) * 1000; // Check ~6 times within ETA, min 15s
+  const startTime = Date.now();
+  const timeout = (eta.seconds + 120) * 1000; // ETA + 2 min grace
+
+  logger.info(`[Monitor] Tracking ${action} on ${namespace}/${target}, ETA: ${eta.label}, checking every ${checkInterval / 1000}s`);
+
+  // Wait initial period before first check (give action time to take effect)
+  await new Promise((r) => setTimeout(r, Math.min(checkInterval, 30000)));
+
+  for (let i = 0; i < maxChecks + 4; i++) { // Extra checks past ETA
+    try {
+      const detail = await kube.getDeploymentDetail(namespace, target);
+      if (detail && detail.readyReplicas >= detail.replicas && detail.updatedReplicas >= detail.replicas) {
+        // Healthy!
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        const msg = `✅ <b>Verified:</b> <code>${target}</code> is healthy after ${action}. All ${detail.replicas} replica(s) ready. (${elapsed}s elapsed)`;
+        await telegram.send(msg);
+
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'resolved',
+            `Good news! The fix has been verified — **${target}** is back to normal with all ${detail.replicas} replica(s) running. Resolved in ${elapsed} seconds.`);
+        }
+        if (jiraKey) {
+          await jiraClient.addComment(jiraKey,
+            `[BLUE.Y] Post-action verification: ${namespace}/${target} is HEALTHY after ${action}. ${detail.readyReplicas}/${detail.replicas} replicas ready. Resolved in ${elapsed}s.`);
+        }
+        return;
+      }
+
+      // Not ready yet — check if we've exceeded timeout
+      if (Date.now() - startTime > timeout) {
+        const readyInfo = detail ? `${detail.readyReplicas}/${detail.replicas} ready` : 'status unknown';
+        const msg = `⚠️ <b>Timeout:</b> <code>${target}</code> still not fully healthy after ${action}. ${readyInfo}. May need manual investigation.`;
+        await telegram.send(msg);
+
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'escalated',
+            `The fix is taking longer than expected. The ops team is monitoring and will follow up. Current status: ${readyInfo}.`);
+        }
+        if (jiraKey) {
+          await jiraClient.addComment(jiraKey,
+            `[BLUE.Y] Post-action timeout: ${namespace}/${target} not fully recovered after ${action}. ${readyInfo}. Manual investigation may be needed.`);
+        }
+        return;
+      }
+    } catch (err) {
+      logger.warn(`[Monitor] Health check failed for ${target}: ${err}`);
+    }
+
+    await new Promise((r) => setTimeout(r, checkInterval));
+  }
+}
+
 // Last incident context (for email/jira commands)
 let lastIncident: {
   monitor?: string;
@@ -576,37 +652,60 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     pendingAction = null;
 
     if (action === 'restart') {
-      await telegram.send(`🔄 Restarting <code>${target}</code>...`);
+      const eta = getETA('restart', target);
+      await telegram.send(`🔄 Restarting <code>${target}</code>...\n⏱️ <b>ETA:</b> ${eta.label}`);
       const ok = await kube.restartDeployment(namespace, target);
-      await telegram.send(ok
-        ? `✅ Restarted <code>${target}</code> in <b>${namespace}</b>. Rolling update in progress.`
-        : `❌ Failed to restart <code>${target}</code>.`);
-      if (teamsTicketId) {
-        await teamsClient.updateTicket(teamsTicketId, 'resolved',
-          ok ? `Great news! The ops team has approved and executed a restart of **${target}**. The fix is rolling out now. Please allow a few minutes and try again.`
-            : `The ops team attempted to fix the issue but the restart failed. They're investigating further.`);
-      }
-      if (jiraKey) {
-        await jiraClient.addComment(jiraKey,
-          ok ? `[BLUE.Y] Action approved by ops: restart ${namespace}/${target} — SUCCESS. Rolling update in progress.`
-            : `[BLUE.Y] Action approved by ops: restart ${namespace}/${target} — FAILED. Manual investigation needed.`);
+      if (ok) {
+        await telegram.send(`✅ Restart initiated for <code>${target}</code> in <b>${namespace}</b>. Monitoring recovery...`);
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'in_progress',
+            `The ops team has approved and initiated a restart of **${target}**. Estimated time to resolve: **${eta.label}**. I'll update you once it's verified healthy.`);
+        }
+        if (jiraKey) {
+          await jiraClient.addComment(jiraKey,
+            `[BLUE.Y] Action approved by ops: restart ${namespace}/${target} — initiated. ETA: ${eta.label}. Monitoring recovery...`);
+        }
+        // Fire-and-forget background health monitor
+        monitorActionOutcome({ action: 'restart', target, namespace, teamsTicketId, jiraKey, eta }).catch(
+          (err) => logger.error(`[Monitor] Background monitor failed: ${err}`));
+      } else {
+        await telegram.send(`❌ Failed to restart <code>${target}</code>.`);
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'escalated',
+            'The ops team attempted to fix the issue but the restart command failed. They\'re investigating further.');
+        }
+        if (jiraKey) {
+          await jiraClient.addComment(jiraKey,
+            `[BLUE.Y] Action approved by ops: restart ${namespace}/${target} — FAILED. Manual investigation needed.`);
+        }
       }
     } else if (action === 'scale') {
       const replicas = parseInt(detail || '1');
-      await telegram.send(`📐 Scaling <code>${target}</code> to ${replicas}...`);
+      const eta = getETA('scale', target);
+      await telegram.send(`📐 Scaling <code>${target}</code> to ${replicas}...\n⏱️ <b>ETA:</b> ${eta.label}`);
       const ok = await kube.scaleDeployment(namespace, target, replicas);
-      await telegram.send(ok
-        ? `✅ Scaled <code>${target}</code> to ${replicas} replicas.`
-        : `❌ Failed to scale <code>${target}</code>.`);
-      if (teamsTicketId) {
-        await teamsClient.updateTicket(teamsTicketId, 'resolved',
-          ok ? `Great news! The ops team has scaled up **${target}** to ${replicas} replicas to handle the load. Things should improve shortly.`
-            : `The ops team attempted to scale the service but it failed. They're investigating further.`);
-      }
-      if (jiraKey) {
-        await jiraClient.addComment(jiraKey,
-          ok ? `[BLUE.Y] Action approved by ops: scale ${namespace}/${target} to ${replicas} — SUCCESS.`
-            : `[BLUE.Y] Action approved by ops: scale ${namespace}/${target} to ${replicas} — FAILED. Manual investigation needed.`);
+      if (ok) {
+        await telegram.send(`✅ Scale initiated for <code>${target}</code> to ${replicas} replicas. Monitoring recovery...`);
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'in_progress',
+            `The ops team has approved scaling **${target}** to ${replicas} replicas. Estimated time: **${eta.label}**. I'll update you once it's ready.`);
+        }
+        if (jiraKey) {
+          await jiraClient.addComment(jiraKey,
+            `[BLUE.Y] Action approved by ops: scale ${namespace}/${target} to ${replicas} — initiated. ETA: ${eta.label}. Monitoring...`);
+        }
+        monitorActionOutcome({ action: 'scale', target, namespace, teamsTicketId, jiraKey, eta }).catch(
+          (err) => logger.error(`[Monitor] Background monitor failed: ${err}`));
+      } else {
+        await telegram.send(`❌ Failed to scale <code>${target}</code>.`);
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'escalated',
+            'The ops team attempted to scale the service but it failed. They\'re investigating further.');
+        }
+        if (jiraKey) {
+          await jiraClient.addComment(jiraKey,
+            `[BLUE.Y] Action approved by ops: scale ${namespace}/${target} to ${replicas} — FAILED. Manual investigation needed.`);
+        }
       }
     } else if (action === 'diagnose') {
       // Run full diagnostic on the target pod
