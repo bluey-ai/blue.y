@@ -23,12 +23,23 @@ export interface TeamsTicket {
 // Callback type for when a user sends a message via Teams
 type OnUserReportCallback = (ticket: TeamsTicket) => Promise<void>;
 
+// Per-user conversation history entry
+export interface ConversationEntry {
+  role: 'user' | 'assistant';
+  message: string;
+  timestamp: Date;
+  ticketId?: string;
+  ticketStatus?: TeamsTicket['status'];
+}
+
 export class TeamsClient {
   private adapter: CloudAdapter | null = null;
   private onUserReport?: OnUserReportCallback;
   // Store active tickets for cross-channel flow
   private tickets: Map<string, TeamsTicket> = new Map();
   private ticketCounter = 0;
+  // Per-user conversation history (keyed by userName)
+  private conversationHistory: Map<string, ConversationEntry[]> = new Map();
 
   constructor() {
     if (!config.teams.enabled) {
@@ -108,6 +119,9 @@ export class TeamsClient {
     }
 
     // Everything else = user issue report
+    // Record user message in conversation history
+    this.addToHistory(userName, 'user', text);
+
     await context.sendActivity(
       `Got it, **${userName}**. I'm looking into: "${text}"\n\n` +
       'I\'ll diagnose this and get back to you shortly.',
@@ -178,6 +192,8 @@ export class TeamsClient {
 
     if (message) {
       await this.replyToTicket(ticketId, message);
+      // Record status updates in conversation history
+      this.addToHistory(ticket.userName, 'assistant', `[${status}] ${message.substring(0, 200)}`, ticketId, status);
     }
   }
 
@@ -189,5 +205,55 @@ export class TeamsClient {
     return [...this.tickets.values()].filter((t) =>
       t.status !== 'resolved' && t.status !== 'escalated',
     );
+  }
+
+  // --- Conversation history management ---
+
+  addToHistory(userName: string, role: 'user' | 'assistant', message: string, ticketId?: string, ticketStatus?: TeamsTicket['status']): void {
+    if (!this.conversationHistory.has(userName)) {
+      this.conversationHistory.set(userName, []);
+    }
+    const history = this.conversationHistory.get(userName)!;
+    history.push({ role, message, timestamp: new Date(), ticketId, ticketStatus });
+
+    // Keep last 20 entries per user (10 exchanges)
+    if (history.length > 20) {
+      history.splice(0, history.length - 20);
+    }
+  }
+
+  getHistory(userName: string): ConversationEntry[] {
+    return this.conversationHistory.get(userName) || [];
+  }
+
+  // Get recent conversation context as a formatted string for AI
+  getConversationContext(userName: string): string {
+    const history = this.getHistory(userName);
+    if (history.length === 0) return '';
+
+    // Include active tickets for this user
+    const activeTickets = [...this.tickets.values()].filter(
+      (t) => t.userName === userName && t.status !== 'resolved' && t.status !== 'escalated',
+    );
+
+    let context = '=== CONVERSATION HISTORY (this user) ===\n';
+    for (const entry of history) {
+      const time = entry.timestamp.toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit' });
+      const prefix = entry.role === 'user' ? `[${time}] User` : `[${time}] BLUE.Y`;
+      const statusTag = entry.ticketStatus ? ` [ticket: ${entry.ticketStatus}]` : '';
+      context += `${prefix}${statusTag}: ${entry.message}\n`;
+    }
+
+    if (activeTickets.length > 0) {
+      context += '\n=== ACTIVE TICKETS FOR THIS USER ===\n';
+      for (const t of activeTickets) {
+        context += `- ${t.id}: "${t.userMessage}" → status: ${t.status}`;
+        if (t.diagnosis) context += ` | diagnosis: ${t.diagnosis.substring(0, 150)}`;
+        if (t.suggestedAction) context += ` | suggested: ${t.suggestedAction}`;
+        context += '\n';
+      }
+    }
+
+    return context;
   }
 }

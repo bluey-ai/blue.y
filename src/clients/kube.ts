@@ -1,6 +1,9 @@
 import * as k8s from '@kubernetes/client-node';
+import { setHeaderOptions } from '@kubernetes/client-node/dist/middleware.js';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+
+const STRATEGIC_MERGE_PATCH = setHeaderOptions('Content-Type', 'application/strategic-merge-patch+json');
 
 export interface PodInfo {
   name: string;
@@ -136,7 +139,7 @@ export class KubeClient {
 
   async restartDeployment(namespace: string, deploymentName: string): Promise<boolean> {
     try {
-      // Patch the deployment with a restart annotation
+      // Patch the deployment with a restart annotation (same as kubectl rollout restart)
       const patch = {
         spec: {
           template: {
@@ -150,12 +153,10 @@ export class KubeClient {
         },
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (this.appsApi as any).patchNamespacedDeployment({
-        name: deploymentName,
-        namespace,
-        body: patch,
-      });
+      await this.appsApi.patchNamespacedDeployment(
+        { name: deploymentName, namespace, body: patch },
+        STRATEGIC_MERGE_PATCH,
+      );
 
       logger.info(`Restarted deployment ${namespace}/${deploymentName}`);
       return true;
@@ -245,12 +246,10 @@ export class KubeClient {
 
   async scaleDeployment(namespace: string, deploymentName: string, replicas: number): Promise<boolean> {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (this.appsApi as any).patchNamespacedDeployment({
-        name: deploymentName,
-        namespace,
-        body: { spec: { replicas } },
-      });
+      await this.appsApi.patchNamespacedDeployment(
+        { name: deploymentName, namespace, body: { spec: { replicas } } },
+        STRATEGIC_MERGE_PATCH,
+      );
       logger.info(`Scaled ${namespace}/${deploymentName} to ${replicas} replicas`);
       return true;
     } catch (err) {

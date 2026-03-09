@@ -969,13 +969,17 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
     const clusterSummary = await kube.getClusterSummary();
     const unhealthy = await kube.getUnhealthyPods();
 
+    // Get conversation history for this user (gives AI context of previous messages)
+    const conversationContext = teamsClient.getConversationContext(userName);
+
     // Ask AI to analyze the user's report against cluster state
     const analysis = await bedrock.analyze({
       type: 'user_report',
       message: `A user reported via Teams: "${userMessage}". Diagnose this issue.
         If you can identify a specific pod or service that's affected, say so.
         If an action (restart, scale) would fix it, suggest it clearly.
-        Keep your response concise and user-friendly.`,
+        Keep your response concise and user-friendly.
+        ${conversationContext ? `\nIMPORTANT — This user has prior conversation context. Read it carefully. If the user is referring to a previous issue or asking a follow-up (e.g. "resubmit", "what about", "same issue", "try again"), use the history to understand what they mean. Do NOT treat follow-ups as new issues.\n\n${conversationContext}` : ''}`,
       context: {
         clusterSummary,
         unhealthyPods: unhealthy.map((p) => ({
@@ -1021,6 +1025,9 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
 
     const jiraInfo = jiraKey ? `\n\nJira: [${jiraKey}](${jiraUrl})` : '';
     const jiraTgInfo = jiraKey ? `\n🎫 <a href="${jiraUrl}">${jiraKey}</a>` : '';
+
+    // Record BLUE.Y's diagnosis in conversation history
+    teamsClient.addToHistory(userName, 'assistant', `Diagnosis: ${analysis.analysis}${analysis.suggestedAction ? ` | Suggested: ${analysis.suggestedAction}` : ''}`, id, ticket.status);
 
     // Check if AI suggests an action that needs ops approval
     if (analysis.requiresAction && analysis.suggestedCommand) {
