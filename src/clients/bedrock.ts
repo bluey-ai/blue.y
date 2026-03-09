@@ -81,51 +81,96 @@ export class BedrockClient {
 
     logger.info(`AI request: type=${request.type}, model=${model}`);
 
-    try {
-      const response = await axios.post(
-        `${this.baseUrl}/chat/completions`,
-        {
-          model,
-          max_tokens: config.ai.maxTokens,
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: this.buildPrompt(request) },
-          ],
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 30000,
-        },
-      );
+    // R1 (reasoner) needs longer timeout — it thinks before answering
+    const timeout = model === config.ai.incidentModel ? 90000 : 45000;
+    const maxRetries = 2;
 
-      const text = response.data.choices?.[0]?.message?.content || '';
-
-      // Try to parse structured JSON response
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          return JSON.parse(jsonMatch[0]);
-        }
-      } catch {
-        // Fall back to unstructured response
-      }
+        const response = await axios.post(
+          `${this.baseUrl}/chat/completions`,
+          {
+            model,
+            max_tokens: config.ai.maxTokens,
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'user', content: this.buildPrompt(request) },
+            ],
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout,
+          },
+        );
 
-      return {
-        analysis: text,
-        severity: 'info',
-        requiresAction: false,
-      };
-    } catch (err) {
-      logger.error(`AI invocation failed: ${err}`);
-      return {
-        analysis: `Error analyzing: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        severity: 'warning',
-        requiresAction: false,
-      };
+        const text = response.data.choices?.[0]?.message?.content || '';
+
+        // Try to parse structured JSON response
+        try {
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            return JSON.parse(jsonMatch[0]);
+          }
+        } catch {
+          // Fall back to unstructured response
+        }
+
+        return {
+          analysis: text,
+          severity: 'info',
+          requiresAction: false,
+        };
+      } catch (err) {
+        const isTimeout = axios.isAxiosError(err) && (err.code === 'ECONNABORTED' || err.message?.includes('aborted'));
+        logger.error(`AI invocation failed (attempt ${attempt}/${maxRetries}): ${err}`);
+
+        if (isTimeout && attempt < maxRetries) {
+          logger.info(`Retrying AI request with fast model after timeout...`);
+          // Fall back to fast model on timeout retry
+          const retryResponse = await axios.post(
+            `${this.baseUrl}/chat/completions`,
+            {
+              model: config.ai.routineModel, // Use fast model for retry
+              max_tokens: config.ai.maxTokens,
+              messages: [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: this.buildPrompt(request) },
+              ],
+            },
+            {
+              headers: {
+                'Authorization': `Bearer ${this.apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              timeout: 45000,
+            },
+          );
+
+          const text = retryResponse.data.choices?.[0]?.message?.content || '';
+          try {
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) return JSON.parse(jsonMatch[0]);
+          } catch { /* fall through */ }
+
+          return { analysis: text, severity: 'info' as const, requiresAction: false };
+        }
+
+        return {
+          analysis: `Error analyzing: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          severity: 'warning',
+          requiresAction: false,
+        };
+      }
     }
+
+    return {
+      analysis: 'AI analysis unavailable — all attempts failed.',
+      severity: 'warning',
+      requiresAction: false,
+    };
   }
 
   private buildPrompt(request: AnalysisRequest): string {
