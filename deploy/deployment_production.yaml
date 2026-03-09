@@ -51,10 +51,7 @@ spec:
       app: "blue-y"
       version: "<tag>"
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   template:
     metadata:
       labels:
