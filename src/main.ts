@@ -566,8 +566,8 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
   // --- Confirmation flow ---
   if (cmd === '/yes' || cmd === 'yes' || cmd === 'y') {
-    if (!pendingAction || Date.now() - pendingAction.timestamp > 120000) {
-      await telegram.send('❌ No pending action or it expired (2 min timeout).');
+    if (!pendingAction || Date.now() - pendingAction.timestamp > 300000) {
+      await telegram.send('❌ No pending action or it expired (5 min timeout).');
       pendingAction = null;
       return;
     }
@@ -581,13 +581,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       await telegram.send(ok
         ? `✅ Restarted <code>${target}</code> in <b>${namespace}</b>. Rolling update in progress.`
         : `❌ Failed to restart <code>${target}</code>.`);
-      // Notify Teams user if this was from a Teams report
       if (teamsTicketId) {
         await teamsClient.updateTicket(teamsTicketId, 'resolved',
           ok ? `Great news! The ops team has approved and executed a restart of **${target}**. The fix is rolling out now. Please allow a few minutes and try again.`
             : `The ops team attempted to fix the issue but the restart failed. They're investigating further.`);
       }
-      // Update Jira with action outcome
       if (jiraKey) {
         await jiraClient.addComment(jiraKey,
           ok ? `[BLUE.Y] Action approved by ops: restart ${namespace}/${target} — SUCCESS. Rolling update in progress.`
@@ -610,8 +608,46 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           ok ? `[BLUE.Y] Action approved by ops: scale ${namespace}/${target} to ${replicas} — SUCCESS.`
             : `[BLUE.Y] Action approved by ops: scale ${namespace}/${target} to ${replicas} — FAILED. Manual investigation needed.`);
       }
+    } else if (action === 'diagnose') {
+      // Run full diagnostic on the target pod
+      await telegram.send(`🔬 Running full diagnostic on <code>${target}</code>...`);
+      const found = await kube.findPod(target);
+      if (found) {
+        const [desc, logs, events] = await Promise.all([
+          kube.describePod(found.namespace, found.pod.name),
+          kube.getPodLogs(found.namespace, found.pod.name, 50),
+          kube.getEvents(found.namespace, found.pod.name),
+        ]);
+        await telegram.send(`🔎 <b>Pod Details:</b>\n${desc}`);
+        if (logs && logs.length > 10) {
+          await telegram.send(`📋 <b>Recent Logs:</b>\n<pre>${logs.substring(0, 3000)}</pre>`);
+        }
+        if (events && events !== 'No recent events found.') {
+          await telegram.send(`📢 <b>Events:</b>\n${events}`);
+        }
+        // AI analysis
+        const analysis = await bedrock.analyze({
+          type: 'incident',
+          message: `Diagnose pod ${found.pod.name} in namespace ${found.namespace}`,
+          context: { pod: found.pod, description: desc, recentLogs: logs.substring(0, 2000), events },
+        });
+        await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysis.analysis}`);
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'resolved',
+            `The ops team ran a full diagnostic. Here's the summary:\n\n${analysis.analysis}`);
+        }
+        if (jiraKey) {
+          await jiraClient.addComment(jiraKey, `[BLUE.Y] Diagnostic completed for ${found.namespace}/${found.pod.name}.\n\n${analysis.analysis}`);
+        }
+      } else {
+        await telegram.send(`❓ Pod matching "${target}" not found. Try /diagnose manually.`);
+        if (teamsTicketId) {
+          await teamsClient.updateTicket(teamsTicketId, 'escalated',
+            'The ops team is investigating your issue manually. They\'ll follow up with you directly.');
+        }
+      }
     } else {
-      await telegram.send(`⚠️ Unknown action: ${action}`);
+      await telegram.send(`⚠️ Unknown action: ${action}. Try running the command manually.`);
     }
     return;
   }
@@ -695,15 +731,24 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     if (response.requiresAction && response.suggestedCommand) {
       // Parse the suggested action
       const actionParts = (response.suggestedCommand || '').split(' ');
-      if (actionParts[0] === 'restart' && actionParts[1]) {
+      const actionName = actionParts[0]?.toLowerCase();
+      if (actionName === 'restart' && actionParts[1]) {
         const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
         pendingAction = { action: 'restart', target: dep, namespace: ns, timestamp: Date.now() };
         await telegram.send(`\n💡 <b>Suggested:</b> Restart <code>${dep}</code> in ${ns}\n\nReply /yes to execute or /no to cancel.`);
-      } else if (actionParts[0] === 'scale' && actionParts[1]) {
+      } else if (actionName === 'scale' && actionParts[1]) {
         const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
         const replicas = actionParts[2] || '1';
         pendingAction = { action: 'scale', target: dep, namespace: ns, detail: replicas, timestamp: Date.now() };
         await telegram.send(`\n💡 <b>Suggested:</b> Scale <code>${dep}</code> to ${replicas}\n\nReply /yes to execute or /no to cancel.`);
+      } else if (actionName === 'diagnose' && actionParts[1]) {
+        const [ns, pod] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
+        pendingAction = { action: 'diagnose', target: pod, namespace: ns, timestamp: Date.now() };
+        await telegram.send(`\n💡 <b>Suggested:</b> Diagnose <code>${pod}</code> in ${ns}\n\nReply /yes to execute or /no to cancel.`);
+      } else {
+        // Unknown action — still store it so /yes doesn't say "no pending"
+        pendingAction = { action: actionName || 'unknown', target: actionParts[1] || '', namespace: 'prod', timestamp: Date.now() };
+        await telegram.send(`\n💡 <b>Suggested:</b> ${response.suggestedAction || response.suggestedCommand}\n\nReply /yes to execute or /no to cancel.`);
       }
     }
   } catch (err) {
@@ -899,13 +944,20 @@ teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
 
       // Parse the suggested action for pending approval
       const actionParts = (analysis.suggestedCommand || '').split(' ');
-      if (actionParts[0] === 'restart' && actionParts[1]) {
+      const actionName = actionParts[0]?.toLowerCase();
+      if (actionName === 'restart' && actionParts[1]) {
         const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
         pendingAction = { action: 'restart', target: dep, namespace: ns, timestamp: Date.now(), teamsTicketId: id, jiraKey };
-      } else if (actionParts[0] === 'scale' && actionParts[1]) {
+      } else if (actionName === 'scale' && actionParts[1]) {
         const [ns, dep] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
         const replicas = actionParts[2] || '2';
         pendingAction = { action: 'scale', target: dep, namespace: ns, detail: replicas, timestamp: Date.now(), teamsTicketId: id, jiraKey };
+      } else if (actionName === 'diagnose' && actionParts[1]) {
+        const [ns, pod] = actionParts[1].includes('/') ? actionParts[1].split('/') : ['prod', actionParts[1]];
+        pendingAction = { action: 'diagnose', target: pod, namespace: ns, timestamp: Date.now(), teamsTicketId: id, jiraKey };
+      } else {
+        // Fallback: store any suggested action so /yes doesn't say "no pending action"
+        pendingAction = { action: actionName || 'unknown', target: actionParts[1] || '', namespace: 'prod', timestamp: Date.now(), teamsTicketId: id, jiraKey };
       }
     } else {
       // No action needed — just inform the user and ops
