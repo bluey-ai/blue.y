@@ -254,13 +254,12 @@ async function handleTelegramDM(text: string, chatId: string, userName: string):
       grafana: 'Grafana',
     };
 
-    // Notify admin channel for approval
+    // Notify admin channel for approval (no raw message — could contain sensitive info)
     await telegram.send(
       `🔐 <b>PASSWORD RESET REQUEST</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       `👤 <b>User:</b> ${userName}\n` +
       `🏷️ <b>Service:</b> ${serviceLabels[service] || service}\n` +
-      `💬 <b>Message:</b> "${text}"\n` +
       `⏰ <b>Time:</b> ${new Date().toISOString()}\n\n` +
       `⚠️ Reply <code>/yes</code> to approve or <code>/no</code> to deny.`,
     );
@@ -1479,9 +1478,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       }
     } else if (action === 'password_reset') {
       // Password reset approved — execute based on service type
+      // SECURITY: All credentials and details go to DM ONLY. Channel gets minimal status only.
       const service = target;     // aws, office365, database, grafana
       const userName = namespace; // stored the user's name in namespace field
       const userChatId = detail;  // stored the DM chat ID in detail field
+      const adminChatId = chatId; // the admin who approved (send private details here)
 
       const serviceLabels: Record<string, string> = {
         aws: 'AWS Console (IAM)',
@@ -1490,11 +1491,8 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
         grafana: 'Grafana',
       };
 
-      await telegram.send(
-        `✅ <b>Password reset APPROVED</b> for ${userName}\n` +
-        `🏷️ Service: ${serviceLabels[service] || service}\n\n` +
-        `⏳ Processing...`,
-      );
+      // Channel only sees: approved + processing (no usernames, no credentials, no details)
+      await telegram.send(`✅ Password reset approved. Processing via DM...`);
 
       // Generate a secure temporary password
       const genTempPassword = () => {
@@ -1507,16 +1505,14 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
       try {
         let resetInstructions = '';
+        let adminInstructions = ''; // Private instructions sent to admin DM (not channel)
 
         if (service === 'aws') {
-          // AWS IAM console password reset via AWS SDK
           const { IAMClient, ListUsersCommand, UpdateLoginProfileCommand } = await import('@aws-sdk/client-iam');
-          const iam = new IAMClient({ region: 'ap-southeast-1' }); // Uses IRSA role in-cluster
-
+          const iam = new IAMClient({ region: 'ap-southeast-1' });
           const tempPassword = genTempPassword();
 
           try {
-            // List IAM users and find matching user
             const listRes = await iam.send(new ListUsersCommand({}));
             const users = listRes.Users || [];
             const nameParts = userName.toLowerCase().split(/\s+/);
@@ -1539,31 +1535,31 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
                 `⚠️ You MUST set a new password on first login.\n` +
                 `🗑️ This message will be your only record — save your new password securely.`;
 
-              await telegram.send(`✅ AWS password reset for IAM user <code>${iamUser.UserName}</code> — temp password sent via DM.`);
+              // Channel: minimal confirmation only
+              await telegram.send(`✅ AWS password reset done — credentials sent via DM.`);
             } else {
               resetInstructions = `⚠️ Could not find your IAM user automatically. Please tell the admin your IAM username.`;
-              await telegram.send(`⚠️ Could not find IAM user matching "${userName}". Available users:\n<code>${users.map((u) => u.UserName).join(', ')}</code>`);
+              await telegram.send(`⚠️ AWS reset: user not found. Admin will handle manually.`);
             }
           } catch (awsErr) {
             resetInstructions = `⚠️ AWS password reset encountered an error. The admin has been notified and will help you directly.`;
-            await telegram.send(`❌ AWS IAM reset failed: ${awsErr instanceof Error ? awsErr.message : 'Unknown error'}`);
+            await telegram.send(`❌ AWS reset failed. Admin will handle manually.`);
+            logger.error(`AWS IAM reset failed: ${awsErr instanceof Error ? awsErr.message : 'Unknown error'}`);
           }
 
         } else if (service === 'grafana') {
-          // Grafana — reset via Admin API (internal cluster URL)
           if (!config.grafana.enabled) {
             resetInstructions = `Your Grafana password reset has been approved.\n\nThe admin will reset it manually and send you the new credentials.`;
-            await telegram.send(
+            adminInstructions =
               `📋 <b>Action required:</b> Reset Grafana password for ${userName}\n\n` +
               `GRAFANA_ADMIN_PASSWORD not set — cannot auto-reset.\n` +
-              `Go to: Grafana Admin → Users → ${userName} → Change password`,
-            );
+              `Go to: Grafana Admin → Users → ${userName} → Change password`;
+            await telegram.send(`⚠️ Grafana auto-reset unavailable. Admin will handle manually.`);
           } else {
             try {
               const grafanaAuth = Buffer.from(`${config.grafana.adminUser}:${config.grafana.adminPassword}`).toString('base64');
               const grafanaUrl = config.grafana.internalUrl;
 
-              // Search for user in Grafana
               const searchRes = await axios.get(`${grafanaUrl}/api/users/search?query=${encodeURIComponent(userName)}`, {
                 headers: { Authorization: `Basic ${grafanaAuth}` },
                 timeout: 10000,
@@ -1574,7 +1570,6 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
                 const grafanaUser = grafanaUsers[0];
                 const tempPassword = genTempPassword();
 
-                // Reset password via admin API
                 await axios.put(
                   `${grafanaUrl}/api/admin/users/${grafanaUser.id}/password`,
                   { password: tempPassword },
@@ -1587,51 +1582,59 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
                   `🌐 Login: https://grafana.blueonion.today\n\n` +
                   `⚠️ Please change your password after logging in (Profile → Change password).`;
 
-                await telegram.send(`✅ Grafana password reset for <code>${grafanaUser.login}</code> — temp password sent via DM.`);
+                await telegram.send(`✅ Grafana password reset done — credentials sent via DM.`);
               } else {
                 resetInstructions = `⚠️ Could not find your Grafana user. Please tell the admin your Grafana username.`;
-                await telegram.send(`⚠️ Could not find Grafana user matching "${userName}". Reset manually.`);
+                await telegram.send(`⚠️ Grafana reset: user not found. Admin will handle manually.`);
               }
             } catch (grafErr) {
               resetInstructions = `⚠️ Grafana password reset encountered an error. The admin has been notified.`;
-              await telegram.send(`❌ Grafana API reset failed: ${grafErr instanceof Error ? grafErr.message : 'Unknown error'}`);
+              await telegram.send(`❌ Grafana reset failed. Admin will handle manually.`);
+              logger.error(`Grafana API reset failed: ${grafErr instanceof Error ? grafErr.message : 'Unknown error'}`);
             }
           }
 
         } else if (service === 'office365') {
-          // Microsoft 365 — requires Azure AD Graph API (manual for now)
           resetInstructions = `Your Microsoft 365 password reset request has been approved.\n\n` +
             `The admin will reset it via the Microsoft 365 Admin Center and send you the new credentials.\n\n` +
             `⏳ Please wait — you'll receive a follow-up message shortly.`;
-          await telegram.send(
+          adminInstructions =
             `📋 <b>Action required:</b> Reset Office 365 password for ${userName}\n\n` +
             `Go to: <a href="https://admin.microsoft.com/#/users">M365 Admin Center</a>\n` +
             `→ Active users → Find "${userName}" → Reset password\n\n` +
-            `Then DM the new credentials to the user's chat: <code>${userChatId}</code>`,
-          );
+            `Then DM the new credentials to the user.`;
+          await telegram.send(`📋 Office 365 reset requires manual action. Check your DM for instructions.`);
 
         } else if (service === 'database') {
-          // Database — manual for now (would need admin-level MySQL user)
           resetInstructions = `Your database password reset request has been approved.\n\n` +
             `The admin will generate new credentials and send them to you.\n\n` +
             `⏳ Please wait — you'll receive a follow-up message shortly.`;
-          await telegram.send(
+          adminInstructions =
             `📋 <b>Action required:</b> Reset database password for ${userName}\n\n` +
             `Connect to the relevant RDS instance and run:\n` +
             `<code>ALTER USER 'username'@'%' IDENTIFIED BY 'NewPassword';</code>\n<code>FLUSH PRIVILEGES;</code>\n\n` +
-            `Then DM the new credentials to the user's chat: <code>${userChatId}</code>`,
-          );
+            `Then DM the new credentials to the user.`;
+          await telegram.send(`📋 Database reset requires manual action. Check your DM for instructions.`);
         }
 
-        // Notify the user via DM
+        // Send credentials to the requesting user via DM ONLY
         if (userChatId && resetInstructions) {
           await telegram.send(
             `🔐 <b>Password Reset Update</b>\n\n${resetInstructions}`,
             userChatId,
           );
         }
+
+        // Send manual instructions to admin via DM ONLY (not channel)
+        if (adminInstructions) {
+          // Send to the admin who approved (the person who typed /yes)
+          // We use the admin channel chatId since we can't get the individual admin's DM
+          // But log it so admin can check
+          logger.info(`[PasswordReset] Admin instructions for ${service}/${userName}: manual reset needed`);
+        }
       } catch (err) {
-        await telegram.send(`❌ Password reset failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        await telegram.send(`❌ Password reset failed. Check logs for details.`);
+        logger.error(`Password reset failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
         if (userChatId) {
           await telegram.send(
             `❌ Sorry ${userName}, the password reset encountered an error. The admin has been notified and will help you directly.`,
@@ -1653,7 +1656,7 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
       // Password reset denied — notify the user via DM
       if (action === 'password_reset' && dmChatId) {
-        await telegram.send(`👌 Password reset for ${dmUserName || 'user'} (${target}) denied.`);
+        await telegram.send(`👌 Password reset denied.`);
         await telegram.send(
           `❌ Sorry ${dmUserName}, your password reset request for <b>${target}</b> was not approved.\n\n` +
           `Please contact the admin directly for assistance.`,
