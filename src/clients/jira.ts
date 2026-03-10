@@ -14,6 +14,7 @@ export interface JiraIssueInfo {
   assignee: string;
   priority: string;
   type: string;
+  project: string;
   created: string;
   updated: string;
   url: string;
@@ -232,7 +233,7 @@ export class JiraClient {
           params: {
             jql,
             maxResults,
-            fields: 'key,summary,status,assignee,priority,issuetype,created,updated',
+            fields: 'key,summary,status,assignee,priority,issuetype,created,updated,project',
           },
           headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
           timeout: 15000,
@@ -245,6 +246,7 @@ export class JiraClient {
         const assignee = fields.assignee as Record<string, unknown> || {};
         const priority = fields.priority as Record<string, unknown> || {};
         const issuetype = fields.issuetype as Record<string, unknown> || {};
+        const project = fields.project as Record<string, unknown> || {};
         return {
           key: String(issue.key || ''),
           summary: String(fields.summary || ''),
@@ -252,6 +254,7 @@ export class JiraClient {
           assignee: String(assignee.displayName || 'Unassigned'),
           priority: String(priority.name || ''),
           type: String(issuetype.name || ''),
+          project: String(project.key || ''),
           created: String(fields.created || ''),
           updated: String(fields.updated || ''),
           url: `${this.baseUrl}/browse/${issue.key}`,
@@ -268,16 +271,24 @@ export class JiraClient {
    */
   async getTicketsForPerson(name: string, statusFilter?: string): Promise<{ issues: JiraIssueInfo[]; total: number }> {
     try {
-      // Use JQL assignee search directly (avoids deprecated /user/search endpoint)
-      // Try exact display name match first, then fuzzy
-      const safeName = name.replace(/"/g, '\\"');
-      let jql = `project = ${config.jira.projectKey} AND assignee = "${safeName}"`;
+      // Always look up the user first to get accountId (display name in JQL is unreliable)
+      const user = await this.lookupUser(name);
+
+      // Build JQL — search across ALL projects (not just HUBS) since team members
+      // work across BAS, CRM, UM, HUB, etc.
+      const assigneeClause = user
+        ? `assignee = "${user.accountId}"`
+        : `assignee = "${name.replace(/"/g, '\\"')}"`;
+
+      let jql = assigneeClause;
       if (statusFilter) {
         jql += ` AND status = "${statusFilter}"`;
       } else {
-        jql += ' AND status NOT IN (Done, Closed, Resolved)';
+        jql += ' AND status NOT IN (Done, Closed, Resolved, DONE)';
       }
       jql += ' ORDER BY priority DESC, updated DESC';
+
+      logger.info(`[Jira] Person search JQL: ${jql}`);
 
       // Get total count
       const countRes = await axios.get(
@@ -287,38 +298,13 @@ export class JiraClient {
           headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
           timeout: 10000,
         },
-      ).catch(() => ({ data: { total: 0 } }));
+      ).catch((err) => {
+        logger.error(`[Jira] Count query failed: ${err instanceof Error ? err.message : err}`);
+        return { data: { total: 0 } };
+      });
 
-      let total = countRes.data.total || 0;
-      let issues: JiraIssueInfo[] = [];
-
-      if (total > 0) {
-        issues = await this.searchIssues(jql, 20);
-      } else {
-        // Exact name didn't match — try partial name parts via user picker
-        const user = await this.lookupUser(name);
-        if (user) {
-          let jql2 = `project = ${config.jira.projectKey} AND assignee = "${user.accountId}"`;
-          if (statusFilter) {
-            jql2 += ` AND status = "${statusFilter}"`;
-          } else {
-            jql2 += ' AND status NOT IN (Done, Closed, Resolved)';
-          }
-          jql2 += ' ORDER BY priority DESC, updated DESC';
-
-          const countRes2 = await axios.get(
-            `${this.baseUrl}/rest/api/3/search/jql`,
-            {
-              params: { jql: jql2, maxResults: 0, fields: 'key' },
-              headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
-              timeout: 10000,
-            },
-          ).catch(() => ({ data: { total: 0 } }));
-
-          total = countRes2.data.total || 0;
-          issues = await this.searchIssues(jql2, 20);
-        }
-      }
+      const total = countRes.data.total || 0;
+      const issues = total > 0 ? await this.searchIssues(jql, 20) : [];
 
       return { issues, total };
     } catch (err) {
@@ -513,7 +499,7 @@ export class JiraClient {
     for (const t of issues) {
       msg += `${priorityIcon(t.priority)} <a href="${t.url}">${t.key}</a> ${statusIcon(t.status)} <b>${t.status}</b>\n`;
       msg += `  ${t.summary.substring(0, 80)}${t.summary.length > 80 ? '...' : ''}\n`;
-      msg += `  👤 ${t.assignee} | ${t.type}\n\n`;
+      msg += `  👤 ${t.assignee} | ${t.type}${t.project ? ` | ${t.project}` : ''}\n\n`;
     }
 
     return msg;
