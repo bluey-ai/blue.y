@@ -1069,7 +1069,12 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     || text.match(/(.+?)(?:'s|s')\s+(?:jira\s+)?(?:tickets?|issues?|tasks?)/i);
 
   if (jiraQueryMatch && config.jira.apiToken) {
-    const personName = jiraQueryMatch[1].replace(/[?!.]/g, '').trim();
+    // Strip trailing filter phrases that aren't part of the person's name
+    const personName = jiraQueryMatch[1]
+      .replace(/[?!.]/g, '')
+      .replace(/\s+(?:and\s+)?(?:(?:are|that\s+are|which\s+are|still)\s+)?(?:open|pending|remaining|closed|done|resolved|in\s*progress|unresolved|active|assigned|not\s+done)\s*$/i, '')
+      .replace(/\s+(?:and|that|which)\s*$/i, '')
+      .trim();
     if (personName.length < 2 || personName.length > 50) {
       await telegram.send('❌ Please provide a valid name.');
       return;
