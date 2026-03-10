@@ -16,6 +16,10 @@ import { TeamsClient, TeamsTicket, TeamsCards } from './clients/teams';
 import { VisionClient } from './clients/vision';
 import { QAClient } from './clients/qa';
 import { LokiClient } from './clients/loki';
+import { DatabaseClient } from './clients/database';
+import { DbAgentPipeline } from './clients/db-agents';
+import { BitbucketClient } from './clients/bitbucket';
+import { AwsMonitorClient } from './clients/aws-monitor';
 import { CronJob } from 'cron';
 
 const app = express();
@@ -52,6 +56,10 @@ const teamsClient = new TeamsClient();
 const visionClient = new VisionClient();
 const qaClient = new QAClient();
 const lokiClient = new LokiClient();
+const dbClient = config.database.enabled ? new DatabaseClient() : null;
+const dbPipeline = dbClient ? new DbAgentPipeline(dbClient) : null;
+const bbClient = config.bitbucket.enabled ? new BitbucketClient() : null;
+const awsMonitor = new AwsMonitorClient();
 
 // Initialize monitors
 const monitors = [
@@ -65,7 +73,10 @@ const monitors = [
 const scheduler = new MonitorScheduler(monitors, telegram, bedrock, kube, lokiClient);
 
 // Pending action confirmation (teamsTicketId links back to Teams user for cross-channel flow)
-let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number; teamsTicketId?: string; jiraKey?: string } | null = null;
+let pendingAction: { action: string; target: string; namespace: string; detail?: string; timestamp: number; teamsTicketId?: string; jiraKey?: string; dmChatId?: string; dmUserName?: string } | null = null;
+
+// Allowed services for password reset
+const PASSWORD_RESET_SERVICES = ['aws', 'office365', 'microsoft365', 'o365', 'm365', 'database', 'db', 'rds', 'grafana'] as const;
 
 // Extract meaningful keywords for Jira dedup (strips filler words)
 const FILLER_WORDS = new Set(['a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'and', 'but', 'or', 'nor', 'not', 'so', 'yet', 'both', 'either', 'neither', 'each', 'every', 'all', 'any', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'only', 'own', 'same', 'than', 'too', 'very', 'just', 'because', 'if', 'when', 'where', 'how', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'she', 'it', 'its', 'they', 'them', 'their', 'hi', 'hello', 'hey', 'please', 'thanks', 'again', 'also', 'still', 'already', 'issue', 'problem', 'help', 'need', 'want', 'like', 'get', 'got', 'getting']);
@@ -203,15 +214,135 @@ const TEAM_EMAILS: Record<string, string> = {
 };
 const TEAM_ALL = Object.values(TEAM_EMAILS);
 
-// Handle incoming Telegram commands
+// Handle DMs to BLUE.Y (password reset requests, etc.)
+async function handleTelegramDM(text: string, chatId: string, userName: string): Promise<void> {
+  const cmd = text.toLowerCase().trim();
+
+  // Password reset detection
+  const resetMatch = cmd.match(/(?:reset|forgot|change|update|new)\s+(?:my\s+)?(?:password|pwd|pass|credentials?|login)\s*(?:for|on|of|in)?\s*(.*)/i)
+    || cmd.match(/(aws|office\s*365|microsoft\s*365|o365|m365|database|db|rds|grafana)\s+(?:password|pwd|pass|credentials?|login)\s*(?:reset|forgot|change|new)?/i)
+    || cmd.match(/(?:i\s+)?(?:forgot|lost|can'?t\s+(?:login|log\s*in|access|remember))\s*(?:to|my|the)?\s*(?:password|pwd|pass|credentials?)?\s*(?:for|on|of|in)?\s*(.*)/i);
+
+  if (resetMatch) {
+    const serviceRaw = (resetMatch[1] || '').trim().toLowerCase();
+
+    // Detect service
+    let service = 'unknown';
+    if (/aws|console|iam/i.test(serviceRaw) || /aws|console|iam/i.test(cmd)) service = 'aws';
+    else if (/office|o365|m365|microsoft|outlook|teams|365/i.test(serviceRaw) || /office|o365|m365|microsoft|outlook|teams|365/i.test(cmd)) service = 'office365';
+    else if (/database|db|rds|mysql|postgres/i.test(serviceRaw) || /database|db|rds|mysql/i.test(cmd)) service = 'database';
+    else if (/grafana/i.test(serviceRaw) || /grafana/i.test(cmd)) service = 'grafana';
+
+    if (service === 'unknown') {
+      await telegram.send(
+        `👋 Hi ${userName}!\n\n` +
+        `I can help reset your password, but please specify which service:\n\n` +
+        `• <b>AWS Console</b> — "reset my password for AWS"\n` +
+        `• <b>Microsoft 365</b> — "forgot my Office 365 password"\n` +
+        `• <b>Database</b> — "reset my database password"\n` +
+        `• <b>Grafana</b> — "forgot my Grafana login"\n\n` +
+        `Just tell me which one and I'll request admin approval.`,
+        chatId,
+      );
+      return;
+    }
+
+    const serviceLabels: Record<string, string> = {
+      aws: 'AWS Console (IAM)',
+      office365: 'Microsoft 365 (Office)',
+      database: 'Database (RDS)',
+      grafana: 'Grafana',
+    };
+
+    // Notify admin channel for approval
+    await telegram.send(
+      `🔐 <b>PASSWORD RESET REQUEST</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `👤 <b>User:</b> ${userName}\n` +
+      `🏷️ <b>Service:</b> ${serviceLabels[service] || service}\n` +
+      `💬 <b>Message:</b> "${text}"\n` +
+      `⏰ <b>Time:</b> ${new Date().toISOString()}\n\n` +
+      `⚠️ Reply <code>/yes</code> to approve or <code>/no</code> to deny.`,
+    );
+
+    // Store as pending action
+    pendingAction = {
+      action: 'password_reset',
+      target: service,
+      namespace: userName,
+      detail: chatId,
+      timestamp: Date.now(),
+      dmChatId: chatId,
+      dmUserName: userName,
+    };
+
+    // Confirm to user
+    await telegram.send(
+      `✅ Got it, ${userName}! Your password reset request for <b>${serviceLabels[service]}</b> has been sent to the admin for approval.\n\n` +
+      `⏳ I'll notify you once it's approved and processed. This usually takes a few minutes.`,
+      chatId,
+    );
+
+    logger.info(`[DM] Password reset request from ${userName} (${chatId}) for ${service}`);
+    return;
+  }
+
+  // Cheatsheet in DM
+  if (cmd === '/cheatsheet' || cmd === '/cheat' || cmd === '/commands') {
+    await telegram.send(
+      `📖 <b>BLUE.Y Command Reference</b>\n\n` +
+      `All commands below work in the <b>team channel only</b>.\n` +
+      `In DMs, only password resets are available.\n\n` +
+      `🔍 /status /check /nodes /resources /hpa /doris\n` +
+      `📦 /logs /describe /events /deployments /diagnose\n` +
+      `⚡ /restart /scale (+ /yes /no)\n` +
+      `🛡️ /smoketest /securityscan /restarts /loki\n` +
+      `📧 /report /email /incidents\n` +
+      `🎫 /jira /report-issue /tickets\n` +
+      `🗄️ /db /databases /tables /query\n` +
+      `🔧 /build /builds /pipelines\n` +
+      `☁️ /rds /jobs /costs /backups /backend /cronjobs /diff\n` +
+      `⚙️ /sleep /wake /help /cheatsheet\n\n` +
+      `💡 Use <code>/cheatsheet</code> in the team channel for the full detailed reference with examples.`,
+      chatId,
+    );
+    return;
+  }
+
+  // Help / greeting in DM
+  if (cmd === '/start' || cmd === '/help' || cmd === 'hi' || cmd === 'hello' || cmd === 'hey') {
+    await telegram.send(
+      `👋 Hi ${userName}! I'm <b>BLUE.Y</b>, your AI ops assistant.\n\n` +
+      `In DMs, I can only help with:\n\n` +
+      `🔐 <b>Password Reset</b>\n` +
+      `• "Reset my AWS password"\n` +
+      `• "I forgot my Office 365 password"\n` +
+      `• "I can't login to Grafana"\n` +
+      `• "Need new database credentials"\n\n` +
+      `📖 <code>/cheatsheet</code> — View command list\n\n` +
+      `All other commands work in the <b>team channel</b> only.\n` +
+      `All password requests require admin approval for security.`,
+      chatId,
+    );
+    return;
+  }
+
+  // Everything else in DM → redirect to channel
+  await telegram.send(
+    `Hi ${userName}! DMs are only for <b>password resets</b>.\n\n` +
+    `For monitoring, deployments, and all other commands, please use the <b>team channel</b>.\n\n` +
+    `🔐 Need a password reset? Try:\n` +
+    `• "Reset my password for AWS"\n` +
+    `• "Forgot my Office 365 password"\n\n` +
+    `📖 <code>/cheatsheet</code> — View all commands`,
+    chatId,
+  );
+}
+
+// Handle incoming Telegram commands (group channel)
 async function handleTelegramCommand(text: string, chatId: string): Promise<void> {
   // Strip @BotName suffix from commands (Telegram appends it in groups)
   const cmd = text.toLowerCase().trim().replace(/@\w+/g, '');
-
-  if (chatId !== config.telegram.chatId) {
-    logger.warn(`Telegram message from unauthorized chat: ${chatId}`);
-    return;
-  }
 
   // --- Core commands ---
   if (cmd === '/sleep' || cmd === 'sleep') {
@@ -899,8 +1030,148 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     return;
   }
 
-  // --- Create Jira ticket ---
-  if (cmd === '/jira' || text.match(/(create|make|open|raise)\s+(a\s+)?jira\s+(ticket|issue)/i) || text.match(/jira\s+(ticket|issue)/i)) {
+  // --- Jira ticket queries ---
+  if (cmd === '/tickets' || cmd === '/ticket' || cmd.startsWith('/tickets ') || cmd.startsWith('/ticket ')) {
+    if (!config.jira.apiToken) {
+      await telegram.send('❌ Jira not configured. Set JIRA_EMAIL and JIRA_API_TOKEN env vars.');
+      return;
+    }
+
+    const ticketArgs = text.replace(/^\/tickets?\s*/i, '').trim();
+
+    // /tickets summary — project overview
+    if (!ticketArgs || ticketArgs === 'summary' || ticketArgs === 'overview') {
+      await telegram.send('📊 Fetching project summary...');
+      const summary = await jiraClient.getProjectSummary();
+
+      let msg = `📊 <b>${config.jira.projectKey} — Open Tickets: ${summary.total}</b>\n\n`;
+      msg += '<b>By Status:</b>\n';
+      for (const [status, count] of Object.entries(summary.byStatus).sort((a, b) => b[1] - a[1])) {
+        msg += `  • ${status}: <b>${count}</b>\n`;
+      }
+      msg += '\n<b>By Assignee:</b>\n';
+      for (const [assignee, count] of Object.entries(summary.byAssignee).sort((a, b) => b[1] - a[1])) {
+        msg += `  • ${assignee}: <b>${count}</b>\n`;
+      }
+      await telegram.send(msg);
+      return;
+    }
+
+    // /tickets <person name> — tickets for a specific person
+    await telegram.send(`🔍 Searching tickets for "${ticketArgs}"...`);
+    const { issues, total } = await jiraClient.getTicketsForPerson(ticketArgs);
+    await telegram.send(JiraClient.formatTicketsForTelegram(issues, `Tickets for "${ticketArgs}"`, total));
+    return;
+  }
+
+  // Natural language Jira queries
+  const jiraQueryMatch = text.match(/(?:how many|show|list|what|get)\s+(?:jira\s+)?(?:tickets?|issues?|tasks?)\s+(?:are\s+)?(?:assigned\s+(?:to|for)|(?:pending|open|remaining)\s+(?:for|to)|(?:for|of))\s+(.+?)(?:\?|$)/i)
+    || text.match(/(?:tickets?|issues?|tasks?)\s+(?:assigned\s+(?:to|for)|(?:pending|open|remaining)\s+(?:for|to)|(?:for|of))\s+(.+?)(?:\?|$)/i)
+    || text.match(/(.+?)(?:'s|s')\s+(?:jira\s+)?(?:tickets?|issues?|tasks?)/i);
+
+  if (jiraQueryMatch && config.jira.apiToken) {
+    const personName = jiraQueryMatch[1].replace(/[?!.]/g, '').trim();
+    if (personName.length < 2 || personName.length > 50) {
+      await telegram.send('❌ Please provide a valid name.');
+      return;
+    }
+
+    await telegram.send(`🔍 Searching tickets for "${personName}"...`);
+    const { issues, total } = await jiraClient.getTicketsForPerson(personName);
+    await telegram.send(JiraClient.formatTicketsForTelegram(issues, `Tickets for "${personName}"`, total));
+    return;
+  }
+
+  // --- Report issue → Jira (from business teams or ops) ---
+  // Matches: /report-issue <description> assign to <name>
+  // Or natural language: "create a jira ticket: user can't login, assign to Abdul"
+  // Or: "report this to jira and assign to Usama: BAS portal showing error"
+  // Or: "log a bug: PDF export broken, assign Abdul Khaliq"
+  const reportIssueCmd = cmd.startsWith('/report-issue') || cmd.startsWith('/reportissue') || cmd.startsWith('/log-issue') || cmd.startsWith('/logissue');
+  const reportIssueLang = text.match(/(?:create|make|open|raise|log|report|file)\s+(?:a\s+)?(?:jira\s+)?(?:ticket|issue|bug|task)\s*(?:for|about|:)?\s*(.+)/i);
+
+  if ((reportIssueCmd || reportIssueLang) && config.jira.apiToken) {
+    let issueText = '';
+    if (reportIssueCmd) {
+      issueText = text.replace(/^\/(report-?issue|log-?issue)\s*/i, '').trim();
+    } else if (reportIssueLang) {
+      issueText = reportIssueLang[1].trim();
+    }
+
+    if (!issueText) {
+      await telegram.send(
+        '📝 <b>Report an issue to Jira</b>\n\n' +
+        'Usage:\n' +
+        '<code>/report-issue BAS portal login error for UOB users, assign to Abdul Khaliq</code>\n\n' +
+        'Or natural language:\n' +
+        '"create a jira ticket: PDF export broken, assign to Usama"\n' +
+        '"log a bug: user can\'t register on BAS, assign Abdul"',
+      );
+      return;
+    }
+
+    // Parse assignee from the text: "assign to <name>" or "assign <name>"
+    const assignMatch = issueText.match(/,?\s*assign(?:ed)?\s+(?:to\s+)?(.+?)$/i);
+    let assigneeName: string | null = null;
+    let description = issueText;
+
+    if (assignMatch) {
+      assigneeName = assignMatch[1].replace(/[.!?]+$/, '').trim();
+      description = issueText.substring(0, assignMatch.index).replace(/,?\s*$/, '').trim();
+    }
+
+    // Parse priority hints
+    let priority: string | undefined;
+    if (/\b(urgent|critical|p1|blocker)\b/i.test(description)) priority = 'High';
+    else if (/\b(important|p2)\b/i.test(description)) priority = 'Medium';
+
+    // Determine issue type from keywords
+    let issueType = 'Task';
+    if (/\b(bug|broken|error|crash|fail|not working|can'?t)\b/i.test(description)) issueType = 'Bug';
+
+    // Generate a clean summary (first sentence or first 80 chars)
+    const summaryRaw = description.split(/[.!?\n]/)[0].trim();
+    const summary = summaryRaw.length > 80 ? summaryRaw.substring(0, 77) + '...' : summaryRaw;
+
+    // Look up assignee
+    let assigneeId: string | undefined;
+    let assigneeDisplay = '';
+    if (assigneeName) {
+      await telegram.send(`🔍 Looking up "${assigneeName}" in Jira...`);
+      const user = await jiraClient.lookupUser(assigneeName);
+      if (user) {
+        assigneeId = user.accountId;
+        assigneeDisplay = user.displayName;
+      } else {
+        await telegram.send(`⚠️ Could not find Jira user "${assigneeName}". Creating ticket as unassigned.`);
+      }
+    }
+
+    await telegram.send('🎫 Creating Jira ticket...');
+    const ticket = await jiraClient.createReportedIssue({
+      summary,
+      description,
+      reportedBy: 'Telegram (via BLUE.Y)',
+      assigneeAccountId: assigneeId,
+      issueType,
+      priority,
+    });
+
+    if (ticket) {
+      let msg = `✅ Jira ticket created: <a href="${ticket.url}">${ticket.key}</a>\n\n`;
+      msg += `📋 <b>${summary}</b>\n`;
+      msg += `📌 Type: ${issueType}\n`;
+      if (assigneeDisplay) msg += `👤 Assigned to: ${assigneeDisplay}\n`;
+      if (priority) msg += `⚡ Priority: ${priority}\n`;
+      await telegram.send(msg);
+    } else {
+      await telegram.send('❌ Failed to create Jira ticket. Check credentials.');
+    }
+    return;
+  }
+
+  // --- Create Jira ticket (from incident context) ---
+  if (cmd === '/jira') {
     if (!lastIncident) {
       await telegram.send('❌ No recent incident to create ticket for. Run /diagnose first.');
       return;
@@ -1148,6 +1419,226 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
           }
         }
       }
+    } else if (action === 'build') {
+      // Trigger Bitbucket pipeline
+      if (!bbClient) {
+        await telegram.send('❌ Bitbucket not configured.');
+        return;
+      }
+
+      const repo = target;    // repo name
+      const branch = namespace; // branch stored in namespace field
+
+      await telegram.send(
+        `⚡ <b>TRIGGERING PIPELINE</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📦 <b>Repo:</b> ${repo}\n` +
+        `🌿 <b>Branch:</b> <code>${branch}</code>\n` +
+        `🏷️ <b>Label:</b> ${detail || ''}`,
+      );
+
+      try {
+        const pipeline = await bbClient.triggerPipeline(repo, branch);
+        await telegram.send(
+          `✅ Pipeline triggered!\n\n` +
+          `${BitbucketClient.formatPipeline(pipeline)}\n\n` +
+          `🔗 <a href="${pipeline.url}">View in Bitbucket</a>\n\n` +
+          `⏳ Monitoring build progress...`,
+        );
+
+        // Poll for build completion (every 30s, max 15 min)
+        const maxPolls = 30;
+        for (let i = 0; i < maxPolls; i++) {
+          await new Promise((r) => setTimeout(r, 30000));
+          try {
+            const status = await bbClient.getPipelineStatus(repo, pipeline.uuid);
+            if (status.state === 'COMPLETED') {
+              const icon = status.result === 'SUCCESSFUL' ? '✅' : '❌';
+              const mins = Math.floor(status.durationSeconds / 60);
+              const secs = status.durationSeconds % 60;
+              await telegram.send(
+                `${icon} <b>Build #${status.buildNumber} ${status.result}</b>\n\n` +
+                `📦 ${repo} / <code>${branch}</code>\n` +
+                `⏱️ Duration: ${mins}m${secs.toString().padStart(2, '0')}s\n` +
+                `🔗 <a href="${status.url}">View in Bitbucket</a>` +
+                (status.result === 'SUCCESSFUL' ? '\n\n🚀 Deployment is live!' : '\n\n⚠️ Check build logs for errors.'),
+              );
+              break;
+            }
+            // Send progress update every 2 minutes
+            if (i > 0 && i % 4 === 0) {
+              const mins = Math.floor(status.durationSeconds / 60);
+              await telegram.send(`⏳ Build #${status.buildNumber} still running... (${mins}m elapsed)`);
+            }
+          } catch {
+            // Ignore polling errors, try again next cycle
+          }
+        }
+      } catch (err) {
+        await telegram.send(`❌ Failed to trigger pipeline: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    } else if (action === 'password_reset') {
+      // Password reset approved — execute based on service type
+      const service = target;     // aws, office365, database, grafana
+      const userName = namespace; // stored the user's name in namespace field
+      const userChatId = detail;  // stored the DM chat ID in detail field
+
+      const serviceLabels: Record<string, string> = {
+        aws: 'AWS Console (IAM)',
+        office365: 'Microsoft 365',
+        database: 'Database (RDS)',
+        grafana: 'Grafana',
+      };
+
+      await telegram.send(
+        `✅ <b>Password reset APPROVED</b> for ${userName}\n` +
+        `🏷️ Service: ${serviceLabels[service] || service}\n\n` +
+        `⏳ Processing...`,
+      );
+
+      // Generate a secure temporary password
+      const genTempPassword = () => {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+        let pwd = 'BlueOnion-';
+        for (let i = 0; i < 8; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
+        pwd += '!' + Math.floor(Math.random() * 100);
+        return pwd;
+      };
+
+      try {
+        let resetInstructions = '';
+
+        if (service === 'aws') {
+          // AWS IAM console password reset via AWS SDK
+          const { IAMClient, ListUsersCommand, UpdateLoginProfileCommand } = await import('@aws-sdk/client-iam');
+          const iam = new IAMClient({ region: 'ap-southeast-1' }); // Uses IRSA role in-cluster
+
+          const tempPassword = genTempPassword();
+
+          try {
+            // List IAM users and find matching user
+            const listRes = await iam.send(new ListUsersCommand({}));
+            const users = listRes.Users || [];
+            const nameParts = userName.toLowerCase().split(/\s+/);
+            const iamUser = users.find((u) => {
+              const un = (u.UserName || '').toLowerCase();
+              return nameParts.some((p: string) => un.includes(p));
+            });
+
+            if (iamUser) {
+              await iam.send(new UpdateLoginProfileCommand({
+                UserName: iamUser.UserName,
+                Password: tempPassword,
+                PasswordResetRequired: true,
+              }));
+
+              resetInstructions = `Your AWS Console password has been reset.\n\n` +
+                `🔑 Username: <code>${iamUser.UserName}</code>\n` +
+                `🔑 Temporary password: <code>${tempPassword}</code>\n` +
+                `🌐 Login: https://716156543026.signin.aws.amazon.com/console\n\n` +
+                `⚠️ You MUST set a new password on first login.\n` +
+                `🗑️ This message will be your only record — save your new password securely.`;
+
+              await telegram.send(`✅ AWS password reset for IAM user <code>${iamUser.UserName}</code> — temp password sent via DM.`);
+            } else {
+              resetInstructions = `⚠️ Could not find your IAM user automatically. Please tell the admin your IAM username.`;
+              await telegram.send(`⚠️ Could not find IAM user matching "${userName}". Available users:\n<code>${users.map((u) => u.UserName).join(', ')}</code>`);
+            }
+          } catch (awsErr) {
+            resetInstructions = `⚠️ AWS password reset encountered an error. The admin has been notified and will help you directly.`;
+            await telegram.send(`❌ AWS IAM reset failed: ${awsErr instanceof Error ? awsErr.message : 'Unknown error'}`);
+          }
+
+        } else if (service === 'grafana') {
+          // Grafana — reset via Admin API (internal cluster URL)
+          if (!config.grafana.enabled) {
+            resetInstructions = `Your Grafana password reset has been approved.\n\nThe admin will reset it manually and send you the new credentials.`;
+            await telegram.send(
+              `📋 <b>Action required:</b> Reset Grafana password for ${userName}\n\n` +
+              `GRAFANA_ADMIN_PASSWORD not set — cannot auto-reset.\n` +
+              `Go to: Grafana Admin → Users → ${userName} → Change password`,
+            );
+          } else {
+            try {
+              const grafanaAuth = Buffer.from(`${config.grafana.adminUser}:${config.grafana.adminPassword}`).toString('base64');
+              const grafanaUrl = config.grafana.internalUrl;
+
+              // Search for user in Grafana
+              const searchRes = await axios.get(`${grafanaUrl}/api/users/search?query=${encodeURIComponent(userName)}`, {
+                headers: { Authorization: `Basic ${grafanaAuth}` },
+                timeout: 10000,
+              });
+
+              const grafanaUsers = searchRes.data?.users || [];
+              if (grafanaUsers.length > 0) {
+                const grafanaUser = grafanaUsers[0];
+                const tempPassword = genTempPassword();
+
+                // Reset password via admin API
+                await axios.put(
+                  `${grafanaUrl}/api/admin/users/${grafanaUser.id}/password`,
+                  { password: tempPassword },
+                  { headers: { Authorization: `Basic ${grafanaAuth}`, 'Content-Type': 'application/json' }, timeout: 10000 },
+                );
+
+                resetInstructions = `Your Grafana password has been reset.\n\n` +
+                  `🔑 Username: <code>${grafanaUser.login}</code>\n` +
+                  `🔑 Temporary password: <code>${tempPassword}</code>\n` +
+                  `🌐 Login: https://grafana.blueonion.today\n\n` +
+                  `⚠️ Please change your password after logging in (Profile → Change password).`;
+
+                await telegram.send(`✅ Grafana password reset for <code>${grafanaUser.login}</code> — temp password sent via DM.`);
+              } else {
+                resetInstructions = `⚠️ Could not find your Grafana user. Please tell the admin your Grafana username.`;
+                await telegram.send(`⚠️ Could not find Grafana user matching "${userName}". Reset manually.`);
+              }
+            } catch (grafErr) {
+              resetInstructions = `⚠️ Grafana password reset encountered an error. The admin has been notified.`;
+              await telegram.send(`❌ Grafana API reset failed: ${grafErr instanceof Error ? grafErr.message : 'Unknown error'}`);
+            }
+          }
+
+        } else if (service === 'office365') {
+          // Microsoft 365 — requires Azure AD Graph API (manual for now)
+          resetInstructions = `Your Microsoft 365 password reset request has been approved.\n\n` +
+            `The admin will reset it via the Microsoft 365 Admin Center and send you the new credentials.\n\n` +
+            `⏳ Please wait — you'll receive a follow-up message shortly.`;
+          await telegram.send(
+            `📋 <b>Action required:</b> Reset Office 365 password for ${userName}\n\n` +
+            `Go to: <a href="https://admin.microsoft.com/#/users">M365 Admin Center</a>\n` +
+            `→ Active users → Find "${userName}" → Reset password\n\n` +
+            `Then DM the new credentials to the user's chat: <code>${userChatId}</code>`,
+          );
+
+        } else if (service === 'database') {
+          // Database — manual for now (would need admin-level MySQL user)
+          resetInstructions = `Your database password reset request has been approved.\n\n` +
+            `The admin will generate new credentials and send them to you.\n\n` +
+            `⏳ Please wait — you'll receive a follow-up message shortly.`;
+          await telegram.send(
+            `📋 <b>Action required:</b> Reset database password for ${userName}\n\n` +
+            `Connect to the relevant RDS instance and run:\n` +
+            `<code>ALTER USER 'username'@'%' IDENTIFIED BY 'NewPassword';</code>\n<code>FLUSH PRIVILEGES;</code>\n\n` +
+            `Then DM the new credentials to the user's chat: <code>${userChatId}</code>`,
+          );
+        }
+
+        // Notify the user via DM
+        if (userChatId && resetInstructions) {
+          await telegram.send(
+            `🔐 <b>Password Reset Update</b>\n\n${resetInstructions}`,
+            userChatId,
+          );
+        }
+      } catch (err) {
+        await telegram.send(`❌ Password reset failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        if (userChatId) {
+          await telegram.send(
+            `❌ Sorry ${userName}, the password reset encountered an error. The admin has been notified and will help you directly.`,
+            userChatId,
+          );
+        }
+      }
     } else {
       await telegram.send(`⚠️ Unknown action: ${action}. Try running the command manually.`);
     }
@@ -1156,9 +1647,20 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
   if (cmd === '/no' || cmd === 'no' || cmd === 'n') {
     if (pendingAction) {
-      const { teamsTicketId, jiraKey, action, target, namespace } = pendingAction;
+      const { teamsTicketId, jiraKey, action, target, namespace, dmChatId, dmUserName } = pendingAction;
       const declinedAction = pendingAction;
       pendingAction = null;
+
+      // Password reset denied — notify the user via DM
+      if (action === 'password_reset' && dmChatId) {
+        await telegram.send(`👌 Password reset for ${dmUserName || 'user'} (${target}) denied.`);
+        await telegram.send(
+          `❌ Sorry ${dmUserName}, your password reset request for <b>${target}</b> was not approved.\n\n` +
+          `Please contact the admin directly for assistance.`,
+          dmChatId,
+        );
+        return;
+      }
 
       // If Jira ticket already exists from the Teams report flow, update it
       if (jiraKey) {
@@ -1238,7 +1740,616 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     return;
   }
 
-  // --- Help ---
+  // --- Bitbucket CI/CD ---
+  if (cmd === '/build' || cmd === '/pipelines' || cmd.startsWith('/build ') ||
+      cmd.match(/^(deploy|build|trigger|run)\s+(backend|frontend|be|fe|um|pdf|bluey|bas)/i)) {
+
+    if (!bbClient) {
+      await telegram.send('⚠️ Bitbucket not configured. Set BB_USER and BB_TOKEN env vars.');
+      return;
+    }
+
+    // /build or /pipelines — list available pipelines
+    if (cmd === '/build' || cmd === '/pipelines') {
+      await telegram.send(bbClient.formatPipelineList());
+      return;
+    }
+
+    // Parse search term
+    const search = cmd.replace(/^\/(build|pipelines)\s*/i, '').trim() ||
+                   text.replace(/^(deploy|build|trigger|run)\s*/i, '').trim();
+
+    const matches = bbClient.findPipeline(search);
+
+    if (matches.length === 0) {
+      await telegram.send(`❌ No pipeline found for: <code>${search}</code>\n\nUse /build to see available pipelines.`);
+      return;
+    }
+
+    if (matches.length > 1) {
+      let msg = `🔍 Multiple matches for "<b>${search}</b>":\n\n`;
+      matches.forEach((m, i) => {
+        const envIcon = m.env === 'prod' ? '🔴' : m.env === 'stg' ? '🟡' : '🟢';
+        msg += `${i + 1}. ${envIcon} ${m.repo} / <code>${m.branch}</code> (${m.label})\n`;
+      });
+      msg += '\nBe more specific, e.g.: /build backend prod';
+      await telegram.send(msg);
+      return;
+    }
+
+    // Single match — confirm before triggering
+    const m = matches[0];
+    const envIcon = m.env === 'prod' ? '🔴 PRODUCTION' : m.env === 'stg' ? '🟡 STAGING' : '🟢 DEV';
+    const warning = m.env === 'prod' ? '\n\n⚠️ <b>This deploys to PRODUCTION!</b>' : '';
+
+    pendingAction = {
+      action: 'build',
+      target: m.repo,
+      namespace: m.branch,  // reuse namespace field for branch
+      detail: m.label,
+      timestamp: Date.now(),
+    };
+
+    await telegram.send(
+      `🔧 <b>Trigger Pipeline?</b>\n\n` +
+      `📦 Repo: <b>${m.repo}</b>\n` +
+      `🌿 Branch: <code>${m.branch}</code>\n` +
+      `🏷️ Label: ${m.label}\n` +
+      `🔹 Env: ${envIcon}${warning}\n\n` +
+      `Reply /yes to trigger or /no to cancel.`,
+    );
+    return;
+  }
+
+  if (cmd === '/builds' || cmd.startsWith('/builds ') || cmd.match(/^(show|recent|last)\s+(builds|pipelines)/i)) {
+    if (!bbClient) {
+      await telegram.send('⚠️ Bitbucket not configured.');
+      return;
+    }
+
+    const repoArg = cmd.replace(/^\/(builds)\s*/i, '').trim().toLowerCase();
+    const repos = repoArg.includes('fe') || repoArg.includes('frontend')
+      ? ['jcp-blo-frontend']
+      : repoArg.includes('be') || repoArg.includes('backend')
+        ? ['jcp-blo-backend']
+        : ['jcp-blo-backend', 'jcp-blo-frontend'];
+
+    await telegram.send('🔍 Fetching recent builds...');
+
+    for (const repo of repos) {
+      try {
+        const pipelines = await bbClient.getRecentPipelines(repo, 8);
+        const shortRepo = repo.replace('jcp-blo-', '');
+        let msg = `📋 <b>${shortRepo}</b> — Recent Builds\n\n`;
+        for (const p of pipelines) {
+          msg += `${BitbucketClient.formatPipeline(p)}\n`;
+        }
+        await telegram.send(msg);
+      } catch (err) {
+        await telegram.send(`❌ Failed to fetch builds for ${repo}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    }
+    return;
+  }
+
+  // --- Database query ---
+  if (cmd === '/db' || cmd.startsWith('/db ') || cmd === '/databases' || cmd === '/tables' ||
+      cmd.startsWith('/tables ') || cmd.startsWith('/query ') ||
+      cmd.match(/^(find|search|lookup|check|show|does|is|how many|count|list|get)\b.*(user|member|email|isin|fund|company|registration|submission|esg|score|portfolio)/i) ||
+      cmd.match(/^(who|which|what)\b.*(registered|signed up|exist|member|company|fund|top|highest|lowest)/i) ||
+      cmd.match(/\b(exist|exists)\b.*(database|db|system|um|dwd)/i)) {
+
+    if (!dbClient) {
+      await telegram.send('⚠️ Database access not configured. Set DB_READONLY_PASSWORD env var.');
+      return;
+    }
+
+    // /databases — list all accessible databases
+    if (cmd === '/db' || cmd === '/databases') {
+      await telegram.send(`🗄️ <b>Accessible Databases</b>\n\n${dbClient.getRegistrySummary()}\n\n💡 Usage:\n/db &lt;question&gt; — Ask in natural language\n/tables &lt;instance.database&gt; — List tables\n/query &lt;instance.database&gt; &lt;SQL&gt; — Run raw SQL`);
+      return;
+    }
+
+    // /tables [instance.database] — list tables
+    if (cmd === '/tables' || cmd.startsWith('/tables ')) {
+      const target = cmd.replace('/tables', '').trim() || 'hubsprod.dwd';
+      const resolved = dbClient.resolveTarget(target);
+      if (!resolved) {
+        await telegram.send(`❌ Unknown database: <code>${target}</code>\n\nUse /databases to see available databases.`);
+        return;
+      }
+      await telegram.send(`🔍 Listing tables on <b>${resolved.dbInfo.name}.${resolved.database}</b>...`);
+      const tables = await dbClient.listTables(resolved.dbInfo.name, resolved.database);
+      if (tables.length === 0) {
+        await telegram.send('No tables found (or access denied).');
+        return;
+      }
+      const grouped = tables.reduce((acc, t) => {
+        const prefix = t.includes('_') ? t.split('_')[0] : 'other';
+        if (!acc[prefix]) acc[prefix] = [];
+        acc[prefix].push(t);
+        return acc;
+      }, {} as Record<string, string[]>);
+
+      let msg = `📋 <b>${resolved.dbInfo.name}.${resolved.database}</b> — ${tables.length} tables\n\n`;
+      for (const [prefix, tbls] of Object.entries(grouped).sort((a, b) => b[1].length - a[1].length).slice(0, 20)) {
+        msg += `<b>${prefix}_*</b> (${tbls.length}): ${tbls.slice(0, 8).join(', ')}${tbls.length > 8 ? '...' : ''}\n`;
+      }
+      if (msg.length > 3900) msg = msg.substring(0, 3900) + '\n...truncated';
+      await telegram.send(msg);
+      return;
+    }
+
+    // /query <instance.database> <SQL> — run raw SQL
+    if (cmd.startsWith('/query ')) {
+      const args = cmd.replace('/query ', '').trim();
+      const spaceIdx = args.indexOf(' ');
+      if (spaceIdx === -1) {
+        await telegram.send('Usage: /query &lt;instance.database&gt; &lt;SQL&gt;\nExample: /query hubsprod.dwd SELECT * FROM bas_register_company LIMIT 5');
+        return;
+      }
+      const target = args.substring(0, spaceIdx);
+      const sql = args.substring(spaceIdx + 1).trim();
+      const resolved = dbClient.resolveTarget(target);
+      if (!resolved) {
+        await telegram.send(`❌ Unknown database: <code>${target}</code>`);
+        return;
+      }
+      await telegram.send(`🔍 Querying <b>${resolved.dbInfo.name}.${resolved.database}</b>...`);
+      const result = await dbClient.query(resolved.dbInfo.name, resolved.database, sql);
+      await telegram.send(dbClient.formatForTelegram(result));
+      return;
+    }
+
+    // Natural language → 3-Agent Pipeline (Generator → Validator → Verifier)
+    const question = cmd.replace(/^\/(db|query)\s*/i, '').trim() || text;
+
+    if (!dbPipeline) {
+      await telegram.send('⚠️ Database pipeline not available.');
+      return;
+    }
+
+    await telegram.send('🧠 <b>3-Agent Pipeline</b> starting...\n🔵 Agent 1 (Generator) → 🟡 Agent 2 (Validator) → 🟢 Agent 3 (Verifier)');
+
+    try {
+      const result = await dbPipeline.run(question, async (step, detail) => {
+        await telegram.send(`${step}: ${detail}`);
+      });
+
+      // Send formatted results
+      const messages = dbPipeline.formatForTelegram(result);
+      for (const msg of messages) {
+        await telegram.send(msg);
+      }
+    } catch (err) {
+      logger.error('DB 3-agent pipeline failed', err);
+      await telegram.send(`❌ Pipeline failed: ${err instanceof Error ? err.message : 'Unknown error'}\n\n💡 Try /query for raw SQL instead.`);
+    }
+    return;
+  }
+
+  // --- AWS Monitoring: RDS ---
+  if (cmd === '/rds' || cmd.match(/^(rds|database)\s*(health|status|metrics)?$/i)) {
+    await telegram.send('🗄️ Fetching RDS metrics...');
+    try {
+      const metrics = await awsMonitor.getRdsMetrics();
+      lastBotResponse = awsMonitor.formatRdsForTelegram(metrics);
+      await telegram.send(lastBotResponse);
+    } catch (err) {
+      await telegram.send(`❌ Failed to fetch RDS metrics: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- AWS Monitoring: Glue + EMR ---
+  if (cmd === '/jobs' || cmd === '/glue' || cmd === '/emr' || cmd.match(/^(glue|emr|etl)\s*(status|health)?$/i)) {
+    await telegram.send('🔧 Fetching Glue & EMR status...');
+    try {
+      const [crawlers, emrStatus] = await Promise.all([
+        awsMonitor.getGlueCrawlers(),
+        awsMonitor.getEmrStatus(),
+      ]);
+      const glueMsg = awsMonitor.formatGlueForTelegram(crawlers);
+      const emrMsg = awsMonitor.formatEmrForTelegram(emrStatus);
+      lastBotResponse = `${glueMsg}\n\n${emrMsg}`;
+      await telegram.send(glueMsg);
+      await telegram.send(emrMsg);
+    } catch (err) {
+      await telegram.send(`❌ Failed to fetch job status: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- AWS Cost Monitor ---
+  if (cmd === '/costs' || cmd.startsWith('/costs ') || cmd.match(/^(aws\s+)?(cost|spend|billing)/i)) {
+    const daysMatch = cmd.match(/(\d+)/);
+    const days = daysMatch ? Math.min(parseInt(daysMatch[1]), 30) : 7;
+    await telegram.send(`💰 Fetching AWS costs (last ${days} days)...`);
+    try {
+      const costs = await awsMonitor.getCosts(days);
+      lastBotResponse = awsMonitor.formatCostsForTelegram(costs);
+      await telegram.send(lastBotResponse);
+    } catch (err) {
+      await telegram.send(`❌ Failed to fetch cost data: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- RDS Backup Verification ---
+  if (cmd === '/backups' || cmd.match(/^(backup|rds\s*backup)\s*(status|check|verify)?$/i)) {
+    await telegram.send('💾 Checking backup status...');
+    try {
+      const backups = await awsMonitor.getRdsBackupStatus();
+      let msg = '💾 <b>RDS Backup Status</b>\n\n';
+      for (const b of backups) {
+        const age = b.lastBackup !== 'never'
+          ? Math.round((Date.now() - new Date(b.lastBackup).getTime()) / (60 * 60 * 1000))
+          : -1;
+        const icon = age < 0 ? '🔴' : age > 24 ? '🟡' : '🟢';
+        msg += `${icon} <b>${b.label}</b>\n`;
+        msg += `  Last backup: ${age >= 0 ? `${age}h ago` : 'never'}\n`;
+        msg += `  Window: ${b.backupWindow || 'not set'}\n`;
+        msg += `  Retention: ${b.retentionDays} days\n\n`;
+      }
+      // Doris backup check (CronJob in doris namespace)
+      try {
+        const batchApi = kube.getBatchApi();
+        const cronJobs = await batchApi.listNamespacedCronJob({ namespace: 'doris' });
+        const dorisBackup = cronJobs.items.find((cj) => cj.metadata?.name?.includes('backup'));
+        if (dorisBackup) {
+          const lastSchedule = dorisBackup.status?.lastScheduleTime;
+          const age = lastSchedule ? Math.round((Date.now() - new Date(lastSchedule).getTime()) / (60 * 60 * 1000)) : -1;
+          const icon = age < 0 ? '🔴' : age > 48 ? '🟡' : '🟢';
+          msg += `${icon} <b>Doris Backup (CronJob)</b>\n`;
+          msg += `  Last run: ${age >= 0 ? `${age}h ago` : 'never'}\n`;
+          msg += `  Schedule: ${dorisBackup.spec?.schedule || 'unknown'}\n`;
+          msg += `  Active: ${dorisBackup.spec?.suspend ? 'SUSPENDED ⚠️' : 'Yes'}\n`;
+        }
+      } catch { /* Doris backup check optional */ }
+      lastBotResponse = msg;
+      await telegram.send(msg);
+    } catch (err) {
+      await telegram.send(`❌ Failed to check backups: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- K8s CronJob Audit ---
+  if (cmd === '/cronjobs' || cmd === '/crons' || cmd.match(/^(cron\s*jobs?|scheduled)/i)) {
+    await telegram.send('⏰ Auditing CronJobs...');
+    try {
+      const batchApi = kube.getBatchApi();
+      let allCronJobs: Array<{ name: string; namespace: string; schedule: string; lastRun: string; active: number; suspended: boolean }> = [];
+      for (const ns of [...config.kube.namespaces, 'doris']) {
+        try {
+          const res = await batchApi.listNamespacedCronJob({ namespace: ns });
+          for (const cj of res.items) {
+            allCronJobs.push({
+              name: cj.metadata?.name || '',
+              namespace: ns,
+              schedule: cj.spec?.schedule || '',
+              lastRun: cj.status?.lastScheduleTime ? new Date(cj.status.lastScheduleTime).toISOString() : 'never',
+              active: cj.status?.active?.length || 0,
+              suspended: cj.spec?.suspend || false,
+            });
+          }
+        } catch { /* skip inaccessible namespace */ }
+      }
+
+      let msg = `⏰ <b>CronJob Audit (${allCronJobs.length} jobs)</b>\n\n`;
+      for (const cj of allCronJobs) {
+        const age = cj.lastRun !== 'never'
+          ? Math.round((Date.now() - new Date(cj.lastRun).getTime()) / (60 * 60 * 1000))
+          : -1;
+        const icon = cj.suspended ? '⏸️' : cj.active > 0 ? '⏳' : age < 0 ? '🔴' : age > 48 ? '🟡' : '🟢';
+        msg += `${icon} <b>${cj.name}</b> (${cj.namespace})\n`;
+        msg += `  Schedule: <code>${cj.schedule}</code>\n`;
+        msg += `  Last: ${age >= 0 ? `${age}h ago` : 'never'}`;
+        if (cj.suspended) msg += ' | ⚠️ SUSPENDED';
+        if (cj.active > 0) msg += ` | 🔄 ${cj.active} active`;
+        msg += '\n\n';
+      }
+      lastBotResponse = msg;
+      await telegram.send(msg);
+    } catch (err) {
+      await telegram.send(`❌ Failed to audit CronJobs: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- Backend Deep Health Check ---
+  if (cmd === '/backend' || cmd.match(/^backend\s*(health|status|check|deep)?$/i)) {
+    await telegram.send('🏥 Running backend deep health check...');
+    try {
+      const backendPod = await kube.findPod('blo-backend');
+      if (!backendPod) {
+        await telegram.send('❌ Backend pod not found.');
+        return;
+      }
+
+      const endpoints = [
+        { name: 'Nacos', port: 8848, path: '/nacos/v1/ns/service/list?pageNo=1&pageSize=10', expect: 200 },
+        { name: 'System (7001)', port: 7001, path: '/actuator/health', expect: 200 },
+        { name: 'BlueOnion (7002)', port: 7002, path: '/actuator/health', expect: 200 },
+        { name: 'Gateway (9999)', port: 9999, path: '/actuator/health', expect: 200 },
+      ];
+
+      let msg = `🏥 <b>Backend Deep Health Check</b>\n📦 Pod: <code>${backendPod.pod.name}</code>\n\n`;
+
+      // Check each JVM endpoint via kubectl exec curl
+      for (const ep of endpoints) {
+        try {
+          const result = await kube.execInPod(
+            backendPod.namespace, backendPod.pod.name,
+            ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code},%{time_total}', `http://localhost:${ep.port}${ep.path}`],
+            5000,
+          );
+          const [statusCode, responseTime] = result.trim().split(',');
+          const ok = parseInt(statusCode) === ep.expect;
+          msg += `${ok ? '✅' : '❌'} <b>${ep.name}</b> — HTTP ${statusCode} (${parseFloat(responseTime || '0').toFixed(2)}s)\n`;
+        } catch {
+          msg += `❌ <b>${ep.name}</b> — unreachable\n`;
+        }
+      }
+
+      // Check Lucene index status
+      msg += '\n<b>Components:</b>\n';
+      try {
+        const luceneResult = await kube.execInPod(
+          backendPod.namespace, backendPod.pod.name,
+          ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', 'http://localhost:7002/blueonion/lucene/createIndex01'],
+          5000,
+        );
+        const luceneOk = parseInt(luceneResult.trim()) < 400;
+        msg += `${luceneOk ? '✅' : '⚠️'} Lucene Index — ${luceneOk ? 'available' : 'needs rebuild'}\n`;
+      } catch {
+        msg += `⚠️ Lucene Index — cannot check\n`;
+      }
+
+      // Check memory via actuator (if available)
+      try {
+        const memResult = await kube.execInPod(
+          backendPod.namespace, backendPod.pod.name,
+          ['curl', '-s', 'http://localhost:7002/actuator/metrics/jvm.memory.used'],
+          5000,
+        );
+        const memData = JSON.parse(memResult);
+        const usedBytes = memData?.measurements?.[0]?.value || 0;
+        const usedGB = (usedBytes / (1024 * 1024 * 1024)).toFixed(1);
+        msg += `📊 JVM Memory (7002): ${usedGB} GB used\n`;
+      } catch { /* optional */ }
+
+      // Check Python processes
+      try {
+        const psResult = await kube.execInPod(
+          backendPod.namespace, backendPod.pod.name,
+          ['sh', '-c', 'ps aux | grep -c "[p]ython"'],
+          5000,
+        );
+        const pyCount = parseInt(psResult.trim()) || 0;
+        msg += `🐍 Python processes: ${pyCount}\n`;
+      } catch { /* optional */ }
+
+      lastBotResponse = msg;
+      await telegram.send(msg);
+    } catch (err) {
+      await telegram.send(`❌ Backend health check failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- Deployment Diff (recent commits on a branch) ---
+  if (cmd.startsWith('/diff') || cmd.match(/^(deploy\s*diff|what\s*changed|recent\s*commits)/i)) {
+    if (!bbClient) {
+      await telegram.send('❌ Bitbucket not configured. Set BB_USER and BB_TOKEN.');
+      return;
+    }
+    const diffArgs = cmd.replace(/^\/(diff)\s*/i, '').trim();
+    // Default to backend prod
+    const search = diffArgs || 'backend prod';
+    const matches = bbClient.findPipeline(search);
+    if (matches.length === 0) {
+      await telegram.send(`❓ No pipeline matching "${search}". Try: /diff backend prod, /diff frontend prod`);
+      return;
+    }
+    const match = matches[0];
+    await telegram.send(`📋 Fetching recent commits for <b>${match.label}</b>...`);
+    try {
+      const commits = await bbClient.getCommitsBetween(match.repo, match.branch, 10);
+      if (commits.length === 0) {
+        await telegram.send('No commits found.');
+        return;
+      }
+      let msg = `📋 <b>Recent Commits: ${match.label}</b>\n`;
+      msg += `📦 ${match.repo} / <code>${match.branch}</code>\n\n`;
+      for (const c of commits) {
+        const date = c.date ? new Date(c.date).toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }) : '';
+        msg += `<code>${c.hash}</code> ${c.message}\n  👤 ${c.author} — ${date}\n\n`;
+      }
+      lastBotResponse = msg;
+      await telegram.send(msg);
+    } catch (err) {
+      await telegram.send(`❌ Failed to fetch commits: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+    return;
+  }
+
+  // --- Cheatsheet (full detailed reference) ---
+  if (cmd === '/cheatsheet' || cmd === '/cheat' || cmd === '/commands') {
+    // Split into multiple messages to avoid Telegram's 4096 char limit
+    const sheets: string[] = [];
+
+    sheets.push(
+      `📖 <b>BLUE.Y CHEATSHEET — Full Command Reference</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+
+      `<b>🔍 MONITORING</b>\n` +
+      `<code>/status</code> — Cluster health overview (pods, nodes, namespaces)\n` +
+      `<code>/check</code> — Run all monitors now (pods, nodes, certs, HPA)\n` +
+      `<code>/nodes</code> — Node CPU/memory/disk usage\n` +
+      `<code>/resources [ns]</code> — Pod CPU/memory usage vs requests\n` +
+      `  └ <code>/resources prod</code> — Prod namespace only\n` +
+      `  └ <code>/resources doris</code> — Doris namespace\n` +
+      `<code>/hpa [ns]</code> — HPA autoscaler status\n` +
+      `  └ <code>/hpa prod</code> — Prod HPAs\n` +
+      `<code>/doris</code> — Doris FE/BE health, memory, tablet count\n` +
+      `<code>/efficiency</code> — Resource efficiency analysis\n`,
+    );
+
+    sheets.push(
+      `<b>📦 PODS & DEPLOYMENTS</b>\n` +
+      `<code>/logs &lt;pod&gt;</code> — Tail last 50 lines of pod logs\n` +
+      `  └ <code>/logs blo-backend</code>\n` +
+      `<code>/logsearch &lt;pod&gt; &lt;pattern&gt;</code> — Search logs with grep\n` +
+      `  └ <code>/logsearch blo-backend OutOfMemory</code>\n` +
+      `<code>/describe &lt;pod&gt;</code> — Pod details (status, events, containers)\n` +
+      `<code>/events [ns] [pod]</code> — Recent K8s events\n` +
+      `  └ <code>/events prod</code> — All prod events\n` +
+      `  └ <code>/events doris doris-be-0</code> — Specific pod\n` +
+      `<code>/deployments [ns]</code> — List all deployments with replicas\n` +
+      `  └ Aliases: <code>/deps</code>\n` +
+      `<code>/rollout &lt;deployment&gt;</code> — Check rollout status\n` +
+      `  └ <code>/rollout blo-backend</code>\n` +
+      `<code>/diagnose &lt;pod&gt;</code> — Full AI diagnostic (describe + logs + events + Loki + AI analysis)\n` +
+      `  └ <code>/diagnose blo-backend</code>\n\n` +
+
+      `<b>⚡ ACTIONS (require /yes confirmation)</b>\n` +
+      `<code>/restart &lt;deployment&gt;</code> — Rolling restart\n` +
+      `  └ <code>/restart blo-backend</code>\n` +
+      `  └ <code>/restart doris/doris-be</code> — With namespace\n` +
+      `<code>/scale &lt;deployment&gt; &lt;N&gt;</code> — Scale replicas\n` +
+      `  └ <code>/scale blo-frontend 3</code>\n` +
+      `<code>/yes</code> — Confirm pending action\n` +
+      `<code>/no</code> — Cancel pending action\n`,
+    );
+
+    sheets.push(
+      `<b>🛡️ QA & SECURITY</b>\n` +
+      `<code>/smoketest</code> — Test all 9 production URLs (HTTP status check)\n` +
+      `  └ Aliases: <code>/smoke</code>\n` +
+      `<code>/securityscan</code> — OWASP security header scan on all URLs\n` +
+      `  └ Aliases: <code>/security</code>\n` +
+      `<code>/restarts</code> — Pod restart root cause analysis with AI\n` +
+      `<code>/dorisbackup</code> — Doris backup CronJob health check\n` +
+      `<code>/loki [ns]</code> — Loki log error analysis (last 1 hour)\n` +
+      `  └ <code>/loki prod</code> — Prod errors only\n` +
+      `  └ <code>/loki doris</code> — Doris errors\n\n` +
+
+      `<b>📧 REPORTS & EMAIL</b>\n` +
+      `<code>/report</code> — Generate daily health report\n` +
+      `<code>/email &lt;name|team&gt;</code> — Email report via SES\n` +
+      `  └ <code>/email zeeshan</code>\n` +
+      `  └ <code>/email abdul</code>\n` +
+      `  └ <code>/email usama</code>\n` +
+      `  └ <code>/email wei</code>\n` +
+      `  └ <code>/email elsa</code>\n` +
+      `  └ <code>/email team</code> — All team members\n` +
+      `<code>/incidents</code> — Show incident timeline\n`,
+    );
+
+    sheets.push(
+      `<b>🎫 JIRA INTEGRATION</b>\n` +
+      `<code>/jira</code> — Create Jira ticket from last incident/diagnosis\n` +
+      `<code>/report-issue &lt;desc&gt;, assign to &lt;name&gt;</code> — Report issue to Jira\n` +
+      `  └ <code>/report-issue BAS login broken for UOB, assign to Abdul Khaliq</code>\n` +
+      `  └ <code>/report-issue PDF export failing, assign to Usama</code>\n` +
+      `  └ <code>/report-issue update SSL certs</code> (no assignee)\n` +
+      `<code>/tickets</code> — Project summary (open by status & assignee)\n` +
+      `<code>/tickets &lt;name&gt;</code> — Tickets assigned to a person\n` +
+      `  └ <code>/tickets Abdul Khaliq</code>\n` +
+      `  └ <code>/tickets Usama</code>\n\n` +
+
+      `<b>Natural language (Jira):</b>\n` +
+      `  "how many tickets assigned to Abdul Khaliq?"\n` +
+      `  "pending tickets for Usama"\n` +
+      `  "Zeeshan's jira tickets"\n` +
+      `  "create a jira ticket: BAS error, assign to Abdul"\n` +
+      `  "log a bug: PDF broken, assign Usama"\n`,
+    );
+
+    sheets.push(
+      `<b>🗄️ DATABASE (3-Agent AI Pipeline)</b>\n` +
+      `<code>/databases</code> — List all accessible databases\n` +
+      `<code>/db &lt;question&gt;</code> — Ask in natural language (AI generates SQL)\n` +
+      `  └ <code>/db how many active users in UM?</code>\n` +
+      `  └ <code>/db find user ng.peixiu@uobgroup.com</code>\n` +
+      `  └ <code>/db top 10 ESG companies from doris</code>\n` +
+      `  └ <code>/db BAS registrations for UOB this year</code>\n` +
+      `<code>/tables &lt;instance.database&gt;</code> — List tables\n` +
+      `  └ <code>/tables hubsprod.dwd</code>\n` +
+      `  └ <code>/tables bo-prod-sg.blo_user</code>\n` +
+      `  └ <code>/tables doris.dwd</code>\n` +
+      `<code>/query &lt;instance.database&gt; &lt;SQL&gt;</code> — Run raw SELECT\n` +
+      `  └ <code>/query hubsprod.dwd SELECT * FROM bas_register_company LIMIT 5</code>\n\n` +
+
+      `<b>Pipeline:</b> Agent 1 (Generator) → Agent 2 (Validator) → Agent 3 (Verifier)\n` +
+      `<b>Databases:</b> hubsprod, bo-prod-sg, faceset-prod, data-transfer, blueonion, doris\n` +
+      `<b>Safety:</b> SELECT only, 50 row limit, read-only user, no data sent to AI\n`,
+    );
+
+    sheets.push(
+      `<b>🔧 CI/CD (Bitbucket Pipelines)</b>\n` +
+      `<code>/pipelines</code> — List all available pipelines\n` +
+      `<code>/build &lt;search&gt;</code> — Trigger a pipeline (requires /yes)\n` +
+      `  └ <code>/build backend prod</code> — Production backend ★\n` +
+      `  └ <code>/build frontend prod</code> — Production frontend\n` +
+      `  └ <code>/build be stg</code> — Staging backend\n` +
+      `  └ <code>/build fe dev</code> — Dev frontend\n` +
+      `  └ <code>/build um-be prod</code> — User Management BE\n` +
+      `  └ <code>/build pdf prod</code> — PDF Service\n` +
+      `  └ <code>/build bluey prod</code> — BLUE.Y itself\n` +
+      `<code>/builds [be|fe]</code> — Recent build history\n` +
+      `  └ <code>/builds be</code> — Backend builds\n` +
+      `  └ <code>/builds fe</code> — Frontend builds\n\n` +
+
+      `<b>☁️ AWS MONITORING</b>\n` +
+      `<code>/rds</code> — RDS database health (CPU, storage, connections, IOPS)\n` +
+      `<code>/jobs</code> — Glue crawler status + EMR cluster health\n` +
+      `  └ Aliases: <code>/glue</code>, <code>/emr</code>\n` +
+      `<code>/costs [days]</code> — AWS cost breakdown by service\n` +
+      `  └ <code>/costs</code> — Last 7 days (default)\n` +
+      `  └ <code>/costs 30</code> — Last 30 days\n` +
+      `<code>/backups</code> — RDS + Doris backup verification\n` +
+      `<code>/backend</code> — Deep health check (4 JVMs, Lucene, memory, Python)\n` +
+      `<code>/cronjobs</code> — K8s CronJob audit across all namespaces\n` +
+      `  └ Aliases: <code>/crons</code>\n` +
+      `<code>/diff [search]</code> — Recent commits on a branch\n` +
+      `  └ <code>/diff backend prod</code> — Backend production commits\n` +
+      `  └ <code>/diff frontend prod</code> — Frontend production commits\n\n` +
+
+      `<b>⚙️ SYSTEM</b>\n` +
+      `<code>/sleep</code> — Pause all monitoring\n` +
+      `<code>/wake</code> — Resume monitoring\n` +
+      `<code>/help</code> — Quick command reference\n` +
+      `<code>/cheatsheet</code> — This full reference\n\n` +
+
+      `<b>🔐 PASSWORD RESET (via DM only)</b>\n` +
+      `DM BLUE.Y directly (not in channel) to request:\n` +
+      `  "Reset my password for AWS"\n` +
+      `  "I forgot my Office 365 password"\n` +
+      `  "I can't login to Grafana"\n` +
+      `  "Need new database credentials"\n\n` +
+      `<b>Supported:</b> AWS Console, Microsoft 365, Database (RDS), Grafana\n` +
+      `<b>Flow:</b> User DMs BLUE.Y → Admin gets approval request → /yes or /no\n` +
+      `<b>AWS:</b> Auto-resets IAM password and sends temp creds via DM\n` +
+      `<b>Others:</b> Admin notified with reset instructions\n\n` +
+
+      `<b>🤖 SMART FEATURES</b>\n` +
+      `• Ask anything in plain English — AI understands context\n` +
+      `• Auto-diagnose: unhealthy pods investigated automatically\n` +
+      `• 📸 Teams: attach screenshots for AI vision analysis\n` +
+      `• Actions always need <code>/yes</code> confirmation\n` +
+      `• Production builds show extra ⚠️ warning\n` +
+      `• Daily report at 9 AM SGT (auto)\n` +
+      `• Monitors: pods (2min), nodes (5min), certs (6hr), HPA (5min)\n`,
+    );
+
+    for (const sheet of sheets) {
+      await telegram.send(sheet);
+    }
+    return;
+  }
+
   if (cmd === '/help' || cmd === 'help') {
     await telegram.send(
       `👁️ <b>BLUE.Y Commands</b>\n\n` +
@@ -1267,16 +2378,34 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       `/efficiency — Resource usage vs requests\n` +
       `/dorisbackup — Doris backup health check\n` +
       `/loki [ns] — Loki log error analysis\n\n` +
-      `<b>Reports:</b>\n` +
-      `/report — Daily health report (manual trigger)\n` +
-      `/email &lt;name|team&gt; — Email report (zeeshan, abdul, usama, wei, elsa, team)\n` +
-      `/jira — Create Jira ticket\n` +
+      `<b>Reports & Jira:</b>\n` +
+      `/report — Daily health report\n` +
+      `/email &lt;name|team&gt; — Email report\n` +
+      `/jira — Create Jira ticket from incident\n` +
+      `/report-issue &lt;desc&gt;, assign to &lt;name&gt; — Report issue to Jira\n` +
+      `/tickets [name] — Jira ticket summary or person lookup\n` +
       `/incidents — Incident timeline\n\n` +
+      `<b>Database:</b>\n` +
+      `/db &lt;question&gt; — Ask about data in natural language\n` +
+      `/databases — List all accessible databases\n` +
+      `/tables &lt;db&gt; — List tables (e.g. /tables hubsprod.dwd)\n` +
+      `/query &lt;db&gt; &lt;SQL&gt; — Run raw SELECT query\n\n` +
+      `<b>CI/CD:</b>\n` +
+      `/build &lt;search&gt; — Trigger pipeline (e.g. /build backend prod)\n` +
+      `/builds [be|fe] — Recent build history\n` +
+      `/pipelines — List all available pipelines\n\n` +
+      `<b>AWS Monitoring:</b>\n` +
+      `/rds — RDS database health (CPU, storage, connections)\n` +
+      `/jobs — Glue crawlers + EMR cluster status\n` +
+      `/costs [days] — AWS cost breakdown\n` +
+      `/backups — RDS + Doris backup status\n` +
+      `/backend — Deep backend health (4 JVMs, Lucene, memory)\n` +
+      `/cronjobs — K8s CronJob audit\n` +
+      `/diff [search] — Recent commits on a branch\n\n` +
       `<b>System:</b>\n` +
       `/sleep — Pause monitoring\n` +
       `/wake — Resume monitoring\n\n` +
-      `💡 Auto-diagnose is ON — I'll automatically investigate unhealthy pods.\n` +
-      `📸 Teams users can attach screenshots — I'll analyze them with AI vision.\n` +
+      `💡 Type <code>/cheatsheet</code> for full detailed reference with examples.\n` +
       `Or just ask me anything in plain English!`,
     );
     return;
@@ -1361,6 +2490,12 @@ async function startPolling(): Promise<void> {
         { command: 'securityscan', description: 'OWASP security scan' },
         { command: 'restarts', description: 'Pod restart root cause' },
         { command: 'efficiency', description: 'Resource usage analysis' },
+        { command: 'rds', description: 'RDS database health' },
+        { command: 'jobs', description: 'Glue + EMR status' },
+        { command: 'costs', description: 'AWS cost breakdown' },
+        { command: 'backups', description: 'Backup verification' },
+        { command: 'backend', description: 'Deep backend health check' },
+        { command: 'cronjobs', description: 'K8s CronJob audit' },
         { command: 'report', description: 'Daily health report' },
         { command: 'incidents', description: 'Incident timeline' },
         { command: 'help', description: 'Show all commands' },
@@ -1369,6 +2504,17 @@ async function startPolling(): Promise<void> {
       ],
     });
     logger.info('Telegram bot commands menu registered');
+  } catch { /* ignore */ }
+
+  // Register DM-specific commands (private chats only)
+  try {
+    await axios.post(`${API}/setMyCommands`, {
+      commands: [
+        { command: 'help', description: 'What I can do in DMs' },
+        { command: 'cheatsheet', description: 'View all commands' },
+      ],
+      scope: { type: 'all_private_chats' },
+    });
   } catch { /* ignore */ }
 
   // Small delay to let any previous poller's connection expire
@@ -1389,13 +2535,26 @@ async function startPolling(): Promise<void> {
         if (!msg?.text) continue;
 
         const chatId = String(msg.chat.id);
-        logger.info(`[Telegram] ${msg.from?.first_name}: ${msg.text}`);
+        const userName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ') || 'Unknown';
+        logger.info(`[Telegram] ${userName} (${chatId}): ${msg.text}`);
 
         try {
-          await handleTelegramCommand(msg.text, chatId);
+          if (chatId === config.telegram.chatId) {
+            // Group channel message — full command set
+            await handleTelegramCommand(msg.text, chatId);
+          } else if (msg.chat.type === 'private') {
+            // Direct message — password reset flow
+            await handleTelegramDM(msg.text, chatId, userName);
+          } else {
+            logger.warn(`Telegram message from unauthorized chat: ${chatId}`);
+          }
         } catch (err) {
           logger.error('Error handling Telegram command', err);
-          await telegram.send(`❌ Error: ${(err as Error).message}`);
+          if (chatId === config.telegram.chatId) {
+            await telegram.send(`❌ Error: ${(err as Error).message}`);
+          } else {
+            await telegram.send(`❌ Something went wrong. Please try again later.`, chatId);
+          }
         }
       }
     } catch (err) {

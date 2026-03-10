@@ -639,6 +639,27 @@ export class KubeClient {
     return Math.round(parseInt(mem) / (1024 * 1024));
   }
 
+  /**
+   * Get the BatchV1Api client for CronJob operations.
+   */
+  getBatchApi(): k8s.BatchV1Api {
+    return this.kc.makeApiClient(k8s.BatchV1Api);
+  }
+
+  /**
+   * Execute a command inside a pod container and return stdout.
+   * Uses kubectl exec under the hood for reliability.
+   */
+  async execInPod(namespace: string, podName: string, command: string[], timeoutMs = 10000): Promise<string> {
+    const { execSync } = await import('child_process');
+    const cmdStr = command.map((c) => `'${c.replace(/'/g, "'\\''")}'`).join(' ');
+    const result = execSync(
+      `kubectl exec ${podName} -n ${namespace} -c blo-backend -- ${cmdStr}`,
+      { timeout: timeoutMs, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    return result;
+  }
+
   private getAge(creationTimestamp?: Date): string {
     if (!creationTimestamp) return 'unknown';
     const diff = Date.now() - new Date(creationTimestamp).getTime();

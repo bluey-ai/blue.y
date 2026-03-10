@@ -76,6 +76,28 @@ export const config = {
     baseUrl: process.env.LOKI_URL || 'http://loki.monitoring.svc.cluster.local:3100',
   },
 
+  // Bitbucket (CI/CD pipeline triggers)
+  bitbucket: {
+    user: process.env.BB_USER || '',
+    token: process.env.BB_TOKEN || '',
+    enabled: !!process.env.BB_TOKEN,
+  },
+
+  // Database (read-only access via bluey_readonly user)
+  database: {
+    username: process.env.DB_READONLY_USER || 'bluey_readonly',
+    password: process.env.DB_READONLY_PASSWORD || '',
+    enabled: !!process.env.DB_READONLY_PASSWORD,
+  },
+
+  // Grafana (admin API for password resets)
+  grafana: {
+    internalUrl: process.env.GRAFANA_INTERNAL_URL || 'http://grafana.monitoring.svc.cluster.local:3000',
+    adminUser: process.env.GRAFANA_ADMIN_USER || 'admin',
+    adminPassword: process.env.GRAFANA_ADMIN_PASSWORD || '',
+    enabled: !!process.env.GRAFANA_ADMIN_PASSWORD,
+  },
+
   // Safety
   safety: {
     maxActionsPerHour: parseInt(process.env.MAX_ACTIONS_PER_HOUR || '5', 10),
