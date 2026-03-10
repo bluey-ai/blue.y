@@ -155,7 +155,7 @@ export class JiraClient {
       const escaped = keywords.replace(/"/g, '\\"').substring(0, 100);
       const jqlKeyword = `project = ${config.jira.projectKey} AND labels = "blue-y" AND status NOT IN (Done, Closed, Resolved) AND created >= -24h AND summary ~ "${escaped}" ORDER BY created DESC`;
       const res1 = await axios.get(
-        `${this.baseUrl}/rest/api/3/search`,
+        `${this.baseUrl}/rest/api/3/search/jql`,
         {
           params: { jql: jqlKeyword, maxResults: 1, fields: 'key,summary' },
           headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
@@ -171,7 +171,7 @@ export class JiraClient {
       // Fallback: any blue-y ticket from last 2 hours (likely same incident)
       const jqlRecent = `project = ${config.jira.projectKey} AND labels = "blue-y" AND labels = "auto-created" AND status NOT IN (Done, Closed, Resolved) AND created >= -2h ORDER BY created DESC`;
       const res2 = await axios.get(
-        `${this.baseUrl}/rest/api/3/search`,
+        `${this.baseUrl}/rest/api/3/search/jql`,
         {
           params: { jql: jqlRecent, maxResults: 1, fields: 'key,summary' },
           headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
@@ -227,7 +227,7 @@ export class JiraClient {
   async searchIssues(jql: string, maxResults = 20): Promise<JiraIssueInfo[]> {
     try {
       const response = await axios.get(
-        `${this.baseUrl}/rest/api/3/search`,
+        `${this.baseUrl}/rest/api/3/search/jql`,
         {
           params: {
             jql,
@@ -281,7 +281,7 @@ export class JiraClient {
 
       // Get total count
       const countRes = await axios.get(
-        `${this.baseUrl}/rest/api/3/search`,
+        `${this.baseUrl}/rest/api/3/search/jql`,
         {
           params: { jql, maxResults: 0, fields: 'key' },
           headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
@@ -307,7 +307,7 @@ export class JiraClient {
           jql2 += ' ORDER BY priority DESC, updated DESC';
 
           const countRes2 = await axios.get(
-            `${this.baseUrl}/rest/api/3/search`,
+            `${this.baseUrl}/rest/api/3/search/jql`,
             {
               params: { jql: jql2, maxResults: 0, fields: 'key' },
               headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
@@ -334,7 +334,7 @@ export class JiraClient {
     try {
       const jql = `project = ${config.jira.projectKey} AND status NOT IN (Done, Closed, Resolved) ORDER BY updated DESC`;
       const response = await axios.get(
-        `${this.baseUrl}/rest/api/3/search`,
+        `${this.baseUrl}/rest/api/3/search/jql`,
         {
           params: { jql, maxResults: 100, fields: 'status,assignee' },
           headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
