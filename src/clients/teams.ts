@@ -33,6 +33,9 @@ export interface TeamsTicket {
 // Callback type for when a user sends a message via Teams
 type OnUserReportCallback = (ticket: TeamsTicket) => Promise<void>;
 
+// Callback type for password reset requests via Teams DM
+type OnPasswordResetCallback = (ticketId: string, userName: string, service: string) => Promise<void>;
+
 // Per-user conversation history entry
 export interface ConversationEntry {
   role: 'user' | 'assistant';
@@ -45,6 +48,7 @@ export interface ConversationEntry {
 export class TeamsClient {
   private adapter: CloudAdapter | null = null;
   private onUserReport?: OnUserReportCallback;
+  private onPasswordReset?: OnPasswordResetCallback;
   // Store active tickets for cross-channel flow
   private tickets: Map<string, TeamsTicket> = new Map();
   private ticketCounter = 0;
@@ -78,6 +82,10 @@ export class TeamsClient {
 
   setOnUserReport(callback: OnUserReportCallback): void {
     this.onUserReport = callback;
+  }
+
+  setOnPasswordReset(callback: OnPasswordResetCallback): void {
+    this.onPasswordReset = callback;
   }
 
   getAdapter(): CloudAdapter | null {
@@ -180,6 +188,68 @@ export class TeamsClient {
       const ticket = this.createTicket(userName, 'security_scan', context);
       ticket.status = 'diagnosing';
       if (this.onUserReport) await this.onUserReport(ticket);
+      return;
+    }
+
+    // Password reset detection — only in personal (DM) conversations
+    const isPersonalChat = context.activity.conversation?.conversationType === 'personal';
+    const resetMatch = cmd.match(/(?:reset|forgot|change|update|new)\s+(?:my\s+)?(?:password|pwd|pass|credentials?|login)\s*(?:for|on|of|in)?\s*(.*)/i)
+      || cmd.match(/(aws|office\s*365|microsoft\s*365|o365|m365|database|db|rds|grafana)\s+(?:password|pwd|pass|credentials?|login)\s*(?:reset|forgot|change|new)?/i)
+      || cmd.match(/(?:i\s+)?(?:forgot|lost|can'?t\s+(?:login|log\s*in|access|remember))\s*(?:to|my|the)?\s*(?:password|pwd|pass|credentials?)?\s*(?:for|on|of|in)?\s*(.*)/i);
+
+    if (resetMatch && isPersonalChat) {
+      const serviceRaw = (resetMatch[1] || '').trim().toLowerCase();
+
+      let service = 'unknown';
+      if (/aws|console|iam/i.test(serviceRaw) || /aws|console|iam/i.test(cmd)) service = 'aws';
+      else if (/office|o365|m365|microsoft|outlook|teams|365/i.test(serviceRaw) || /office|o365|m365|microsoft|outlook|teams|365/i.test(cmd)) service = 'office365';
+      else if (/database|db|rds|mysql|postgres/i.test(serviceRaw) || /database|db|rds|mysql/i.test(cmd)) service = 'database';
+      else if (/grafana/i.test(serviceRaw) || /grafana/i.test(cmd)) service = 'grafana';
+
+      const serviceLabels: Record<string, string> = {
+        aws: 'AWS Console (IAM)',
+        office365: 'Microsoft 365 (Office)',
+        database: 'Database (RDS)',
+        grafana: 'Grafana',
+        unknown: 'Unknown',
+      };
+
+      if (service === 'unknown') {
+        await context.sendActivity(
+          `Hi ${userName}! I can help reset your password.\n\n` +
+          `Please specify which service:\n` +
+          `• **AWS Console** — "reset my password for AWS"\n` +
+          `• **Microsoft 365** — "forgot my Office 365 password"\n` +
+          `• **Database** — "reset my database password"\n` +
+          `• **Grafana** — "forgot my Grafana login"`,
+        );
+        return;
+      }
+
+      // Create ticket to store conversation reference for reply
+      const ticket = this.createTicket(userName, `password_reset:${service}`, context);
+      ticket.status = 'pending';
+
+      await context.sendActivity(
+        `✅ Got it, ${userName}! Your password reset request for **${serviceLabels[service]}** has been sent to the admin for approval.\n\n` +
+        `⏳ I'll notify you here once it's approved and processed. This usually takes a few minutes.`,
+      );
+
+      logger.info(`[Teams] Password reset request from ${userName} (ticket ${ticket.id}) for ${service}`);
+
+      // Fire callback to notify admin via Telegram
+      if (this.onPasswordReset) {
+        await this.onPasswordReset(ticket.id, userName, service);
+      }
+      return;
+    }
+
+    // If password reset request but NOT in personal chat, redirect to DM
+    if (resetMatch && !isPersonalChat) {
+      await context.sendActivity(
+        `🔐 For security, password resets must be done via **direct message**.\n\n` +
+        `Please DM me directly (click on my name → "Chat") and send your request there.`,
+      );
       return;
     }
 

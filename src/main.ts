@@ -1484,10 +1484,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     } else if (action === 'password_reset') {
       // Password reset approved — execute based on service type
       // SECURITY: All credentials and details go to DM ONLY. Channel gets minimal status only.
+      // Supports BOTH Telegram DM and Teams DM as source — routed by teamsTicketId presence.
       const service = target;     // aws, office365, database, grafana
       const userName = namespace; // stored the user's name in namespace field
-      const userChatId = detail;  // stored the DM chat ID in detail field
-      const adminChatId = chatId; // the admin who approved (send private details here)
+      const userChatId = detail;  // stored the Telegram DM chat ID in detail field (null for Teams)
+      const isTeamsRequest = !!teamsTicketId; // true if request came from Teams DM
 
       const serviceLabels: Record<string, string> = {
         aws: 'AWS Console (IAM)',
@@ -1623,24 +1624,35 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
         }
 
         // Send credentials to the requesting user via DM ONLY
-        if (userChatId && resetInstructions) {
-          await telegram.send(
-            `🔐 <b>Password Reset Update</b>\n\n${resetInstructions}`,
-            userChatId,
-          );
+        // Route to Teams DM or Telegram DM based on where the request originated
+        if (resetInstructions) {
+          if (isTeamsRequest && teamsTicketId) {
+            // Strip HTML tags for Teams plain text reply
+            const plainInstructions = resetInstructions
+              .replace(/<code>/g, '`').replace(/<\/code>/g, '`')
+              .replace(/<b>/g, '**').replace(/<\/b>/g, '**')
+              .replace(/<[^>]+>/g, '');
+            await teamsClient.replyToTicket(teamsTicketId, `🔐 Password Reset Update\n\n${plainInstructions}`);
+          } else if (userChatId) {
+            await telegram.send(
+              `🔐 <b>Password Reset Update</b>\n\n${resetInstructions}`,
+              userChatId,
+            );
+          }
         }
 
         // Send manual instructions to admin via DM ONLY (not channel)
         if (adminInstructions) {
-          // Send to the admin who approved (the person who typed /yes)
-          // We use the admin channel chatId since we can't get the individual admin's DM
-          // But log it so admin can check
           logger.info(`[PasswordReset] Admin instructions for ${service}/${userName}: manual reset needed`);
         }
       } catch (err) {
         await telegram.send(`❌ Password reset failed. Check logs for details.`);
         logger.error(`Password reset failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-        if (userChatId) {
+        // Notify the user about failure via their originating platform
+        if (isTeamsRequest && teamsTicketId) {
+          await teamsClient.replyToTicket(teamsTicketId,
+            `❌ Sorry ${userName}, the password reset encountered an error. The admin has been notified and will help you directly.`);
+        } else if (userChatId) {
           await telegram.send(
             `❌ Sorry ${userName}, the password reset encountered an error. The admin has been notified and will help you directly.`,
             userChatId,
@@ -1659,14 +1671,21 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
       const declinedAction = pendingAction;
       pendingAction = null;
 
-      // Password reset denied — notify the user via DM
-      if (action === 'password_reset' && dmChatId) {
+      // Password reset denied — notify the user via their originating platform DM
+      if (action === 'password_reset') {
         await telegram.send(`👌 Password reset denied.`);
-        await telegram.send(
-          `❌ Sorry ${dmUserName}, your password reset request for <b>${target}</b> was not approved.\n\n` +
-          `Please contact the admin directly for assistance.`,
-          dmChatId,
-        );
+        if (teamsTicketId) {
+          // Request came from Teams DM — reply there
+          await teamsClient.replyToTicket(teamsTicketId,
+            `❌ Sorry ${dmUserName}, your password reset request for **${target}** was not approved.\n\nPlease contact the admin directly for assistance.`);
+        } else if (dmChatId) {
+          // Request came from Telegram DM — reply there
+          await telegram.send(
+            `❌ Sorry ${dmUserName}, your password reset request for <b>${target}</b> was not approved.\n\n` +
+            `Please contact the admin directly for assistance.`,
+            dmChatId,
+          );
+        }
         return;
       }
 
@@ -2593,6 +2612,37 @@ if (teamsClient.isEnabled()) {
   });
   logger.info('Teams bot webhook registered at /api/messages');
 }
+
+// --- Teams password reset handler (cross-channel: Teams DM → Telegram approval → Teams DM reply) ---
+teamsClient.setOnPasswordReset(async (ticketId: string, userName: string, service: string) => {
+  const serviceLabels: Record<string, string> = {
+    aws: 'AWS Console (IAM)',
+    office365: 'Microsoft 365 (Office)',
+    database: 'Database (RDS)',
+    grafana: 'Grafana',
+  };
+
+  // Notify admin channel on Telegram for approval
+  await telegram.send(
+    `🔐 <b>PASSWORD RESET REQUEST</b> (via Teams)\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `👤 <b>User:</b> ${userName}\n` +
+    `🏷️ <b>Service:</b> ${serviceLabels[service] || service}\n` +
+    `💬 <b>Source:</b> Microsoft Teams DM\n` +
+    `⏰ <b>Time:</b> ${new Date().toISOString()}\n\n` +
+    `⚠️ Reply <code>/yes</code> to approve or <code>/no</code> to deny.`,
+  );
+
+  // Store as pending action with teamsTicketId for reply routing
+  pendingAction = {
+    action: 'password_reset',
+    target: service,
+    namespace: userName,
+    timestamp: Date.now(),
+    teamsTicketId: ticketId,
+    dmUserName: userName,
+  };
+});
 
 // --- Teams user report handler (cross-channel flow) ---
 teamsClient.setOnUserReport(async (ticket: TeamsTicket) => {
