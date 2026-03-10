@@ -268,31 +268,10 @@ export class JiraClient {
    */
   async getTicketsForPerson(name: string, statusFilter?: string): Promise<{ issues: JiraIssueInfo[]; total: number }> {
     try {
-      // First find the user by display name
-      const userRes = await axios.get(
-        `${this.baseUrl}/rest/api/3/user/search`,
-        {
-          params: { query: name, maxResults: 5 },
-          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
-          timeout: 10000,
-        },
-      );
-
-      const users = userRes.data || [];
-      if (users.length === 0) {
-        // Fallback: search by display name in JQL
-        let jql = `project = ${config.jira.projectKey} AND assignee in membersOf("jira-software-users") AND text ~ "${name.replace(/"/g, '\\"')}"`;
-        if (statusFilter) jql += ` AND status = "${statusFilter}"`;
-        jql += ' ORDER BY updated DESC';
-        const issues = await this.searchIssues(jql, 20);
-        return { issues, total: issues.length };
-      }
-
-      // Use the first matching user's accountId
-      const accountId = users[0].accountId;
-      const displayName = users[0].displayName || name;
-
-      let jql = `project = ${config.jira.projectKey} AND assignee = "${accountId}"`;
+      // Use JQL assignee search directly (avoids deprecated /user/search endpoint)
+      // Try exact display name match first, then fuzzy
+      const safeName = name.replace(/"/g, '\\"');
+      let jql = `project = ${config.jira.projectKey} AND assignee = "${safeName}"`;
       if (statusFilter) {
         jql += ` AND status = "${statusFilter}"`;
       } else {
@@ -310,10 +289,37 @@ export class JiraClient {
         },
       ).catch(() => ({ data: { total: 0 } }));
 
-      const total = countRes.data.total || 0;
-      const issues = await this.searchIssues(jql, 20);
+      let total = countRes.data.total || 0;
+      let issues: JiraIssueInfo[] = [];
 
-      // Tag the display name onto results
+      if (total > 0) {
+        issues = await this.searchIssues(jql, 20);
+      } else {
+        // Exact name didn't match — try partial name parts via user picker
+        const user = await this.lookupUser(name);
+        if (user) {
+          let jql2 = `project = ${config.jira.projectKey} AND assignee = "${user.accountId}"`;
+          if (statusFilter) {
+            jql2 += ` AND status = "${statusFilter}"`;
+          } else {
+            jql2 += ' AND status NOT IN (Done, Closed, Resolved)';
+          }
+          jql2 += ' ORDER BY priority DESC, updated DESC';
+
+          const countRes2 = await axios.get(
+            `${this.baseUrl}/rest/api/3/search`,
+            {
+              params: { jql: jql2, maxResults: 0, fields: 'key' },
+              headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+              timeout: 10000,
+            },
+          ).catch(() => ({ data: { total: 0 } }));
+
+          total = countRes2.data.total || 0;
+          issues = await this.searchIssues(jql2, 20);
+        }
+      }
+
       return { issues, total };
     } catch (err) {
       logger.error(`Jira person search failed: ${err}`);
@@ -360,16 +366,33 @@ export class JiraClient {
    */
   async lookupUser(name: string): Promise<{ accountId: string; displayName: string } | null> {
     try {
-      const response = await axios.get(
-        `${this.baseUrl}/rest/api/3/user/search`,
-        {
-          params: { query: name, maxResults: 5 },
-          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
-          timeout: 10000,
-        },
-      );
+      // Use user/picker (recommended) with fallback to user/search
+      let users: Array<Record<string, unknown>> = [];
 
-      const users = response.data || [];
+      // Try /user/picker first (Jira Cloud recommended endpoint)
+      try {
+        const pickerRes = await axios.get(
+          `${this.baseUrl}/rest/api/3/user/picker`,
+          {
+            params: { query: name, maxResults: 5 },
+            headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+            timeout: 10000,
+          },
+        );
+        users = pickerRes.data?.users || [];
+      } catch {
+        // Fallback to /user/search (older API)
+        const searchRes = await axios.get(
+          `${this.baseUrl}/rest/api/3/user/search`,
+          {
+            params: { query: name, maxResults: 5 },
+            headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+            timeout: 10000,
+          },
+        );
+        users = searchRes.data || [];
+      }
+
       if (users.length === 0) return null;
 
       // Prefer exact-ish match on display name
@@ -378,7 +401,7 @@ export class JiraClient {
         String(u.displayName || '').toLowerCase().includes(nameLower),
       );
       const user = exact || users[0];
-      return { accountId: user.accountId, displayName: user.displayName || name };
+      return { accountId: String(user.accountId), displayName: String(user.displayName || name) };
     } catch (err) {
       logger.error(`Jira user lookup failed for "${name}": ${err}`);
       return null;
