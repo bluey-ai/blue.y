@@ -7,6 +7,18 @@ interface JiraTicket {
   url: string;
 }
 
+export interface JiraIssueInfo {
+  key: string;
+  summary: string;
+  status: string;
+  assignee: string;
+  priority: string;
+  type: string;
+  created: string;
+  updated: string;
+  url: string;
+}
+
 // ADF (Atlassian Document Format) node helpers
 type AdfNode = Record<string, unknown>;
 
@@ -207,6 +219,281 @@ export class JiraClient {
       logger.error(`Failed to add Jira comment to ${ticketKey}: ${err}`);
       return false;
     }
+  }
+
+  /**
+   * Search issues using JQL.
+   */
+  async searchIssues(jql: string, maxResults = 20): Promise<JiraIssueInfo[]> {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/rest/api/3/search`,
+        {
+          params: {
+            jql,
+            maxResults,
+            fields: 'key,summary,status,assignee,priority,issuetype,created,updated',
+          },
+          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+          timeout: 15000,
+        },
+      );
+
+      return (response.data.issues || []).map((issue: Record<string, unknown>) => {
+        const fields = issue.fields as Record<string, unknown>;
+        const status = fields.status as Record<string, unknown> || {};
+        const assignee = fields.assignee as Record<string, unknown> || {};
+        const priority = fields.priority as Record<string, unknown> || {};
+        const issuetype = fields.issuetype as Record<string, unknown> || {};
+        return {
+          key: String(issue.key || ''),
+          summary: String(fields.summary || ''),
+          status: String(status.name || 'Unknown'),
+          assignee: String(assignee.displayName || 'Unassigned'),
+          priority: String(priority.name || ''),
+          type: String(issuetype.name || ''),
+          created: String(fields.created || ''),
+          updated: String(fields.updated || ''),
+          url: `${this.baseUrl}/browse/${issue.key}`,
+        };
+      });
+    } catch (err) {
+      logger.error(`Jira search failed: ${err}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get tickets assigned to a person (fuzzy name match).
+   */
+  async getTicketsForPerson(name: string, statusFilter?: string): Promise<{ issues: JiraIssueInfo[]; total: number }> {
+    try {
+      // First find the user by display name
+      const userRes = await axios.get(
+        `${this.baseUrl}/rest/api/3/user/search`,
+        {
+          params: { query: name, maxResults: 5 },
+          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+          timeout: 10000,
+        },
+      );
+
+      const users = userRes.data || [];
+      if (users.length === 0) {
+        // Fallback: search by display name in JQL
+        let jql = `project = ${config.jira.projectKey} AND assignee in membersOf("jira-software-users") AND text ~ "${name.replace(/"/g, '\\"')}"`;
+        if (statusFilter) jql += ` AND status = "${statusFilter}"`;
+        jql += ' ORDER BY updated DESC';
+        const issues = await this.searchIssues(jql, 20);
+        return { issues, total: issues.length };
+      }
+
+      // Use the first matching user's accountId
+      const accountId = users[0].accountId;
+      const displayName = users[0].displayName || name;
+
+      let jql = `project = ${config.jira.projectKey} AND assignee = "${accountId}"`;
+      if (statusFilter) {
+        jql += ` AND status = "${statusFilter}"`;
+      } else {
+        jql += ' AND status NOT IN (Done, Closed, Resolved)';
+      }
+      jql += ' ORDER BY priority DESC, updated DESC';
+
+      // Get total count
+      const countRes = await axios.get(
+        `${this.baseUrl}/rest/api/3/search`,
+        {
+          params: { jql, maxResults: 0, fields: 'key' },
+          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+          timeout: 10000,
+        },
+      ).catch(() => ({ data: { total: 0 } }));
+
+      const total = countRes.data.total || 0;
+      const issues = await this.searchIssues(jql, 20);
+
+      // Tag the display name onto results
+      return { issues, total };
+    } catch (err) {
+      logger.error(`Jira person search failed: ${err}`);
+      return { issues: [], total: 0 };
+    }
+  }
+
+  /**
+   * Get project summary: open tickets by status, assignee breakdown.
+   */
+  async getProjectSummary(): Promise<{ byStatus: Record<string, number>; byAssignee: Record<string, number>; total: number }> {
+    try {
+      const jql = `project = ${config.jira.projectKey} AND status NOT IN (Done, Closed, Resolved) ORDER BY updated DESC`;
+      const response = await axios.get(
+        `${this.baseUrl}/rest/api/3/search`,
+        {
+          params: { jql, maxResults: 100, fields: 'status,assignee' },
+          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+          timeout: 15000,
+        },
+      );
+
+      const issues = response.data.issues || [];
+      const byStatus: Record<string, number> = {};
+      const byAssignee: Record<string, number> = {};
+
+      for (const issue of issues) {
+        const fields = issue.fields || {};
+        const status = fields.status?.name || 'Unknown';
+        const assignee = fields.assignee?.displayName || 'Unassigned';
+        byStatus[status] = (byStatus[status] || 0) + 1;
+        byAssignee[assignee] = (byAssignee[assignee] || 0) + 1;
+      }
+
+      return { byStatus, byAssignee, total: response.data.total || issues.length };
+    } catch (err) {
+      logger.error(`Jira project summary failed: ${err}`);
+      return { byStatus: {}, byAssignee: {}, total: 0 };
+    }
+  }
+
+  /**
+   * Look up a Jira user by name/email. Returns accountId or null.
+   */
+  async lookupUser(name: string): Promise<{ accountId: string; displayName: string } | null> {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/rest/api/3/user/search`,
+        {
+          params: { query: name, maxResults: 5 },
+          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+          timeout: 10000,
+        },
+      );
+
+      const users = response.data || [];
+      if (users.length === 0) return null;
+
+      // Prefer exact-ish match on display name
+      const nameLower = name.toLowerCase();
+      const exact = users.find((u: Record<string, unknown>) =>
+        String(u.displayName || '').toLowerCase().includes(nameLower),
+      );
+      const user = exact || users[0];
+      return { accountId: user.accountId, displayName: user.displayName || name };
+    } catch (err) {
+      logger.error(`Jira user lookup failed for "${name}": ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Create a ticket from a business report (not an incident — a reported issue or task).
+   * Supports assigning to a specific person.
+   */
+  async createReportedIssue(opts: {
+    summary: string;
+    description: string;
+    reportedBy?: string;
+    assigneeAccountId?: string;
+    issueType?: string;
+    priority?: string;
+    labels?: string[];
+  }): Promise<JiraTicket | null> {
+    try {
+      // Build ADF description
+      const content: AdfNode[] = [];
+
+      if (opts.reportedBy) {
+        content.push(
+          panel('info',
+            paragraph(bold('Reported via BLUE.Y')),
+            paragraph(text(`Reported by: ${opts.reportedBy}`)),
+            paragraph(text(`Time: ${new Date().toISOString()}`)),
+          ),
+        );
+      }
+
+      // Split description into paragraphs
+      const paragraphs = opts.description.split('\n').filter((l) => l.trim());
+      for (const p of paragraphs) {
+        content.push(paragraph(text(p)));
+      }
+
+      const fields: Record<string, unknown> = {
+        project: { key: config.jira.projectKey },
+        issuetype: { name: opts.issueType || 'Task' },
+        summary: opts.summary,
+        description: { type: 'doc', version: 1, content },
+        labels: [...(opts.labels || []), 'blue-y', 'reported'],
+      };
+
+      if (opts.assigneeAccountId) {
+        fields.assignee = { accountId: opts.assigneeAccountId };
+      }
+
+      if (opts.priority) {
+        fields.priority = { name: opts.priority };
+      }
+
+      const response = await axios.post(
+        `${this.baseUrl}/rest/api/3/issue`,
+        { fields },
+        {
+          headers: {
+            'Authorization': `Basic ${this.auth}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        },
+      );
+
+      const key = response.data.key;
+      const url = `${this.baseUrl}/browse/${key}`;
+      logger.info(`Jira ticket created: ${key}`);
+      return { key, url };
+    } catch (err) {
+      logger.error(`Failed to create Jira ticket: ${err}`);
+      return null;
+    }
+  }
+
+  /**
+   * Format ticket list for Telegram.
+   */
+  static formatTicketsForTelegram(issues: JiraIssueInfo[], title: string, total?: number): string {
+    if (issues.length === 0) return `📋 ${title}\n\nNo tickets found.`;
+
+    const priorityIcon = (p: string) => {
+      switch (p) {
+        case 'Highest': case 'Critical': return '🔴';
+        case 'High': return '🟠';
+        case 'Medium': return '🟡';
+        case 'Low': return '🟢';
+        case 'Lowest': return '⚪';
+        default: return '⚪';
+      }
+    };
+
+    const statusIcon = (s: string) => {
+      switch (s.toLowerCase()) {
+        case 'to do': case 'open': case 'backlog': return '📋';
+        case 'in progress': case 'in review': return '🔧';
+        case 'done': case 'closed': case 'resolved': return '✅';
+        case 'blocked': return '🚫';
+        default: return '📌';
+      }
+    };
+
+    let msg = `📋 <b>${title}</b>`;
+    if (total && total > issues.length) msg += ` (showing ${issues.length}/${total})`;
+    msg += '\n\n';
+
+    for (const t of issues) {
+      msg += `${priorityIcon(t.priority)} <a href="${t.url}">${t.key}</a> ${statusIcon(t.status)} <b>${t.status}</b>\n`;
+      msg += `  ${t.summary.substring(0, 80)}${t.summary.length > 80 ? '...' : ''}\n`;
+      msg += `  👤 ${t.assignee} | ${t.type}\n\n`;
+    }
+
+    return msg;
   }
 
   private buildAdfDescription(incident: {

@@ -141,6 +141,31 @@ spec:
                   optional: true
             - name: LOKI_URL
               value: "http://loki.monitoring.svc.cluster.local:3100"
+            - name: DB_READONLY_USER
+              value: "bluey_readonly"
+            - name: DB_READONLY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: db-readonly-password
+            - name: BB_USER
+              value: "zeeshan@blueonion.today"
+            - name: BB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: bitbucket-token
+                  optional: true
+            - name: GRAFANA_INTERNAL_URL
+              value: "http://grafana.monitoring.svc.cluster.local:3000"
+            - name: GRAFANA_ADMIN_USER
+              value: "admin"
+            - name: GRAFANA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: grafana-admin-password
+                  optional: true
             - name: SCHEDULE_DAILY_REPORT
               value: "0 9 * * *"
           ports:

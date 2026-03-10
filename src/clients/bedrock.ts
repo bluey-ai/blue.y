@@ -3,7 +3,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 
 interface AnalysisRequest {
-  type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident' | 'user_report';
+  type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident' | 'user_report' | 'db_query';
   message: string;
   context?: Record<string, unknown>;
   from?: string;
@@ -75,14 +75,77 @@ WORDPRESS namespace:
 - spot_nodes: c5.xlarge (4 CPU, 8GB), 2-10 spot instances. Runs lighter workloads. Can be reclaimed by AWS.
 - doris-stable-ondemand: r6g.4xlarge ARM (16 CPU, 128GB), 1 node. Dedicated to Doris BE.
 
-=== DATABASES ===
-- RDS hubsprod (MySQL 8.0, r8g.large): Main DB. Databases: jeecg-boot (system), dwd (business data). Host: hubsprod.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com
-- RDS bo-prod-sg (MySQL 8.0, t4g.small): User management DB. Database: blo_user.
-- RDS blueonion (MariaDB 10.6, t4g.micro): WordPress DB. Databases: prod_blueonion, stg_blueonion, blo_user.
-- RDS faceset-prod: FactSet/equity data.
-- RDS data-transfer: ODS/Hive data.
-- Doris (on EKS): Analytics/reporting DB, 151 tables, ~90GB. Port 9030.
-- Redis/Valkey: 5 clusters (cache.t3.micro) for session/cache.
+=== DATABASES (you have read-only access via user: bluey_readonly) ===
+
+1. RDS hubsprod (MySQL 8.0, r8g.large, 3TB)
+   Host: hubsprod.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com:3306
+   THE most important database. Two schemas:
+   - jeecg-boot: System tables — users (sys_user), roles, permissions, Nacos config, audit logs. This is the JeecgBoot framework database. Key tables: sys_user (backend login accounts), sys_role, sys_permission, sys_dict, sys_log.
+   - dwd: ALL business data — ESG scores, fund data, portfolios, benchmarks, BAS awards, due diligence.
+     Key table groups:
+     * bas_* — BAS Awards: bas_register_company (company registrations), bas_registrations (fund entries per company), bas_invitation (invitation codes), bas_email (email templates), bas_coordinator
+     * dd_* — Due Diligence Vault (FundBase/FundConnect): dd_submission (questionnaire submissions), dd_submission_answer (answers), dd_question (questions), dd_fund_info (fund profiles)
+     * bluecomm_* — BlueComm partner portfolio data
+     * sfdr_* — SFDR compliance (Article 8/9, PAI indicators)
+     * pwc_* — PwC Climate Risk data
+     * mor_* — MOR client data
+     * pri_* — PRI (Principles for Responsible Investment)
+     * rimm_* — RIMM client data
+     * lucene_* — Search index metadata
+     * fund_* / portfolio_* — Core fund & portfolio data for all products
+
+2. RDS bo-prod-sg (MySQL 8.0, t4g.small, 20GB)
+   Host: bo-prod-sg.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com:3306
+   User Management system database. Used by user-management-be (NestJS).
+   - blo_user: members (all platform users — email, username, company_id, status, login history), company (companies/tenants), member_token (JWT tokens), member_expiry (subscription expiry), member_data_permission, account (admin accounts), company_role, notify_new_member_created
+   When someone asks "does user X exist?" or "which company is user Y in?" — query this DB.
+
+3. RDS blueonion (MariaDB 10.6, t4g.micro, 20GB)
+   Host: blueonion.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com:3306
+   WordPress + legacy data.
+   - prod_blueonion: WordPress production (posts, pages, media, wp_users, wp_options)
+   - stg_blueonion: WordPress staging
+   - blo_user: Legacy copy of user management data (migrated from old account, 286MB, 43 tables)
+   - blueonion: Legacy system database (146MB, 59 tables)
+
+4. RDS faceset-prod (MySQL 8.0, t4g.medium, 200GB)
+   Host: faceset-prod.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com:3306
+   Market data & financial datasets.
+   - dwd: Processed business data layer
+   - factset: FactSet market data feeds (fund prices, benchmarks, indices)
+   - equity: Equity/stock data
+   - edw: Enterprise Data Warehouse tables
+
+5. RDS data-transfer (MySQL 8.0, t4g.small, 200GB)
+   Host: data-transfer.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com:3306
+   ETL staging & data pipeline tables. Used by AWS Glue crawlers (daily 4AM UTC).
+   - ods: Operational Data Store (raw ingested data from external sources)
+   - hive: Hive metastore tables (EMR/Trino catalog metadata)
+   - irs: IRS/tax-related reference data
+
+6. Doris (Apache Doris 2.1.7, on EKS, r6g.4xlarge, 80GB memory)
+   Host: doris-prod-fe-service.doris.svc.cluster.local:9030
+   Analytics & reporting engine. 151 tables, ~90GB data.
+   - dwd: Aggregated analytics — fund performance, ESG scores, portfolio analytics, screening results.
+   This is what powers dashboards, charts, and data-heavy pages. When analytics queries are slow or dashboards show no data, Doris is likely the issue.
+   WARNING: Doris BE can become unresponsive ~9AM after nightly backup (2AM). Auto-restart CronJob handles this.
+
+7. Redis/Valkey: 5 ElastiCache clusters (cache.t3.micro) — session cache, rate limiting, temp data. No direct query access.
+
+=== DATABASE QUERY GUIDELINES ===
+When asked to look up data:
+- User/member lookup → bo-prod-sg.blo_user.members (email, username, company_id, status)
+- Company lookup → bo-prod-sg.blo_user.company (name, id)
+- BAS registration → hubsprod.dwd.bas_register_company (email, companyname, invitationcode, status)
+- BAS fund entries → hubsprod.dwd.bas_registrations (companyid, fundname, isin, category, status)
+- Backend system users → hubsprod.jeecg-boot.sys_user (username, email, realname, status)
+- Fund/portfolio data → hubsprod.dwd or Doris.dwd (depending on query type)
+- Market data → faceset-prod.factset or faceset-prod.equity
+- Due diligence → hubsprod.dwd.dd_submission, dd_submission_answer, dd_question
+- WordPress → blueonion.prod_blueonion (wp_posts, wp_users, wp_options)
+- ALWAYS use SELECT only. NEVER attempt INSERT/UPDATE/DELETE.
+- Limit results to 50 rows max to keep Telegram messages readable.
+- When querying, prefer specific columns over SELECT * to reduce data transfer.
 
 === PRODUCTION URLs ===
 - Backend API: api-hubs.blueonion.today (→ jcp-blo-backend gateway port 9999)
@@ -305,6 +368,36 @@ Instructions:
 3. If a restart or scale would likely fix it, set requiresAction=true with the exact deployment name.
 4. Write a clear, non-technical "analysis" suitable for the Teams user (they're not engineers).
 5. Set severity: "critical" if a production service is down, "warning" if degraded, "info" if minor.`;
+      case 'db_query':
+        return `The operator wants to query our databases. Their request: "${request.message}"
+
+${request.context?.schema ? `\nRelevant table schemas:\n${request.context.schema}\n` : ''}
+Generate a SQL SELECT query to answer their question. Use the DATABASE QUERY GUIDELINES from your system prompt to pick the right database instance and schema.
+
+IMPORTANT RULES:
+- Only generate SELECT queries. Never INSERT/UPDATE/DELETE.
+- Always add LIMIT 50 unless the user asks for a specific count.
+- Use specific columns instead of SELECT * when possible.
+- For user/member lookups, use bo-prod-sg.blo_user.members
+- For BAS registrations, use hubsprod.dwd.bas_register_company
+- For fund entries, use hubsprod.dwd.bas_registrations
+- For due diligence, use hubsprod.dwd.dd_submission / dd_submission_answer
+- For analytics/ESG scores, prefer doris.dwd
+- For market data, use faceset-prod (factset/equity schemas)
+
+Respond with ONLY valid JSON:
+{
+  "instance": "hubsprod",
+  "database": "dwd",
+  "sql": "SELECT ...",
+  "explanation": "Brief explanation of what this query does"
+}
+
+If the question is ambiguous or you need to query multiple databases, return an array:
+[
+  {"instance": "...", "database": "...", "sql": "...", "explanation": "..."},
+  {"instance": "...", "database": "...", "sql": "...", "explanation": "..."}
+]`;
       default:
         return request.message;
     }
