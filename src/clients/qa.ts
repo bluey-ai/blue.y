@@ -61,7 +61,7 @@ export class QAClient {
       try {
         const response = await axios.get(endpoint.url, {
           timeout: 15000,
-          maxRedirects: 5,
+          maxRedirects: 0, // Don't follow redirects — we want to see the actual status
           validateStatus: () => true, // Don't throw on non-2xx
           httpsAgent: new https.Agent({ rejectUnauthorized: false }),
           headers: {
@@ -72,12 +72,19 @@ export class QAClient {
         const responseTime = Date.now() - start;
         const sslDays = await this.checkSSLExpiry(endpoint.url).catch(() => -1);
 
+        // A service is healthy if it returns the expected status code.
+        // Some services return 404 (no root route), 302 (redirect to login), or 403 (auth required)
+        // — these are normal and expected when the service is running fine.
+        const expectedStatus = endpoint.expect || 200;
+        const isHealthy = response.status === expectedStatus
+          || (expectedStatus === 200 && response.status >= 200 && response.status < 400);
+
         results.push({
           name: endpoint.name,
           url: endpoint.url,
           status: response.status,
           responseTime,
-          healthy: response.status >= 200 && response.status < 400,
+          healthy: isHealthy,
           sslDaysLeft: sslDays >= 0 ? sslDays : undefined,
         });
       } catch (err) {

@@ -59,14 +59,16 @@ export const config = {
   },
 
   // Production URLs for QA smoke tests
+  // expect: expected HTTP status (default 200). Services that require auth or have no root page
+  // should set the expected status code they actually return when healthy (e.g., 302, 403, 404).
   productionUrls: [
     { name: 'Backend API', url: 'https://api-hubs.blueonion.today', expect: 200 },
     { name: 'Frontend', url: 'https://hubs.blueonion.today', expect: 200 },
-    { name: 'User Mgmt API', url: 'https://api-users.blueonion.today', expect: 200 },
+    { name: 'User Mgmt API', url: 'https://api-users.blueonion.today', expect: 404 },   // NestJS returns 404 at root (no route)
     { name: 'User Mgmt UI', url: 'https://users.blueonion.today', expect: 200 },
-    { name: 'PDF Service', url: 'https://hubspdf.blueonion.today', expect: 200 },
-    { name: 'BLUE.AI', url: 'https://ai.blueonion.today', expect: 200 },
-    { name: 'Grafana', url: 'https://grafana.blueonion.today', expect: 200 },
+    { name: 'PDF Service', url: 'https://hubspdf.blueonion.today', expect: 404 },        // No root handler, 404 = server is running
+    { name: 'BLUE.AI', url: 'https://ai.blueonion.today', expect: 404 },                 // No root handler, 404 = server is running
+    { name: 'Grafana', url: 'https://grafana.blueonion.today/api/health', expect: 200 },   // Grafana health endpoint (bypasses auth)
     { name: 'Status Page', url: 'https://status.blueonion.today', expect: 200 },
     { name: 'WordPress', url: 'https://www.blueonion.today', expect: 200 },
   ],
