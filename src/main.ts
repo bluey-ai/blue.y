@@ -2881,7 +2881,9 @@ async function generateDailyReport(): Promise<void> {
     for (const r of smokeResults) {
       const icon = r.healthy ? '✅' : '❌';
       const speed = r.responseTime < 500 ? '' : r.responseTime < 2000 ? ' 🟡' : ' 🐢';
-      tgMsg += `${icon} ${r.name} — ${r.status || 'TIMEOUT'} (${r.responseTime}ms)${speed}\n`;
+      // Show "OK" for healthy services regardless of status code (avoids alarm on expected 404/302/403)
+      const statusLabel = !r.status ? 'TIMEOUT' : r.healthy ? `${r.status} OK` : `${r.status}`;
+      tgMsg += `${icon} ${r.name} — ${statusLabel} (${r.responseTime}ms)${speed}\n`;
     }
 
     // Restarts
