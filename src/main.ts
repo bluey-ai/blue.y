@@ -2704,6 +2704,77 @@ if (teamsClient.isEnabled()) {
   logger.info('Teams bot webhook registered at /api/messages');
 }
 
+// --- Teams Jira query handler ---
+teamsClient.setOnJiraQuery(async (ticket: TeamsTicket, userName: string) => {
+  const { id, userMessage } = ticket;
+  try {
+    const aiResponse = await bedrock.analyze({
+      type: 'jira_query',
+      message: userMessage,
+      context: { userName },
+    });
+
+    let jiraAction: { action: string; jql?: string; person?: string; project?: string; ticketKey?: string; explanation?: string } | null = null;
+    try {
+      const jsonMatch = aiResponse.analysis.match(/\{[\s\S]*\}/);
+      if (jsonMatch) jiraAction = JSON.parse(jsonMatch[0]);
+    } catch { /* AI didn't return structured JSON */ }
+
+    let resultMsg = '';
+
+    if (jiraAction) {
+      if (jiraAction.action === 'search' && jiraAction.jql) {
+        const { issues, total } = await jiraClient.searchWithTotal(jiraAction.jql, 20);
+        resultMsg = `**${jiraAction.explanation || 'Search Results'}** (${total} total)\n\n`;
+        for (const issue of issues) {
+          resultMsg += `• **${issue.key}** — ${issue.summary} (${issue.status}, ${issue.assignee})\n`;
+        }
+      } else if (jiraAction.action === 'person_tickets' && jiraAction.person) {
+        const { issues, total } = await jiraClient.getTicketsForPerson(jiraAction.person);
+        resultMsg = `**Tickets for "${jiraAction.person}"** (${total} total)\n\n`;
+        for (const issue of issues) {
+          resultMsg += `• **${issue.key}** — ${issue.summary} (${issue.status})\n`;
+        }
+      } else if (jiraAction.action === 'project_summary') {
+        const summary = await jiraClient.getProjectSummary();
+        resultMsg = `**${jiraAction.project || config.jira.projectKey} — Open Tickets: ${summary.total}**\n\n`;
+        resultMsg += '**By Status:**\n';
+        for (const [status, count] of Object.entries(summary.byStatus).sort((a, b) => b[1] - a[1])) {
+          resultMsg += `  • ${status}: **${count}**\n`;
+        }
+        resultMsg += '\n**By Assignee:**\n';
+        for (const [assignee, count] of Object.entries(summary.byAssignee).sort((a, b) => b[1] - a[1])) {
+          resultMsg += `  • ${assignee}: **${count}**\n`;
+        }
+      } else if (jiraAction.action === 'get_ticket' && jiraAction.ticketKey) {
+        const t = await jiraClient.getTicket(jiraAction.ticketKey);
+        if (t) {
+          resultMsg = `**${t.key}** — ${t.summary}\n\nStatus: **${t.status}** | Assignee: ${t.assignee} | Priority: ${t.priority} | Type: ${t.type}`;
+        } else {
+          resultMsg = `Ticket ${jiraAction.ticketKey} not found.`;
+        }
+      }
+    }
+
+    if (!resultMsg && aiResponse.analysis) {
+      resultMsg = aiResponse.analysis;
+    }
+
+    if (resultMsg) {
+      await teamsClient.updateTicket(id, 'resolved', resultMsg);
+    } else {
+      await teamsClient.updateTicket(id, 'resolved', 'Could not process Jira query. Try asking on Telegram with /tickets command.');
+    }
+
+    // Also send to Telegram for visibility
+    const safeTg = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    await telegram.send(`🎫 <b>Teams Jira Query</b> from ${safeTg(userName)}:\n"${safeTg(userMessage)}"\n\n${safeTg(resultMsg).substring(0, 2000)}`);
+  } catch (err) {
+    logger.error(`[Teams] Jira query failed for ticket ${id}`, err);
+    await teamsClient.updateTicket(id, 'resolved', `Jira query failed: ${(err as Error).message}`);
+  }
+});
+
 // --- Teams password reset handler (cross-channel: Teams DM → Telegram approval → Teams DM reply) ---
 teamsClient.setOnPasswordReset(async (ticketId: string, userName: string, service: string) => {
   const serviceLabels: Record<string, string> = {
