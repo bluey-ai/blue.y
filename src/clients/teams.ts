@@ -36,6 +36,9 @@ type OnUserReportCallback = (ticket: TeamsTicket) => Promise<void>;
 // Callback type for password reset requests via Teams DM
 type OnPasswordResetCallback = (ticketId: string, userName: string, service: string) => Promise<void>;
 
+// Callback type for Jira queries via Teams
+type OnJiraQueryCallback = (ticket: TeamsTicket, userName: string) => Promise<void>;
+
 // Per-user conversation history entry
 export interface ConversationEntry {
   role: 'user' | 'assistant';
@@ -49,6 +52,7 @@ export class TeamsClient {
   private adapter: CloudAdapter | null = null;
   private onUserReport?: OnUserReportCallback;
   private onPasswordReset?: OnPasswordResetCallback;
+  private onJiraQuery?: OnJiraQueryCallback;
   // Store active tickets for cross-channel flow
   private tickets: Map<string, TeamsTicket> = new Map();
   private ticketCounter = 0;
@@ -86,6 +90,10 @@ export class TeamsClient {
 
   setOnPasswordReset(callback: OnPasswordResetCallback): void {
     this.onPasswordReset = callback;
+  }
+
+  setOnJiraQuery(callback: OnJiraQueryCallback): void {
+    this.onJiraQuery = callback;
   }
 
   getAdapter(): CloudAdapter | null {
@@ -250,6 +258,26 @@ export class TeamsClient {
         `🔐 For security, password resets must be done via **direct message**.\n\n` +
         `Please DM me directly (click on my name → "Chat") and send your request there.`,
       );
+      return;
+    }
+
+    // Jira-related queries — route to Jira handler instead of diagnose
+    const isJiraQuery = config.jira.apiToken && (
+      /\bjira\b/i.test(text) ||
+      /\btickets?\b/i.test(text) ||
+      /\bissues?\b/i.test(text) ||
+      /\b(BAS|HUBS|UM|CRM|EVERCOMM)-\d+/i.test(text) ||
+      /\bsprint\b/i.test(text) ||
+      /\bbacklog\b/i.test(text) ||
+      /\bepic\b/i.test(text) ||
+      /\bassigned\b/i.test(text)
+    );
+
+    if (isJiraQuery && this.onJiraQuery) {
+      await context.sendActivity(`🎫 Querying Jira for you, ${userName}...`);
+      const ticket = this.createTicket(userName, text, context);
+      ticket.status = 'diagnosing';
+      await this.onJiraQuery(ticket, userName);
       return;
     }
 
