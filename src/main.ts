@@ -339,7 +339,7 @@ async function handleTelegramDM(text: string, chatId: string, userName: string):
 }
 
 // Handle incoming Telegram commands (group channel)
-async function handleTelegramCommand(text: string, chatId: string): Promise<void> {
+async function handleTelegramCommand(text: string, chatId: string, userName?: string): Promise<void> {
   // Strip @BotName suffix from commands (Telegram appends it in groups)
   const cmd = text.toLowerCase().trim().replace(/@\w+/g, '');
 
@@ -1057,9 +1057,11 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
     }
 
     // /tickets <person name> — tickets for a specific person
-    await telegram.send(`🔍 Searching tickets for "${ticketArgs}"...`);
-    const { issues, total } = await jiraClient.getTicketsForPerson(ticketArgs);
-    await telegram.send(JiraClient.formatTicketsForTelegram(issues, `Tickets for "${ticketArgs}"`, total));
+    // Resolve "me"/"myself" to Telegram user's name
+    const ticketPerson = /^(me|myself|my)$/i.test(ticketArgs) && userName ? userName : ticketArgs;
+    await telegram.send(`🔍 Searching tickets for "${ticketPerson}"...`);
+    const { issues, total } = await jiraClient.getTicketsForPerson(ticketPerson);
+    await telegram.send(JiraClient.formatTicketsForTelegram(issues, `Tickets for "${ticketPerson}"`, total));
     return;
   }
 
@@ -1070,11 +1072,17 @@ async function handleTelegramCommand(text: string, chatId: string): Promise<void
 
   if (jiraQueryMatch && config.jira.apiToken) {
     // Strip trailing filter phrases that aren't part of the person's name
-    const personName = jiraQueryMatch[1]
+    let personName = jiraQueryMatch[1]
       .replace(/[?!.]/g, '')
       .replace(/\s+(?:and\s+)?(?:(?:are|that\s+are|which\s+are|still)\s+)?(?:open|pending|remaining|closed|done|resolved|in\s*progress|unresolved|active|assigned|not\s+done)\s*$/i, '')
       .replace(/\s+(?:and|that|which)\s*$/i, '')
       .trim();
+
+    // Resolve "me"/"myself"/"my" to the Telegram user's name
+    if (/^(me|myself|my)$/i.test(personName) && userName) {
+      personName = userName;
+    }
+
     if (personName.length < 2 || personName.length > 50) {
       await telegram.send('❌ Please provide a valid name.');
       return;
@@ -2568,7 +2576,7 @@ async function startPolling(): Promise<void> {
         try {
           if (chatId === config.telegram.chatId) {
             // Group channel message — full command set
-            await handleTelegramCommand(msg.text, chatId);
+            await handleTelegramCommand(msg.text, chatId, userName);
           } else if (msg.chat.type === 'private') {
             // Direct message — password reset flow
             await handleTelegramDM(msg.text, chatId, userName);
