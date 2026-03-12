@@ -2446,6 +2446,89 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     return;
   }
 
+  // --- AI-powered Jira query (catches any Jira-related natural language) ---
+  const isJiraQuery = config.jira.apiToken && (
+    /\bjira\b/i.test(text) ||
+    /\btickets?\b/i.test(text) ||
+    /\bissues?\b/i.test(text) ||
+    /\b(BAS|HUBS|UM|CRM|EVERCOMM)-\d+/i.test(text) ||
+    /\bsprint\b/i.test(text) ||
+    /\bbacklog\b/i.test(text) ||
+    /\bepic\b/i.test(text) ||
+    /\bassigned\b/i.test(text)
+  );
+
+  if (isJiraQuery) {
+    try {
+      await telegram.send('🎫 Querying Jira...');
+
+      const aiResponse = await bedrock.analyze({
+        type: 'jira_query',
+        message: text,
+        context: { userName: userName || undefined },
+      });
+
+      // Parse AI response for structured Jira action
+      let jiraAction: { action: string; jql?: string; person?: string; project?: string; ticketKey?: string; explanation?: string } | null = null;
+      try {
+        const jsonMatch = aiResponse.analysis.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          jiraAction = JSON.parse(jsonMatch[0]);
+        }
+      } catch { /* AI didn't return structured JSON */ }
+
+      if (jiraAction) {
+        let resultMsg = '';
+
+        if (jiraAction.action === 'search' && jiraAction.jql) {
+          const { issues, total } = await jiraClient.searchWithTotal(jiraAction.jql, 20);
+          resultMsg = JiraClient.formatTicketsForTelegram(issues, jiraAction.explanation || 'Search Results', total);
+        } else if (jiraAction.action === 'person_tickets' && jiraAction.person) {
+          const { issues, total } = await jiraClient.getTicketsForPerson(jiraAction.person);
+          resultMsg = JiraClient.formatTicketsForTelegram(issues, `Tickets for "${jiraAction.person}"`, total);
+        } else if (jiraAction.action === 'project_summary') {
+          const summary = await jiraClient.getProjectSummary();
+          resultMsg = `📊 <b>${jiraAction.project || config.jira.projectKey} — Open Tickets: ${summary.total}</b>\n\n`;
+          resultMsg += '<b>By Status:</b>\n';
+          for (const [status, count] of Object.entries(summary.byStatus).sort((a, b) => b[1] - a[1])) {
+            resultMsg += `  • ${status}: <b>${count}</b>\n`;
+          }
+          resultMsg += '\n<b>By Assignee:</b>\n';
+          for (const [assignee, count] of Object.entries(summary.byAssignee).sort((a, b) => b[1] - a[1])) {
+            resultMsg += `  • ${assignee}: <b>${count}</b>\n`;
+          }
+        } else if (jiraAction.action === 'get_ticket' && jiraAction.ticketKey) {
+          const ticket = await jiraClient.getTicket(jiraAction.ticketKey);
+          if (ticket) {
+            resultMsg = `🎫 <b><a href="${ticket.url}">${ticket.key}</a></b>\n`;
+            resultMsg += `📋 ${ticket.summary}\n`;
+            resultMsg += `📊 Status: <b>${ticket.status}</b>\n`;
+            resultMsg += `👤 Assignee: ${ticket.assignee}\n`;
+            resultMsg += `⚡ Priority: ${ticket.priority}\n`;
+            resultMsg += `📁 Project: ${ticket.project} | Type: ${ticket.type}`;
+          } else {
+            resultMsg = `❌ Ticket ${jiraAction.ticketKey} not found.`;
+          }
+        }
+
+        if (resultMsg) {
+          await telegram.send(resultMsg);
+          return;
+        }
+      }
+
+      // If AI returned a plain text response (couldn't structure), show it
+      if (aiResponse.analysis && !jiraAction) {
+        await telegram.send(aiResponse.analysis);
+        return;
+      }
+    } catch (err) {
+      logger.error(`AI Jira query failed: ${err}`);
+      await telegram.send(`❌ Jira query failed: ${(err as Error).message}`);
+      return;
+    }
+  }
+
   // --- Natural language → Bedrock with cluster context ---
   try {
     await telegram.send('🧠 Thinking...');
