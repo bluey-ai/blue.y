@@ -3,7 +3,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 
 interface AnalysisRequest {
-  type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident' | 'user_report' | 'db_query';
+  type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident' | 'user_report' | 'db_query' | 'jira_query';
   message: string;
   context?: Record<string, unknown>;
   from?: string;
@@ -368,6 +368,55 @@ Instructions:
 3. If a restart or scale would likely fix it, set requiresAction=true with the exact deployment name.
 4. Write a clear, non-technical "analysis" suitable for the Teams user (they're not engineers).
 5. Set severity: "critical" if a production service is down, "warning" if degraded, "info" if minor.`;
+      case 'jira_query':
+        return `The operator wants to query Jira. Their request: "${request.message}"
+
+${request.context?.userName ? `The operator's name is: ${request.context.userName}\nWhen they say "me", "my", "myself" — they mean this person.\n` : ''}
+=== JIRA CONTEXT ===
+- Jira Cloud instance: blueonion.atlassian.net
+- Projects: HUBS (main platform), BAS (Benchmark Awards), UM (User Management), CRM, EVERCOMM
+- Team members: Zeeshan Ali, Abdul Khaliq, Usama, Boey Ng, Imran Akram
+- Statuses: To Do, In Progress, In Review, Testing, Deployed, Done, Closed
+- Issue types: Bug, Task, Story, Epic, Sub-task
+- Priority levels: Highest, High, Medium, Low, Lowest
+
+=== AVAILABLE ACTIONS ===
+You can generate ONE of these action types:
+
+1. "search" — Run a JQL query to find/list/count tickets
+2. "person_tickets" — Get all tickets for a specific person
+3. "project_summary" — Get project overview (tickets by status & assignee)
+4. "get_ticket" — Get details of a specific ticket (e.g., BAS-1143)
+
+=== JQL TIPS ===
+- assignee = currentUser() — tickets assigned to the authenticated Jira user
+- assignee = "accountId" — use lookupUser to find the accountId first
+- status NOT IN (Done, Closed, Resolved) — open tickets
+- project = HUBS — filter by project
+- priority = Highest — filter by priority
+- created >= -7d — last 7 days
+- updated >= -1d — updated today
+- type = Bug — filter by type
+- ORDER BY priority DESC, updated DESC — common sort
+
+Respond with ONLY valid JSON:
+{
+  "action": "search|person_tickets|project_summary|get_ticket",
+  "jql": "JQL query string (for search action)",
+  "person": "person name (for person_tickets action)",
+  "project": "project key (for project_summary, optional)",
+  "ticketKey": "BAS-1143 (for get_ticket action)",
+  "explanation": "Brief human-readable explanation of what you're doing"
+}
+
+Examples:
+- "how many tickets assigned to me?" → {"action": "person_tickets", "person": "Zeeshan Ali", "explanation": "Finding all open tickets assigned to you"}
+- "show BAS bugs" → {"action": "search", "jql": "project = BAS AND type = Bug AND status NOT IN (Done, Closed) ORDER BY priority DESC", "explanation": "Listing open bugs in BAS project"}
+- "what's the status of HUBS-6116?" → {"action": "get_ticket", "ticketKey": "HUBS-6116", "explanation": "Getting details for HUBS-6116"}
+- "project summary for BAS" → {"action": "project_summary", "project": "BAS", "explanation": "Getting BAS project overview"}
+- "highest priority tickets" → {"action": "search", "jql": "priority = Highest AND status NOT IN (Done, Closed) ORDER BY updated DESC", "explanation": "Listing all highest priority open tickets"}
+- "tickets created this week" → {"action": "search", "jql": "created >= startOfWeek() AND status NOT IN (Done, Closed) ORDER BY created DESC", "explanation": "Tickets created this week"}`;
+
       case 'db_query':
         return `The operator wants to query our databases. Their request: "${request.message}"
 

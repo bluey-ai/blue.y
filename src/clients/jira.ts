@@ -267,6 +267,43 @@ export class JiraClient {
   }
 
   /**
+   * Execute a JQL query and return results with total count.
+   */
+  async searchWithTotal(jql: string, maxResults = 20): Promise<{ issues: JiraIssueInfo[]; total: number }> {
+    try {
+      // Get total count first
+      const countRes = await axios.get(
+        `${this.baseUrl}/rest/api/3/search/jql`,
+        {
+          params: { jql, maxResults: 0, fields: 'key' },
+          headers: { 'Authorization': `Basic ${this.auth}`, 'Content-Type': 'application/json' },
+          timeout: 10000,
+        },
+      ).catch(() => ({ data: { total: 0 } }));
+
+      const total = countRes.data.total || 0;
+      const issues = total > 0 ? await this.searchIssues(jql, maxResults) : [];
+      return { issues, total };
+    } catch (err) {
+      logger.error(`Jira searchWithTotal failed: ${err}`);
+      return { issues: [], total: 0 };
+    }
+  }
+
+  /**
+   * Get a single ticket by key.
+   */
+  async getTicket(key: string): Promise<JiraIssueInfo | null> {
+    try {
+      const issues = await this.searchIssues(`key = "${key}"`, 1);
+      return issues.length > 0 ? issues[0] : null;
+    } catch (err) {
+      logger.error(`Jira getTicket failed for ${key}: ${err}`);
+      return null;
+    }
+  }
+
+  /**
    * Get tickets assigned to a person (fuzzy name match).
    */
   async getTicketsForPerson(name: string, statusFilter?: string): Promise<{ issues: JiraIssueInfo[]; total: number }> {
