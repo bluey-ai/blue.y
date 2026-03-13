@@ -44,16 +44,10 @@ export const DATABASE_REGISTRY: DatabaseInfo[] = [
     name: 'bo-prod-sg',
     host: 'bo-prod-sg.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com',
     port: 3306,
-    databases: ['blo_user'],
-    description: 'User Management: members, companies, roles, permissions, login history',
+    databases: ['blo_user', 'prod_blueonion', 'stg_blueonion', 'blo_user_dev'],
+    description: 'User Management + WordPress: members, companies, roles, permissions, login history, WordPress prod/stg',
   },
-  {
-    name: 'blueonion',
-    host: 'blueonion.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com',
-    port: 3306,
-    databases: ['prod_blueonion', 'blo_user', 'blueonion'],
-    description: 'WordPress + legacy data',
-  },
+  // blueonion RDS removed 2026-03-13 — databases migrated to bo-prod-sg
   {
     name: 'faceset-prod',
     host: 'faceset-prod.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com',

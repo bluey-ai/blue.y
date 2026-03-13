@@ -96,17 +96,12 @@ WORDPRESS namespace:
 
 2. RDS bo-prod-sg (MySQL 8.0, t4g.small, 20GB)
    Host: bo-prod-sg.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com:3306
-   User Management system database. Used by user-management-be (NestJS).
+   User Management + WordPress. Used by user-management-be (NestJS) and WordPress pods.
    - blo_user: members (all platform users — email, username, company_id, status, login history), company (companies/tenants), member_token (JWT tokens), member_expiry (subscription expiry), member_data_permission, account (admin accounts), company_role, notify_new_member_created
-   When someone asks "does user X exist?" or "which company is user Y in?" — query this DB.
-
-3. RDS blueonion (MariaDB 10.6, t4g.micro, 20GB)
-   Host: blueonion.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com:3306
-   WordPress + legacy data.
    - prod_blueonion: WordPress production (posts, pages, media, wp_users, wp_options)
    - stg_blueonion: WordPress staging
-   - blo_user: Legacy copy of user management data (migrated from old account, 286MB, 43 tables)
-   - blueonion: Legacy system database (146MB, 59 tables)
+   - blo_user_dev: Dev copy of user management data (for future dev environment)
+   When someone asks "does user X exist?" or "which company is user Y in?" — query blo_user.
 
 4. RDS faceset-prod (MySQL 8.0, t4g.medium, 200GB)
    Host: faceset-prod.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com:3306
