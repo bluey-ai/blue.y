@@ -279,6 +279,15 @@ export class BedrockClient {
 
         const text = response.data.choices?.[0]?.message?.content || '';
 
+        // For jira_query and db_query, return raw text — callers parse JSON themselves
+        if (request.type === 'jira_query' || request.type === 'db_query') {
+          return {
+            analysis: text,
+            severity: 'info',
+            requiresAction: false,
+          };
+        }
+
         // Try to parse structured JSON response
         try {
           const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -321,6 +330,12 @@ export class BedrockClient {
           );
 
           const text = retryResponse.data.choices?.[0]?.message?.content || '';
+
+          // For jira_query and db_query, return raw text — callers parse JSON themselves
+          if (request.type === 'jira_query' || request.type === 'db_query') {
+            return { analysis: text, severity: 'info' as const, requiresAction: false };
+          }
+
           try {
             const jsonMatch = text.match(/\{[\s\S]*\}/);
             if (jsonMatch) return JSON.parse(jsonMatch[0]);
