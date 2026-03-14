@@ -19,7 +19,7 @@ import { TeamsClient, TeamsTicket, TeamsCards } from './clients/teams';
 import { VisionClient } from './clients/vision';
 import { QAClient } from './clients/qa';
 import { LokiClient } from './clients/loki';
-import { DatabaseClient } from './clients/database';
+import { DatabaseClient, DATABASE_REGISTRY } from './clients/database';
 import { DbAgentPipeline } from './clients/db-agents';
 import { BitbucketClient } from './clients/bitbucket';
 import { SecurityScanner } from './clients/scanner';
@@ -236,14 +236,9 @@ scheduler.onIncident = (incident) => { lastIncident = incident; };
 // Track last bot response for "email this" context
 let lastBotResponse: string | null = null;
 
-// Team email directory — type a name instead of full address
-const TEAM_EMAILS: Record<string, string> = {
-  zeeshan: 'syed.zeeshan@blueonion.today',
-  abdul: 'abdul.khaliq@blueonion.today',
-  usama: 'usama.javed@blueonion.today',
-  wei: 'weslesy.feng@blueonion.today',
-  elsa: 'epau@blueonion.today',
-};
+// Team email directory — type a name instead of full address.
+// Configure via TEAM_EMAILS env var (JSON): '{"alice":"alice@company.com","bob":"bob@company.com"}'
+const TEAM_EMAILS: Record<string, string> = JSON.parse(process.env.TEAM_EMAILS || '{}');
 const TEAM_ALL = Object.values(TEAM_EMAILS);
 
 // Handle DMs to BLUE.Y (password reset requests, etc.)
@@ -564,7 +559,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       lastIncident.analysis = analysis.analysis;
       lastBotResponse = analysis.analysis;
       await telegram.send(`🧠 <b>AI Analysis:</b>\n\n${analysis.analysis}`);
-      await telegram.send(`💡 Use <code>/email user@blueonion.today</code> or <code>/jira</code> to share this report.`);
+      await telegram.send(`💡 Use <code>/email yourname@company.com</code> or <code>/jira</code> to share this report.`);
       if (analysis.suggestedAction) {
         await telegram.send(`💡 <b>Suggested:</b> ${analysis.suggestedAction}\n\nReply /yes to execute.`);
         pendingAction = {
@@ -1576,7 +1571,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
         if (jiraKey) {
           await jiraClient.addComment(jiraKey, `[BLUE.Y] Diagnostic completed for ${found.namespace}/${found.pod.name}.\n\n${analysisText}`);
         }
-        await telegram.send(`💡 Use <code>/email user@blueonion.today</code> or <code>/jira</code> to share this report.`);
+        await telegram.send(`💡 Use <code>/email yourname@company.com</code> or <code>/jira</code> to share this report.`);
       } else {
         await telegram.send(`❓ Pod matching "${target}" not found. Try /diagnose manually.`);
         if (teamsTicketId) {
@@ -1755,7 +1750,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       // Generate a secure temporary password
       const genTempPassword = () => {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-        let pwd = 'BlueOnion-';
+        let pwd = (process.env.PASSWORD_PREFIX || 'Bluey') + '-';
         for (let i = 0; i < 8; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
         pwd += '!' + Math.floor(Math.random() * 100);
         return pwd;
@@ -1767,7 +1762,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
 
         if (service === 'aws') {
           const { IAMClient, ListUsersCommand, UpdateLoginProfileCommand } = await import('@aws-sdk/client-iam');
-          const iam = new IAMClient({ region: 'ap-southeast-1' });
+          const iam = new IAMClient({ region: process.env.AWS_REGION || 'us-east-1' });
           const tempPassword = genTempPassword();
 
           try {
@@ -1789,7 +1784,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
               resetInstructions = `Your AWS Console password has been reset.\n\n` +
                 `🔑 Username: <code>${iamUser.UserName}</code>\n` +
                 `🔑 Temporary password: <code>${tempPassword}</code>\n` +
-                `🌐 Login: https://716156543026.signin.aws.amazon.com/console\n\n` +
+                `🌐 Login: ${process.env.AWS_CONSOLE_URL || 'https://console.aws.amazon.com'}\n\n` +
                 `⚠️ You MUST set a new password on first login.\n` +
                 `🗑️ This message will be your only record — save your new password securely.`;
 
@@ -1837,7 +1832,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
                 resetInstructions = `Your Grafana password has been reset.\n\n` +
                   `🔑 Username: <code>${grafanaUser.login}</code>\n` +
                   `🔑 Temporary password: <code>${tempPassword}</code>\n` +
-                  `🌐 Login: https://grafana.blueonion.today\n\n` +
+                  `🌐 Login: ${process.env.GRAFANA_EXTERNAL_URL || config.grafana.internalUrl}\n\n` +
                   `⚠️ Please change your password after logging in (Profile → Change password).`;
 
                 await telegram.send(`✅ Grafana password reset done — credentials sent via DM.`);
@@ -2087,18 +2082,16 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     }
 
     const repoArg = cmd.replace(/^\/(builds)\s*/i, '').trim().toLowerCase();
-    const repos = repoArg.includes('fe') || repoArg.includes('frontend')
-      ? ['jcp-blo-frontend']
-      : repoArg.includes('be') || repoArg.includes('backend')
-        ? ['jcp-blo-backend']
-        : ['jcp-blo-backend', 'jcp-blo-frontend'];
+    // Parse repo aliases from BB_REPO_ALIASES env var (JSON) or use the arg directly
+    const bbRepoAliases: Record<string, string[]> = JSON.parse(process.env.BB_REPO_ALIASES || '{}');
+    const repos = bbRepoAliases[repoArg] || (repoArg ? [repoArg] : Object.keys(bbClient.getRepoMap()));
 
     await telegram.send('🔍 Fetching recent builds...');
 
     for (const repo of repos) {
       try {
         const pipelines = await bbClient.getRecentPipelines(repo, 8);
-        const shortRepo = repo.replace('jcp-blo-', '');
+        const shortRepo = repo;
         let msg = `📋 <b>${shortRepo}</b> — Recent Builds\n\n`;
         for (const p of pipelines) {
           msg += `${BitbucketClient.formatPipeline(p)}\n`;
@@ -2120,25 +2113,14 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
 
     // Parse: /scan [repo] [branch]
     const args = cmd.replace(/^\/scan\s*/i, '').trim().split(/\s+/);
-    const repoAliasMap: Record<string, string> = {
-      'backend': 'jcp-blo-backend', 'be': 'jcp-blo-backend',
-      'frontend': 'jcp-blo-frontend', 'fe': 'jcp-blo-frontend',
-      'um-be': 'user-management-be', 'um-fe': 'user-management-fe',
-      'pdf': 'pdf-service', 'bluey': 'blue.y',
-    };
+    // Repo aliases and default branches configured via BB_SCAN_ALIASES env var (JSON)
+    const scanAliasMap: Record<string, string> = JSON.parse(process.env.BB_SCAN_ALIASES || '{}');
 
-    const repoArg = args[0] || 'backend';
-    const repo = repoAliasMap[repoArg.toLowerCase()] || repoArg;
+    const repoArg = args[0] || '';
+    const repo = scanAliasMap[repoArg.toLowerCase()] || repoArg || 'my-app';
 
-    // Default branches per repo
-    const defaultBranches: Record<string, string> = {
-      'jcp-blo-backend': 'production-hubs20',
-      'jcp-blo-frontend': 'production-fund-update',
-      'user-management-be': 'feature/aws-account-migration',
-      'user-management-fe': 'feature/aws-account-migration',
-      'pdf-service': 'feature/aws-account-migration',
-      'blue.y': 'main',
-    };
+    // Default branches per repo — configure via BB_DEFAULT_BRANCHES env var (JSON)
+    const defaultBranches: Record<string, string> = JSON.parse(process.env.BB_DEFAULT_BRANCHES || '{}');
     const branch = args[1] || defaultBranches[repo] || 'main';
 
     await telegram.send(`🔐 Scanning <code>${repo}</code> (<code>${branch}</code>) for security issues...\nChecking last 5 commits, up to 20 files. This takes ~30-60s.`);
@@ -2389,18 +2371,17 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
   if (cmd === '/backend' || cmd.match(/^backend\s*(health|status|check|deep)?$/i)) {
     await telegram.send('🏥 Running backend deep health check...');
     try {
-      const backendPod = await kube.findPod('blo-backend');
+      const backendPod = await kube.findPod(process.env.BACKEND_POD_SEARCH || 'backend');
       if (!backendPod) {
-        await telegram.send('❌ Backend pod not found.');
+        await telegram.send('❌ Backend pod not found. Set BACKEND_POD_SEARCH env var to match your pod name.');
         return;
       }
 
-      const endpoints = [
-        { name: 'Nacos', port: 8848, path: '/nacos/v1/ns/service/list?pageNo=1&pageSize=10', expect: 200 },
-        { name: 'System (7001)', port: 7001, path: '/actuator/health', expect: 200 },
-        { name: 'BlueOnion (7002)', port: 7002, path: '/actuator/health', expect: 200 },
-        { name: 'Gateway (9999)', port: 9999, path: '/actuator/health', expect: 200 },
-      ];
+      // Configure backend health endpoints via BACKEND_HEALTH_ENDPOINTS env var (JSON array):
+      // [{"name":"API","port":8080,"path":"/health","expect":200}]
+      const endpoints: Array<{name: string; port: number; path: string; expect: number}> = JSON.parse(
+        process.env.BACKEND_HEALTH_ENDPOINTS || '[{"name":"App","port":8080,"path":"/actuator/health","expect":200}]'
+      );
 
       let msg = `🏥 <b>Backend Deep Health Check</b>\n📦 Pod: <code>${backendPod.pod.name}</code>\n\n`;
 
@@ -2425,7 +2406,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       try {
         const luceneResult = await kube.execInPod(
           backendPod.namespace, backendPod.pod.name,
-          ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', 'http://localhost:7002/blueonion/lucene/createIndex01'],
+          ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', process.env.LUCENE_CHECK_URL || 'http://localhost:8080/health'],
           5000,
         );
         const luceneOk = parseInt(luceneResult.trim()) < 400;
@@ -2619,7 +2600,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       `  └ <code>/query hubsprod.dwd SELECT * FROM bas_register_company LIMIT 5</code>\n\n` +
 
       `<b>Pipeline:</b> Agent 1 (Generator) → Agent 2 (Validator) → Agent 3 (Verifier)\n` +
-      `<b>Databases:</b> hubsprod, bo-prod-sg, faceset-prod, data-transfer, blueonion, doris\n` +
+      `<b>Databases:</b> ${DATABASE_REGISTRY.map(d => d.name).join(', ') || '(none configured — set DATABASE_REGISTRY env var)'}\n` +
       `<b>Safety:</b> SELECT only, 50 row limit, read-only user, no data sent to AI\n`,
     );
 

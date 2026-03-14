@@ -14,7 +14,7 @@
  * Slack, Teams, WhatsApp) normalize their payloads into CallerIdentity before
  * calling here.
  *
- * Jira: HUBS-6128
+
  */
 
 import { RBAC, CallerIdentity, Role } from './rbac';

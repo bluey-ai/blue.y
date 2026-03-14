@@ -7,7 +7,7 @@
  * Admin/Operator /status is handled separately (legacy main.ts kube.getClusterSummary).
  * This handler is registered for the 'user' role only via command-router.
  *
- * Jira: HUBS-6145
+
  */
 
 import { CommandHandler } from '../../command-router';
@@ -20,10 +20,10 @@ export function createUserStatusHandler(kube: KubeClient): CommandHandler {
   return async (ctx) => {
     // Build a ClusterStatus from real pod data
     // KubeClient.getClusterSummary() returns a formatted string (legacy).
-    // For the user-facing view, we need structured data. That refactor is HUBS-6128.
+    // For the user-facing view, we need structured data. That refactor is BLY-2.
     // Until then, produce a simplified response using existing kube data.
     //
-    // TODO (HUBS-6128): Replace with kube.getStructuredStatus() once implemented.
+    // TODO (BLY-2): Replace with kube.getStructuredStatus() once implemented.
 
     const now = new Date().toLocaleTimeString('en-SG', {
       timeZone: 'Asia/Singapore',

@@ -253,7 +253,7 @@ export class MonitorScheduler {
       // Notify main.ts to update lastIncident
       if (this.onIncident) this.onIncident(incident);
 
-      await this.telegram.send(`💡 Use <code>/email user@blueonion.today</code> or <code>/jira</code> to share this report.`);
+      await this.telegram.send(`💡 Use <code>/email yourname@company.com</code> or <code>/jira</code> to share this report.`);
       this.audit('auto-diagnose', monitorName, `Auto-diagnosed ${resource}`);
     } catch (err) {
       logger.error(`Auto-diagnose failed for ${resource}: ${err}`);

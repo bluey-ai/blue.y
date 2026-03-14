@@ -11,7 +11,7 @@
  *   3. Notify admin channel for approval
  *   4. Confirm to user that request is pending
  *
- * Jira: HUBS-6145
+
  */
 
 import { CommandHandler } from '../../command-router';

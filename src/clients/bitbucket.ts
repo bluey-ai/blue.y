@@ -3,64 +3,24 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 
 const BB_API = 'https://api.bitbucket.org/2.0';
-const BB_WORKSPACE = 'blue-onion';
+const BB_WORKSPACE = process.env.BB_WORKSPACE || 'my-workspace';
 
-// Pipeline definitions (branch → display label)
-export const PIPELINES: Record<string, Record<string, Array<{ branch: string; label: string; env: 'prod' | 'stg' | 'dev' }>>> = {
-  'jcp-blo-backend': {
-    prod: [
-      { branch: 'production-hubs20', label: 'Production Hubs20 ★', env: 'prod' },
-    ],
-    stg: [
-      { branch: 'staging-hubs20', label: 'Staging Hubs20', env: 'stg' },
-      { branch: 'stg-hubs-backend', label: 'Staging Hubs', env: 'stg' },
-      { branch: 'stg-crm', label: 'Staging CRM', env: 'stg' },
-      { branch: 'stg-stewardship', label: 'Staging Stewardship', env: 'stg' },
-    ],
-    dev: [
-      { branch: 'develop-hubs20', label: 'Dev Hubs20', env: 'dev' },
-      { branch: 'develop-hubs10', label: 'Dev Hubs10', env: 'dev' },
-      { branch: 'develop-fund-update-pwc', label: 'Dev Pwc', env: 'dev' },
-      { branch: 'develop-stewardshiphub', label: 'Dev Stewardshiphub', env: 'dev' },
-    ],
-  },
-  'jcp-blo-frontend': {
-    prod: [
-      { branch: 'production-fund-update', label: 'Production Fund Update ★', env: 'prod' },
-      { branch: 'basprod-frontend', label: 'Production BAS', env: 'prod' },
-      { branch: 'production-fund-bloconnect', label: 'Production BloConnect', env: 'prod' },
-    ],
-    stg: [
-      { branch: 'staging-hubs', label: 'Staging Hubs', env: 'stg' },
-      { branch: 'staging-fund-update', label: 'Staging Fund Update', env: 'stg' },
-    ],
-    dev: [
-      { branch: 'develop-hubs', label: 'Dev Hubs', env: 'dev' },
-      { branch: 'develop-fund-update', label: 'Dev Fund Update', env: 'dev' },
-      { branch: 'develop-bas', label: 'Dev BAS', env: 'dev' },
-    ],
-  },
-  'user-management-be': {
-    prod: [{ branch: 'feature/aws-account-migration', label: 'Production', env: 'prod' }],
-    stg: [],
-    dev: [],
-  },
-  'user-management-fe': {
-    prod: [{ branch: 'feature/aws-account-migration', label: 'Production', env: 'prod' }],
-    stg: [],
-    dev: [],
-  },
-  'pdf-service': {
-    prod: [{ branch: 'feature/aws-account-migration', label: 'Production', env: 'prod' }],
-    stg: [],
-    dev: [],
-  },
-  'blue.y': {
-    prod: [{ branch: 'main', label: 'Production', env: 'prod' }],
-    stg: [],
-    dev: [],
-  },
-};
+// Pipeline definitions (branch → display label).
+// Configure via BB_PIPELINES env var (JSON) or set directly here for your repos.
+// Example: {"my-backend":{"prod":[{"branch":"main","label":"Production","env":"prod"}],"stg":[],"dev":[]}}
+export const PIPELINES: Record<string, Record<string, Array<{ branch: string; label: string; env: 'prod' | 'stg' | 'dev' }>>> =
+  JSON.parse(process.env.BB_PIPELINES || JSON.stringify({
+    'my-app': {
+      prod: [{ branch: 'main', label: 'Production ★', env: 'prod' as const }],
+      stg:  [{ branch: 'staging', label: 'Staging', env: 'stg' as const }],
+      dev:  [{ branch: 'develop', label: 'Dev', env: 'dev' as const }],
+    },
+    'blue.y': {
+      prod: [{ branch: 'main', label: 'Production', env: 'prod' as const }],
+      stg:  [],
+      dev:  [],
+    },
+  }));
 
 export interface PipelineInfo {
   uuid: string;
@@ -84,6 +44,10 @@ export class BitbucketClient {
 
   get enabled(): boolean {
     return this.token !== null;
+  }
+
+  getRepoMap(): Record<string, unknown> {
+    return PIPELINES;
   }
 
   private get headers() {
@@ -182,15 +146,9 @@ export class BitbucketClient {
     const s = search.toLowerCase().trim();
     const results: Array<{ repo: string; branch: string; label: string; env: string }> = [];
 
-    // Shortcut mappings
+    // Shortcut mappings — override via BB_SCAN_ALIASES env var or configure PIPELINES
     const repoAliases: Record<string, string[]> = {
-      'backend': ['jcp-blo-backend'],
-      'be': ['jcp-blo-backend'],
-      'frontend': ['jcp-blo-frontend'],
-      'fe': ['jcp-blo-frontend'],
-      'um-be': ['user-management-be'],
-      'um-fe': ['user-management-fe'],
-      'pdf': ['pdf-service'],
+      ...JSON.parse(process.env.BB_SCAN_ALIASES || '{}'),
       'bluey': ['blue.y'],
     };
 
@@ -306,7 +264,7 @@ export class BitbucketClient {
     let msg = '🔧 <b>Available Pipelines</b>\n\n';
 
     for (const [repo, envs] of Object.entries(PIPELINES)) {
-      const shortRepo = repo.replace('jcp-blo-', '');
+      const shortRepo = repo;
       msg += `<b>${shortRepo}</b>\n`;
       for (const [env, pipelines] of Object.entries(envs)) {
         if (pipelines.length === 0) continue;

@@ -5,18 +5,15 @@ import { CostExplorerClient, GetCostAndUsageCommand } from '@aws-sdk/client-cost
 import { RDSClient, DescribeDBInstancesCommand } from '@aws-sdk/client-rds';
 import { logger } from '../utils/logger';
 
-const REGION = 'ap-southeast-1';
+const REGION = process.env.AWS_REGION || 'us-east-1';
 
-// RDS instances to monitor
-const RDS_INSTANCES = [
-  { id: 'hubsprod', label: 'HubsProd (Main)', critical: true },
-  { id: 'faceset-prod', label: 'FactSet Prod', critical: false },
-  { id: 'data-transfer', label: 'Data Transfer', critical: false },
-  { id: 'bo-prod-sg', label: 'BO Prod SG (UM)', critical: true },
-  { id: 'blueonion', label: 'BlueOnion (WP)', critical: false },
-];
+// RDS instances to monitor — configure via RDS_INSTANCES env var (JSON array).
+// Example: '[{"id":"mydb","label":"Main DB","critical":true}]'
+const RDS_INSTANCES: Array<{ id: string; label: string; critical: boolean }> = JSON.parse(
+  process.env.RDS_INSTANCES || '[]'
+);
 
-const EMR_CLUSTER_ID = 'j-1MMRPINOFHH98';
+const EMR_CLUSTER_ID = process.env.EMR_CLUSTER_ID || '';
 
 export interface RdsMetrics {
   instanceId: string;

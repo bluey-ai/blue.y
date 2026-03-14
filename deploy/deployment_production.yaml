@@ -4,7 +4,7 @@ metadata:
   namespace: <namespace>
   name: blue-y
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::716156543026:role/BlueYBedrockRole
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/BlueYBedrockRole
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -88,7 +88,7 @@ spec:
             - name: AI_INCIDENT_MODEL
               value: "deepseek-reasoner"
             - name: WATCH_NAMESPACES
-              value: "prod,doris,monitoring,wordpress"
+              value: "default,monitoring"
             - name: KUBE_IN_CLUSTER
               value: "true"
             - name: TELEGRAM_BOT_TOKEN
@@ -114,11 +114,11 @@ spec:
                   key: teams-app-password
                   optional: true
             - name: TEAMS_TENANT_ID
-              value: "7ef59ba4-e80a-48fd-841e-72fe93f5f3f4"
+              value: ""   # Set your Azure AD tenant ID here
             - name: JIRA_BASE_URL
-              value: "https://blueonion.atlassian.net"
+              value: "https://your-org.atlassian.net"
             - name: JIRA_PROJECT_KEY
-              value: "HUBS"
+              value: "OPS"
             - name: JIRA_EMAIL
               valueFrom:
                 secretKeyRef:
@@ -149,7 +149,7 @@ spec:
                   name: blue-y-secrets
                   key: db-readonly-password
             - name: BB_USER
-              value: "zeeshan@blueonion.today"
+              value: ""   # Your Bitbucket username (for pipeline triggers)
             - name: BB_TOKEN
               valueFrom:
                 secretKeyRef:
