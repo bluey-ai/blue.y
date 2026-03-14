@@ -74,24 +74,25 @@ export interface PipelineInfo {
 }
 
 export class BitbucketClient {
-  private auth: { username: string; password: string } | null = null;
+  private token: string | null = null;
 
   constructor() {
-    if (config.bitbucket.user && config.bitbucket.token) {
-      this.auth = { username: config.bitbucket.user, password: config.bitbucket.token };
+    if (config.bitbucket.token) {
+      this.token = config.bitbucket.token;
     }
   }
 
   get enabled(): boolean {
-    return this.auth !== null;
+    return this.token !== null;
   }
 
   private get headers() {
-    if (!this.auth) throw new Error('Bitbucket not configured');
+    if (!this.token) throw new Error('Bitbucket not configured');
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'Authorization': 'Basic ' + Buffer.from(`${this.auth.username}:${this.auth.password}`).toString('base64'),
+      // Bitbucket API tokens use Bearer auth (App Passwords are deprecated)
+      'Authorization': `Bearer ${this.token}`,
     };
   }
 
@@ -121,7 +122,7 @@ export class BitbucketClient {
       result: p.state?.result?.name || '',
       durationSeconds: 0,
       createdOn: p.created_on || new Date().toISOString(),
-      url: `https://bitbucket.org/${BB_WORKSPACE}/${repo}/pipelines/${p.build_number}`,
+      url: `https://bitbucket.org/${BB_WORKSPACE}/${repo}/pipelines/results/${p.build_number}`,
     };
   }
 
@@ -143,7 +144,7 @@ export class BitbucketClient {
       result: p.state?.result?.name || '',
       durationSeconds: p.duration_in_seconds || 0,
       createdOn: p.created_on || '',
-      url: `https://bitbucket.org/${BB_WORKSPACE}/${repo}/pipelines/${p.build_number}`,
+      url: `https://bitbucket.org/${BB_WORKSPACE}/${repo}/pipelines/results/${p.build_number}`,
     };
   }
 
@@ -168,7 +169,7 @@ export class BitbucketClient {
         result: String(result.name || ''),
         durationSeconds: (p.duration_in_seconds as number) || 0,
         createdOn: String(p.created_on || ''),
-        url: `https://bitbucket.org/${BB_WORKSPACE}/${repo}/pipelines/${p.build_number}`,
+        url: `https://bitbucket.org/${BB_WORKSPACE}/${repo}/pipelines/results/${p.build_number}`,
       };
     });
   }

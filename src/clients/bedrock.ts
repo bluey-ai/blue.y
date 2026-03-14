@@ -3,7 +3,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 
 interface AnalysisRequest {
-  type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident' | 'user_report' | 'db_query' | 'jira_query';
+  type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident' | 'user_report' | 'db_query' | 'jira_query' | 'security_threat';
   message: string;
   context?: Record<string, unknown>;
   from?: string;
@@ -240,8 +240,8 @@ export class BedrockClient {
   }
 
   async analyze(request: AnalysisRequest): Promise<AnalysisResponse> {
-    // Use reasoning model for incidents/commands, fast model for routine checks
-    const model = request.type === 'incident' || request.type === 'user_command'
+    // Use reasoning model for incidents/commands/security, fast model for routine checks
+    const model = request.type === 'incident' || request.type === 'user_command' || request.type === 'security_threat'
       ? config.ai.incidentModel
       : config.ai.routineModel;
 
@@ -457,6 +457,33 @@ If the question is ambiguous or you need to query multiple databases, return an 
   {"instance": "...", "database": "...", "sql": "...", "explanation": "..."},
   {"instance": "...", "database": "...", "sql": "...", "explanation": "..."}
 ]`;
+      case 'security_threat':
+        return `SECURITY THREAT ANALYSIS:
+
+${request.message}
+
+Context:
+${JSON.stringify(request.context || {}, null, 2)}
+
+You are analyzing a potential security threat against our production infrastructure. Provide:
+
+1. **Threat Classification**: What type of attack is this? (DDoS, brute force, vulnerability scanning, SQL injection, XSS, credential stuffing, bot/scraper, etc.)
+2. **Severity Assessment**: Rate as info/warning/critical with justification.
+3. **Attack Pattern**: Describe what the attacker is doing and what they're targeting.
+4. **Risk Level**: What could happen if this attack succeeds? What data or services are at risk?
+5. **Recommended Action**: Should we block the IP(s)? For how long? Any other defensive measures?
+6. **Context Clues**: Anything notable about the user-agents, request patterns, geographic origin, or timing?
+
+Be concise but thorough. This analysis will be shown to the ops team via Telegram.
+
+Respond with JSON:
+{
+  "analysis": "human-readable threat analysis",
+  "severity": "info|warning|critical",
+  "requiresAction": true/false,
+  "suggestedAction": "block_ip|monitor|ignore|escalate",
+  "suggestedCommand": "block <ip> or other action"
+}`;
       default:
         return request.message;
     }

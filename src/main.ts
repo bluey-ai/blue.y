@@ -12,6 +12,8 @@ import { PodMonitor } from './monitors/pods';
 import { NodeMonitor } from './monitors/nodes';
 import { CertMonitor } from './monitors/certs';
 import { HPAMonitor } from './monitors/hpa';
+import { SecurityMonitor } from './monitors/security';
+import { WafClient } from './clients/waf';
 import { TeamsClient, TeamsTicket, TeamsCards } from './clients/teams';
 import { VisionClient } from './clients/vision';
 import { QAClient } from './clients/qa';
@@ -60,13 +62,16 @@ const dbClient = config.database.enabled ? new DatabaseClient() : null;
 const dbPipeline = dbClient ? new DbAgentPipeline(dbClient) : null;
 const bbClient = config.bitbucket.enabled ? new BitbucketClient() : null;
 const awsMonitor = new AwsMonitorClient();
+const wafClient = new WafClient();
 
 // Initialize monitors
+const securityMonitor = new SecurityMonitor(wafClient, lokiClient, bedrock, telegram);
 const monitors = [
   new PodMonitor(kube, bedrock),
   new NodeMonitor(kube, bedrock),
   new CertMonitor(kube, bedrock),
   new HPAMonitor(kube),
+  securityMonitor,
 ];
 
 // Initialize scheduler (pass kube + loki for auto-diagnose)
@@ -295,7 +300,7 @@ async function handleTelegramDM(text: string, chatId: string, userName: string):
       `🔍 /status /check /nodes /resources /hpa /doris\n` +
       `📦 /logs /describe /events /deployments /diagnose\n` +
       `⚡ /restart /scale (+ /yes /no)\n` +
-      `🛡️ /smoketest /securityscan /restarts /loki\n` +
+      `🛡️ /smoketest /securityscan /waf /threats /block /unblock /restarts /loki\n` +
       `📧 /report /email /incidents\n` +
       `🎫 /jira /report-issue /tickets\n` +
       `🗄️ /db /databases /tables /query\n` +
@@ -772,12 +777,113 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     return;
   }
 
-  // --- Security Scan ---
-  if (cmd === '/securityscan' || cmd === '/security' || cmd.match(/^(run\s+)?(security|owasp)\s*scan/i)) {
-    const targetUrl = cmd.replace(/^\/(securityscan|security)\s*/, '').trim();
+  // --- Security Scan (OWASP headers) ---
+  if (cmd === '/securityscan' || cmd.match(/^(run\s+)?(owasp)\s*scan/i)) {
+    const targetUrl = cmd.replace(/^\/(securityscan)\s*/, '').trim();
     await telegram.send(`🔐 Running security scan${targetUrl ? ` on ${targetUrl}` : ' on all production URLs'}...`);
     const results = await qaClient.securityScan(targetUrl || undefined);
     await telegram.send(qaClient.formatSecurityScanTelegram(results));
+    return;
+  }
+
+  // --- WAF Dashboard ---
+  if (cmd === '/waf' || cmd === '/security' || cmd.match(/^(waf|firewall)\s*(status|dashboard|health)?$/i)) {
+    await telegram.send('🛡️ Loading WAF security dashboard...');
+    try {
+      const [metrics, rules] = await Promise.all([
+        wafClient.getMetrics(60),
+        wafClient.getRuleMetrics(60),
+      ]);
+      await telegram.send(wafClient.formatMetricsForTelegram(metrics));
+      if (rules.length > 0) {
+        await telegram.send(wafClient.formatRulesForTelegram(rules));
+      }
+      // Show blocked IPs
+      const blockedMsg = wafClient.formatBlockedIPsForTelegram();
+      await telegram.send(blockedMsg);
+    } catch (err) {
+      await telegram.send(`❌ WAF dashboard failed: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  // --- Threat Report ---
+  if (cmd === '/threats' || cmd.match(/^(show\s+)?threats?/i) || cmd.match(/^(security\s+)?threat/i)) {
+    const threats = securityMonitor.getThreats(15);
+    await telegram.send(securityMonitor.formatThreatsForTelegram(threats));
+    return;
+  }
+
+  // --- Block IP ---
+  if (cmd.startsWith('/block ') || cmd.match(/^block\s+\d{1,3}\./i)) {
+    const ipArg = text.replace(/^\/block\s*/i, '').replace(/^block\s*/i, '').trim();
+    const ipMatch = ipArg.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(\/\d{1,2})?/);
+
+    if (!ipMatch) {
+      await telegram.send(
+        '🚫 <b>Block IP in WAF</b>\n\n' +
+        'Usage: <code>/block 1.2.3.4</code>\n' +
+        'Or: <code>/block 1.2.3.0/24</code> (CIDR range)\n\n' +
+        'This adds the IP to the WAF block list.\n' +
+        `Auto-blocks expire after ${config.waf.autoBlockDurationMinutes} minutes.`
+      );
+      return;
+    }
+
+    const ip = ipMatch[0];
+    const reason = ipArg.replace(ip, '').trim() || 'Manual block via Telegram';
+
+    pendingAction = {
+      action: 'block_ip',
+      target: ip,
+      namespace: 'waf',
+      detail: reason,
+      timestamp: Date.now(),
+    };
+
+    await telegram.send(
+      `🚫 <b>CONFIRM: Block IP</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🌐 IP: <code>${ip}</code>\n` +
+      `📝 Reason: ${reason}\n` +
+      `⏱️ Duration: ${config.waf.autoBlockDurationMinutes} minutes\n\n` +
+      `Reply /yes to confirm or /no to cancel.`
+    );
+    return;
+  }
+
+  // --- Unblock IP ---
+  if (cmd.startsWith('/unblock ') || cmd.match(/^unblock\s+\d{1,3}\./i)) {
+    const ipArg = text.replace(/^\/unblock\s*/i, '').replace(/^unblock\s*/i, '').trim();
+    const ipMatch = ipArg.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(\/\d{1,2})?/);
+
+    if (!ipMatch) {
+      await telegram.send(
+        '✅ <b>Unblock IP from WAF</b>\n\n' +
+        'Usage: <code>/unblock 1.2.3.4</code>\n\n' +
+        'This removes the IP from the WAF block list.\n\n' +
+        '<b>Currently blocked:</b>\n' +
+        wafClient.formatBlockedIPsForTelegram()
+      );
+      return;
+    }
+
+    const ip = ipMatch[0];
+    await telegram.send(`🔓 Unblocking <code>${ip}</code>...`);
+    const ok = await wafClient.unblockIP(ip);
+    if (ok) {
+      await telegram.send(`✅ <code>${ip}</code> has been unblocked from WAF.`);
+    } else {
+      await telegram.send(`❌ <code>${ip}</code> was not found in the block list.`);
+    }
+    return;
+  }
+
+  // --- WAF Sampled Requests (what's being blocked right now) ---
+  if (cmd === '/blocked' || cmd.match(/^(show\s+)?blocked\s*(requests?|traffic)?$/i)) {
+    await telegram.send('🔍 Fetching recently blocked requests...');
+    const samples = await wafClient.getSampledRequests('ALL', 20);
+    await telegram.send(wafClient.formatSamplesForTelegram(samples));
     return;
   }
 
@@ -1489,6 +1595,23 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       } catch (err) {
         await telegram.send(`❌ Failed to trigger pipeline: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
+    } else if (action === 'block_ip') {
+      // Block IP in WAF
+      const reason = detail || 'Manual block via Telegram';
+      await telegram.send(`🛡️ Blocking <code>${target}</code> in WAF...`);
+      const blocked = await wafClient.blockIP(target, reason, false);
+      if (blocked) {
+        await telegram.send(
+          `✅ <b>IP BLOCKED</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🌐 IP: <code>${target}</code>\n` +
+          `📝 Reason: ${reason}\n` +
+          `⏱️ Expires: ${config.waf.autoBlockDurationMinutes} minutes\n\n` +
+          `Use <code>/unblock ${target}</code> to remove.`
+        );
+      } else {
+        await telegram.send(`❌ Failed to block <code>${target}</code>. Check WAF configuration.`);
+      }
     } else if (action === 'password_reset') {
       // Password reset approved — execute based on service type
       // SECURITY: All credentials and details go to DM ONLY. Channel gets minimal status only.
@@ -2116,8 +2239,8 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
         try {
           const result = await kube.execInPod(
             backendPod.namespace, backendPod.pod.name,
-            ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code},%{time_total}', `http://localhost:${ep.port}${ep.path}`],
-            5000,
+            ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code},%{time_total}', '--max-time', '8', `http://localhost:${ep.port}${ep.path}`],
+            12000,
           );
           const [statusCode, responseTime] = result.trim().split(',');
           const ok = parseInt(statusCode) === ep.expect;
@@ -2263,7 +2386,15 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       `<code>/smoketest</code> — Test all 9 production URLs (HTTP status check)\n` +
       `  └ Aliases: <code>/smoke</code>\n` +
       `<code>/securityscan</code> — OWASP security header scan on all URLs\n` +
-      `  └ Aliases: <code>/security</code>\n` +
+      `<code>/waf</code> — WAF security dashboard (metrics, rules, blocked IPs)\n` +
+      `  └ Aliases: <code>/security</code>, <code>/firewall</code>\n` +
+      `<code>/threats</code> — Security threat report (last 24h)\n` +
+      `<code>/blocked</code> — Recently blocked WAF requests with IPs\n` +
+      `<code>/block &lt;ip&gt; [reason]</code> — Block IP in WAF (requires /yes)\n` +
+      `  └ <code>/block 1.2.3.4 brute force attack</code>\n` +
+      `  └ <code>/block 1.2.3.0/24</code> (CIDR range)\n` +
+      `<code>/unblock &lt;ip&gt;</code> — Remove IP from WAF block list\n` +
+      `  └ <code>/unblock 1.2.3.4</code>\n` +
       `<code>/restarts</code> — Pod restart root cause analysis with AI\n` +
       `<code>/dorisbackup</code> — Doris backup CronJob health check\n` +
       `<code>/loki [ns]</code> — Loki log error analysis (last 1 hour)\n` +
@@ -2372,11 +2503,12 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       `<b>🤖 SMART FEATURES</b>\n` +
       `• Ask anything in plain English — AI understands context\n` +
       `• Auto-diagnose: unhealthy pods investigated automatically\n` +
+      `• 🛡️ Security: WAF monitoring, threat detection, auto-block attackers\n` +
       `• 📸 Teams: attach screenshots for AI vision analysis\n` +
       `• Actions always need <code>/yes</code> confirmation\n` +
       `• Production builds show extra ⚠️ warning\n` +
       `• Daily report at 9 AM SGT (auto)\n` +
-      `• Monitors: pods (2min), nodes (5min), certs (6hr), HPA (5min)\n`,
+      `• Monitors: pods (2min), nodes (5min), certs (6hr), HPA (5min), security (3min)\n`,
     );
 
     for (const sheet of sheets) {
@@ -2409,6 +2541,11 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       `<b>QA & Security:</b>\n` +
       `/smoketest — Test all production URLs\n` +
       `/securityscan — OWASP security header scan\n` +
+      `/waf — WAF security dashboard\n` +
+      `/threats — Security threat report\n` +
+      `/blocked — Recently blocked requests\n` +
+      `/block &lt;ip&gt; — Block IP in WAF\n` +
+      `/unblock &lt;ip&gt; — Unblock IP from WAF\n` +
       `/restarts — Pod restart root cause analysis\n` +
       `/efficiency — Resource usage vs requests\n` +
       `/dorisbackup — Doris backup health check\n` +
@@ -2577,7 +2714,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     logger.error('Bedrock analysis failed', err);
     await telegram.send(
       `⚠️ AI unavailable right now. Here are the commands:\n\n` +
-      `/status /check /nodes /smoketest /securityscan /restarts /efficiency /report /help`,
+      `/status /check /nodes /smoketest /waf /threats /block /unblock /restarts /report /help`,
     );
   }
 }
@@ -2606,6 +2743,9 @@ async function startPolling(): Promise<void> {
         { command: 'deployments', description: 'List deployments' },
         { command: 'smoketest', description: 'Test all production URLs' },
         { command: 'securityscan', description: 'OWASP security scan' },
+        { command: 'waf', description: 'WAF security dashboard' },
+        { command: 'threats', description: 'Security threat report' },
+        { command: 'blocked', description: 'Recently blocked requests' },
         { command: 'restarts', description: 'Pod restart root cause' },
         { command: 'efficiency', description: 'Resource usage analysis' },
         { command: 'rds', description: 'RDS database health' },
@@ -3117,8 +3257,19 @@ async function generateDailyReport(): Promise<void> {
 }
 
 // Start
-app.listen(config.port, () => {
+app.listen(config.port, async () => {
   logger.info(`BLUE.Y started on port ${config.port}`);
+
+  // Initialize WAF client
+  if (config.waf.enabled) {
+    const wafOk = await wafClient.initialize();
+    if (wafOk) {
+      logger.info('WAF security module initialized');
+    } else {
+      logger.warn('WAF security module failed to initialize — security monitoring will have limited capability');
+    }
+  }
+
   scheduler.start();
 
   // Schedule daily health report
