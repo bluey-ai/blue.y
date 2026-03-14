@@ -21,6 +21,7 @@ import { LokiClient } from './clients/loki';
 import { DatabaseClient } from './clients/database';
 import { DbAgentPipeline } from './clients/db-agents';
 import { BitbucketClient } from './clients/bitbucket';
+import { SecurityScanner } from './clients/scanner';
 import { AwsMonitorClient } from './clients/aws-monitor';
 import { CronJob } from 'cron';
 
@@ -61,6 +62,7 @@ const lokiClient = new LokiClient();
 const dbClient = config.database.enabled ? new DatabaseClient() : null;
 const dbPipeline = dbClient ? new DbAgentPipeline(dbClient) : null;
 const bbClient = config.bitbucket.enabled ? new BitbucketClient() : null;
+const scanner = bbClient ? new SecurityScanner(bbClient, bedrock) : null;
 const awsMonitor = new AwsMonitorClient();
 const wafClient = new WafClient();
 
@@ -2057,6 +2059,55 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       } catch (err) {
         await telegram.send(`❌ Failed to fetch builds for ${repo}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
+    }
+    return;
+  }
+
+  // --- Security Code Scanner ---
+  if (cmd.match(/^\/scan(\s|$)/i) || cmd.match(/^scan\s+(code|repo|security|secrets?)/i)) {
+    if (!scanner || !bbClient) {
+      await telegram.send('⚠️ Bitbucket not configured. Cannot run code scan.');
+      return;
+    }
+
+    // Parse: /scan [repo] [branch]
+    const args = cmd.replace(/^\/scan\s*/i, '').trim().split(/\s+/);
+    const repoAliasMap: Record<string, string> = {
+      'backend': 'jcp-blo-backend', 'be': 'jcp-blo-backend',
+      'frontend': 'jcp-blo-frontend', 'fe': 'jcp-blo-frontend',
+      'um-be': 'user-management-be', 'um-fe': 'user-management-fe',
+      'pdf': 'pdf-service', 'bluey': 'blue.y',
+    };
+
+    const repoArg = args[0] || 'backend';
+    const repo = repoAliasMap[repoArg.toLowerCase()] || repoArg;
+
+    // Default branches per repo
+    const defaultBranches: Record<string, string> = {
+      'jcp-blo-backend': 'production-hubs20',
+      'jcp-blo-frontend': 'production-fund-update',
+      'user-management-be': 'feature/aws-account-migration',
+      'user-management-fe': 'feature/aws-account-migration',
+      'pdf-service': 'feature/aws-account-migration',
+      'blue.y': 'main',
+    };
+    const branch = args[1] || defaultBranches[repo] || 'main';
+
+    await telegram.send(`🔐 Scanning <code>${repo}</code> (<code>${branch}</code>) for security issues...\nChecking last 5 commits, up to 20 files. This takes ~30-60s.`);
+
+    try {
+      const result = await scanner.scanRepo(repo, branch, 5, 20);
+      const msg = scanner.formatForTelegram(result);
+      await telegram.send(msg);
+
+      // If critical findings, send follow-up alert
+      const critical = result.findings.filter((f) => f.severity === 'critical');
+      if (critical.length > 0) {
+        await telegram.sendAlert('critical',
+          `🚨 <b>CRITICAL security findings in ${repo}!</b>\n${critical.length} critical issue(s) detected.\nRun /scan ${repoArg} again for details.`);
+      }
+    } catch (err) {
+      await telegram.send(`❌ Scan failed: ${(err as Error).message}`);
     }
     return;
   }

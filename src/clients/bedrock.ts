@@ -239,6 +239,23 @@ export class BedrockClient {
     this.baseUrl = config.ai.baseUrl;
   }
 
+  /**
+   * Send a raw prompt and return the text response (for scanner, etc.)
+   */
+  async analyzeRaw(prompt: string): Promise<string> {
+    const response = await axios.post(
+      `${this.baseUrl}/chat/completions`,
+      {
+        model: config.ai.routineModel,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 1500,
+        temperature: 0.1,
+      },
+      { headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' }, timeout: 60000 },
+    );
+    return response.data.choices?.[0]?.message?.content || '';
+  }
+
   async analyze(request: AnalysisRequest): Promise<AnalysisResponse> {
     // Use reasoning model for incidents/commands/security, fast model for routine checks
     const model = request.type === 'incident' || request.type === 'user_command' || request.type === 'security_threat'
