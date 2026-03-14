@@ -26,15 +26,25 @@ definitions:
       # 3. DEFINE VARIABLES
       appname="blue-y"
       ECR=716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/blue.y
+      BUILD_VERSION=$(node -p "require('./package.json').version")
+      BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      SHORT_COMMIT=${BITBUCKET_COMMIT:0:8}
 
-      echo "Deploying BLUE.Y to $ENV ($TAG)..."
+      echo "Deploying BLUE.Y v${BUILD_VERSION} (${SHORT_COMMIT}) to $ENV..."
 
       # 4. BUILD & PUSH IMAGE
       docker build -f Dockerfile \
         --no-cache \
-        -t ${ECR}:${TAG}-${BITBUCKET_COMMIT} .
+        --build-arg BUILD_VERSION=${BUILD_VERSION} \
+        --build-arg BUILD_COMMIT=${BITBUCKET_COMMIT} \
+        --build-arg BUILD_DATE=${BUILD_DATE} \
+        -t ${ECR}:${TAG}-${BITBUCKET_COMMIT} \
+        -t ${ECR}:${TAG}-v${BUILD_VERSION} \
+        -t ${ECR}:${TAG}-latest .
 
       docker push ${ECR}:${TAG}-${BITBUCKET_COMMIT}
+      docker push ${ECR}:${TAG}-v${BUILD_VERSION}
+      docker push ${ECR}:${TAG}-latest
 
       # 5. GENERATE DEPLOYMENT YAML
       cat deploy/deployment_"${TAG}".yaml | \
@@ -47,6 +57,8 @@ definitions:
       # 6. APPLY & VERIFY
       kubectl apply -f deployment.yaml
       kubectl get svc --namespace ${NAMESPACE} | grep blue-y
+
+      echo "BLUE.Y v${BUILD_VERSION} (${SHORT_COMMIT}) deployed successfully."
 
 pipelines:
   branches:
