@@ -13,6 +13,7 @@ import { NodeMonitor } from './monitors/nodes';
 import { CertMonitor } from './monitors/certs';
 import { HPAMonitor } from './monitors/hpa';
 import { SecurityMonitor } from './monitors/security';
+import { LoadMonitor } from './monitors/load';
 import { WafClient } from './clients/waf';
 import { TeamsClient, TeamsTicket, TeamsCards } from './clients/teams';
 import { VisionClient } from './clients/vision';
@@ -68,12 +69,14 @@ const wafClient = new WafClient();
 
 // Initialize monitors
 const securityMonitor = new SecurityMonitor(wafClient, lokiClient, bedrock, telegram);
+const loadMonitor = new LoadMonitor(kube, bedrock, telegram);
 const monitors = [
   new PodMonitor(kube, bedrock),
   new NodeMonitor(kube, bedrock),
   new CertMonitor(kube, bedrock),
   new HPAMonitor(kube),
   securityMonitor,
+  loadMonitor,
 ];
 
 // Initialize scheduler (pass kube + loki for auto-diagnose)
@@ -641,6 +644,13 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     }
 
     await telegram.send(msg);
+    return;
+  }
+
+  // --- Load Monitor status ---
+  if (cmd === '/load' || cmd === '/performance' || cmd === '/perf' || cmd.match(/^(cluster\s+)?(load|performance|scaling\s+status)/i)) {
+    const status = await loadMonitor.getStatus();
+    await telegram.send(status);
     return;
   }
 
@@ -1667,6 +1677,15 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
         }
       } catch (err) {
         await telegram.send(`❌ Failed to trigger pipeline: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    } else if (action === 'node_scale') {
+      // Scale node group confirmed
+      if (loadMonitor.pendingNodeScale) {
+        const ns = loadMonitor.pendingNodeScale;
+        loadMonitor.pendingNodeScale = null;
+        await loadMonitor.scaleNodeGroup(ns);
+      } else {
+        await telegram.send('⚠️ No pending node scale action found.');
       }
     } else if (action === 'block_ip') {
       // Block IP in WAF

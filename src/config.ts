@@ -33,6 +33,7 @@ export const config = {
     certs: process.env.SCHEDULE_CERTS || '0 */6 * * *',     // every 6 hours
     dailyReport: process.env.SCHEDULE_DAILY_REPORT || '0 9 * * *',  // daily at 9 AM SGT
     security: process.env.SCHEDULE_SECURITY || '*/3 * * * *',       // every 3 min
+    load: process.env.SCHEDULE_LOAD || '*/2 * * * *',               // every 2 min
   },
 
   // Microsoft Teams Bot
@@ -119,6 +120,12 @@ export const config = {
     rateLimitThreshold: parseInt(process.env.SECURITY_RATE_LIMIT || '500', 10), // reqs/min from single IP
     autoBlockEnabled: process.env.SECURITY_AUTO_BLOCK !== 'false', // auto-block critical threats
     scanInterval: process.env.SCHEDULE_SECURITY || '*/3 * * * *', // every 3 min
+  },
+
+  // Load monitoring & auto-scaling
+  load: {
+    scanInterval: process.env.SCHEDULE_LOAD || '*/2 * * * *', // every 2 min
+    enabled: process.env.LOAD_MONITOR !== 'false',
   },
 
   // Safety
