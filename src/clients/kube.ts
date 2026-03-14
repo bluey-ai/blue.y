@@ -331,6 +331,35 @@ export class KubeClient {
     }
   }
 
+  async getTopNodes(): Promise<{ name: string; cpu: string; memory: string }[]> {
+    try {
+      const metricsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+      const res = await metricsApi.listClusterCustomObject({
+        group: 'metrics.k8s.io',
+        version: 'v1beta1',
+        plural: 'nodes',
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const items = (res as any).items || [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return items.map((item: any) => {
+        const cpu = item.usage?.cpu || '0';
+        const mem = item.usage?.memory || '0';
+        const cpuMilli = cpu.endsWith('n') ? Math.round(parseInt(cpu) / 1_000_000)
+          : cpu.endsWith('m') ? parseInt(cpu)
+          : parseInt(cpu) * 1000;
+        const memMi = mem.endsWith('Ki') ? Math.round(parseInt(mem) / 1024)
+          : mem.endsWith('Mi') ? parseInt(mem)
+          : mem.endsWith('Gi') ? parseInt(mem) * 1024
+          : Math.round(parseInt(mem) / (1024 * 1024));
+        return { name: item.metadata?.name || 'unknown', cpu: `${cpuMilli}m`, memory: `${memMi}Mi` };
+      });
+    } catch (err) {
+      logger.error('Failed to get node metrics', err);
+      return [];
+    }
+  }
+
   async getTopPods(namespace: string): Promise<{ name: string; cpu: string; memory: string }[]> {
     try {
       // Use metrics API
