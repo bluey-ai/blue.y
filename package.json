@@ -17,6 +17,7 @@
     "@aws-sdk/client-iam": "^3.1005.0",
     "@aws-sdk/client-rds": "^3.1005.0",
     "@aws-sdk/client-ses": "^3.750.0",
+    "@aws-sdk/client-wafv2": "^3.750.0",
     "@kubernetes/client-node": "^1.0.0",
     "axios": "^1.7.0",
     "botbuilder": "^4.23.3",

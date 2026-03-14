@@ -650,11 +650,12 @@ export class KubeClient {
    * Execute a command inside a pod container and return stdout.
    * Uses kubectl exec under the hood for reliability.
    */
-  async execInPod(namespace: string, podName: string, command: string[], timeoutMs = 10000): Promise<string> {
+  async execInPod(namespace: string, podName: string, command: string[], timeoutMs = 10000, container?: string): Promise<string> {
     const { execSync } = await import('child_process');
     const cmdStr = command.map((c) => `'${c.replace(/'/g, "'\\''")}'`).join(' ');
+    const containerFlag = container ? `-c ${container}` : '';
     const result = execSync(
-      `kubectl exec ${podName} -n ${namespace} -c blo-backend -- ${cmdStr}`,
+      `kubectl exec ${podName} -n ${namespace} ${containerFlag} -- ${cmdStr}`,
       { timeout: timeoutMs, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     return result;

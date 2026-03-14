@@ -32,6 +32,7 @@ export const config = {
     nodes: process.env.SCHEDULE_NODES || '*/5 * * * *',     // every 5 min
     certs: process.env.SCHEDULE_CERTS || '0 */6 * * *',     // every 6 hours
     dailyReport: process.env.SCHEDULE_DAILY_REPORT || '0 9 * * *',  // daily at 9 AM SGT
+    security: process.env.SCHEDULE_SECURITY || '*/3 * * * *',       // every 3 min
   },
 
   // Microsoft Teams Bot
@@ -98,6 +99,26 @@ export const config = {
     adminUser: process.env.GRAFANA_ADMIN_USER || 'admin',
     adminPassword: process.env.GRAFANA_ADMIN_PASSWORD || '',
     enabled: !!process.env.GRAFANA_ADMIN_PASSWORD,
+  },
+
+  // WAF Security
+  waf: {
+    webAclName: process.env.WAF_WEB_ACL_NAME || 'bluecomm-production-waf',
+    scope: (process.env.WAF_SCOPE || 'REGIONAL') as 'REGIONAL' | 'CLOUDFRONT',
+    region: process.env.WAF_REGION || 'ap-southeast-1',
+    ipSetName: process.env.WAF_IP_SET_NAME || 'blue-y-blocked-ips',
+    autoBlockDurationMinutes: parseInt(process.env.WAF_AUTO_BLOCK_DURATION || '1440', 10), // 24h default
+    enabled: process.env.WAF_ENABLED !== 'false', // enabled by default
+  },
+
+  // Security monitoring
+  security: {
+    // Thresholds for threat detection
+    blockedRequestSpikeThreshold: parseInt(process.env.SECURITY_BLOCKED_SPIKE || '100', 10), // blocked reqs in 5min
+    authFailureThreshold: parseInt(process.env.SECURITY_AUTH_FAIL_THRESHOLD || '20', 10), // auth failures in 5min
+    rateLimitThreshold: parseInt(process.env.SECURITY_RATE_LIMIT || '500', 10), // reqs/min from single IP
+    autoBlockEnabled: process.env.SECURITY_AUTO_BLOCK !== 'false', // auto-block critical threats
+    scanInterval: process.env.SCHEDULE_SECURITY || '*/3 * * * *', // every 3 min
   },
 
   // Safety
