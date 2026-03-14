@@ -98,6 +98,7 @@ const COOLDOWN_MS = 20 * 60_000;     // 20 min between replica scale actions
 const NODE_COOLDOWN_MS = 45 * 60_000; // 45 min between node group changes
 const SCALE_DOWN_READINGS = 8;        // 16 min of low load before scale down
 const ALERT_COOLDOWN_MS = 30 * 60_000; // 30 min between AI-triggered alerts per deployment
+const MAX_SANE_CPU_MILLI = 16_000;   // >16 vCPU per pod is a metrics-server glitch — discard
 
 // Business hours: 8:30AM–9PM SGT (UTC+8) Mon–Fri
 function isBusinessHours(): boolean {
@@ -165,7 +166,11 @@ export class LoadMonitor implements Monitor {
       for (const cfg of WATCH_LIST) {
         // Sum metrics across all pods of this deployment
         const pods = podMetrics.filter((p) => p.name.startsWith(cfg.deployment.replace('-production', '')));
-        const totalCpu = pods.reduce((s, p) => s + parseInt(p.cpu || '0'), 0);
+        // Clamp individual pod CPU readings — metrics-server occasionally returns garbage values
+        const totalCpu = pods.reduce((s, p) => {
+          const v = parseInt(p.cpu || '0');
+          return s + (v > MAX_SANE_CPU_MILLI ? 0 : v);
+        }, 0);
         const totalMem = pods.reduce((s, p) => s + parseInt(p.memory || '0'), 0);
         const replicas = pods.length || 1;
 
@@ -497,20 +502,20 @@ Respond with JSON array only:
   // ========================
 
   private async getNodeGroupStates(nodeMetrics: Array<{ name: string; cpu: string; memory: string }>): Promise<NodeGroupState[]> {
-    const ngMap: Record<string, { cpuMilli: number[]; desired: number; min: number; max: number; fullName: string }> = {
-      'backend_highmem': { cpuMilli: [], desired: 1, min: 1, max: 3, fullName: 'backend_highmem-20260211013708218100000001' },
-      'spot_nodes': { cpuMilli: [], desired: 3, min: 2, max: 10, fullName: 'spot_nodes-20260211020045376800000001' },
+    // capacityMilli = total CPU capacity per node in millicores
+    const ngMap: Record<string, { cpuMilli: number[]; desired: number; min: number; max: number; fullName: string; capacityMilli: number }> = {
+      'backend_highmem': { cpuMilli: [], desired: 1, min: 1, max: 3, fullName: 'backend_highmem-20260211013708218100000001', capacityMilli: 8000 }, // m5.2xlarge = 8 vCPU
+      'spot_nodes': { cpuMilli: [], desired: 3, min: 2, max: 10, fullName: 'spot_nodes-20260211020045376800000001', capacityMilli: 4000 },           // c5.xlarge = 4 vCPU
     };
 
     for (const node of nodeMetrics) {
-      const label = node.name; // we'll match by name prefix
-      for (const [ngName, ng] of Object.entries(ngMap)) {
-        // Nodes are labeled — we use the metric name to infer (approximate)
-        if (ngName === 'backend_highmem' && parseInt(node.cpu) > 3000) {
-          ng.cpuMilli.push(parseInt(node.cpu));
-        } else if (ngName === 'spot_nodes' && parseInt(node.cpu) <= 3000) {
-          ng.cpuMilli.push(parseInt(node.cpu));
-        }
+      const cpuMilli = parseInt(node.cpu);  // e.g. "50m" → 50
+      const memMi    = parseInt(node.memory); // e.g. "28560Mi" → 28560
+      // Classify by memory: m5.2xlarge ~32GB, c5.xlarge ~8GB. Threshold at 12GB (12288 Mi).
+      if (memMi > 12_000) {
+        ngMap['backend_highmem'].cpuMilli.push(cpuMilli);
+      } else {
+        ngMap['spot_nodes'].cpuMilli.push(cpuMilli);
       }
     }
 
@@ -521,7 +526,7 @@ Respond with JSON array only:
       min: ng.min,
       max: ng.max,
       nodeUtilPct: ng.cpuMilli.length > 0
-        ? Math.round((ng.cpuMilli.reduce((a, b) => a + b, 0) / ng.cpuMilli.length) / 80) // 8000m per backend node → approx %
+        ? Math.round((ng.cpuMilli.reduce((a, b) => a + b, 0) / ng.cpuMilli.length) / (ng.capacityMilli / 100))
         : 0,
     }));
   }

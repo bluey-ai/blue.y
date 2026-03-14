@@ -26,7 +26,7 @@ definitions:
       # 3. DEFINE VARIABLES
       appname="blue-y"
       ECR=716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/blue.y
-      BUILD_VERSION=$(node -p "require('./package.json').version")
+      BUILD_VERSION=$(grep '"version"' package.json | head -1 | awk -F'"' '{print $4}')
       BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       SHORT_COMMIT=${BITBUCKET_COMMIT:0:8}
 
