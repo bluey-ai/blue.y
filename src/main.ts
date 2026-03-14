@@ -25,6 +25,11 @@ import { BitbucketClient } from './clients/bitbucket';
 import { SecurityScanner } from './clients/scanner';
 import { AwsMonitorClient } from './clients/aws-monitor';
 import { CronJob } from 'cron';
+import { RBAC, loadRBACConfig } from './rbac';
+import { CommandRouter } from './command-router';
+import { TelegramNotifier } from './clients/notifiers/telegram';
+import { NotifierRouter } from './clients/notifiers/router';
+import { NotificationRouter } from './notification-router';
 
 const app = express();
 app.use(express.json());
@@ -66,6 +71,15 @@ const bbClient = config.bitbucket.enabled ? new BitbucketClient() : null;
 const scanner = bbClient ? new SecurityScanner(bbClient, bedrock) : null;
 const awsMonitor = new AwsMonitorClient();
 const wafClient = new WafClient();
+
+// ─── RBAC + Multi-platform notification layer ──────────────────────────────
+const rbacConfig = loadRBACConfig(config.telegram.chatId);
+const rbac = new RBAC(rbacConfig);
+const telegramNotifier = new TelegramNotifier(telegram);
+const notifierRouter = new NotifierRouter([telegramNotifier]);
+const notificationRouter = new NotificationRouter(notifierRouter, rbacConfig);
+const commandRouter = new CommandRouter(rbac);
+// ──────────────────────────────────────────────────────────────────────────
 
 // Initialize monitors
 const securityMonitor = new SecurityMonitor(wafClient, lokiClient, bedrock, telegram);
@@ -2934,16 +2948,25 @@ async function startPolling(): Promise<void> {
         if (!msg?.text) continue;
 
         const chatId = String(msg.chat.id);
+        const userId = String(msg.from?.id ?? chatId);
         const userName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ') || 'Unknown';
         logger.info(`[Telegram] ${userName} (${chatId}): ${msg.text}`);
 
         try {
           if (chatId === config.telegram.chatId) {
-            // Group channel message — full command set
+            // Group channel message — full command set (RBAC gate via commandRouter in future tickets)
             await handleTelegramCommand(msg.text, chatId, userName);
           } else if (msg.chat.type === 'private') {
-            // Direct message — password reset flow
-            await handleTelegramDM(msg.text, chatId, userName);
+            // Direct message — try CommandRouter first (handles multi-platform user commands),
+            // fall through to legacy DM handler (password reset NLP) if no handler registered.
+            const handled = await commandRouter.dispatch(
+              { platform: 'telegram', id: userId, displayName: userName, rawMessage: msg.text },
+              msg.text,
+              async (reply) => { await telegram.send(reply, chatId); },
+            );
+            if (!handled) {
+              await handleTelegramDM(msg.text, chatId, userName);
+            }
           } else {
             logger.warn(`Telegram message from unauthorized chat: ${chatId}`);
           }

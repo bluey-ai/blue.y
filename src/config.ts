@@ -128,6 +128,33 @@ export const config = {
     enabled: process.env.LOAD_MONITOR !== 'false',
   },
 
+  // RBAC — Role-Based Access Control
+  // Who can use BLUE.Y and at what level.
+  // Set RBAC_CONFIG env var to a JSON string matching RBACConfig interface,
+  // or configure per-user via values.yaml in the Helm chart.
+  rbac: {
+    // Fallback: if RBAC_CONFIG env is not set, TELEGRAM_ADMIN_ID is treated as the sole admin.
+    telegramAdminId: process.env.TELEGRAM_ADMIN_ID || process.env.TELEGRAM_CHAT_ID || '',
+    // Full RBAC config JSON — overrides individual IDs above when present.
+    configJson: process.env.RBAC_CONFIG || '',
+  },
+
+  // Slack (Socket Mode — no public URL needed)
+  slack: {
+    appToken: process.env.SLACK_APP_TOKEN || '',    // xapp-... (Socket Mode)
+    botToken: process.env.SLACK_BOT_TOKEN || '',    // xoxb-...
+    channelId: process.env.SLACK_CHANNEL_ID || '',
+    enabled: !!process.env.SLACK_BOT_TOKEN,
+  },
+
+  // WhatsApp (via Twilio)
+  whatsapp: {
+    accountSid: process.env.TWILIO_ACCOUNT_SID || '',
+    authToken: process.env.TWILIO_AUTH_TOKEN || '',
+    from: process.env.TWILIO_WHATSAPP_FROM || '',  // e.g. whatsapp:+14155238886
+    enabled: !!process.env.TWILIO_ACCOUNT_SID,
+  },
+
   // Safety
   safety: {
     maxActionsPerHour: parseInt(process.env.MAX_ACTIONS_PER_HOUR || '5', 10),
