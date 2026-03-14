@@ -244,6 +244,36 @@ export class BitbucketClient {
   }
 
   /**
+   * Get files changed in a commit (diffstat).
+   */
+  async getChangedFiles(repo: string, commitHash: string): Promise<Array<{ path: string; status: string }>> {
+    try {
+      const response = await axios.get(
+        `${BB_API}/repositories/${BB_WORKSPACE}/${repo}/diffstat/${commitHash}?pagelen=50`,
+        { headers: this.headers, timeout: 10000 },
+      );
+      return (response.data.values || []).map((f: Record<string, unknown>) => ({
+        path: String((f.new as Record<string, unknown>)?.path || (f.old as Record<string, unknown>)?.path || ''),
+        status: String(f.status || 'modified'),
+      })).filter((f: { path: string }) => f.path);
+    } catch (err) {
+      logger.error(`Failed to get changed files for ${repo}@${commitHash}: ${err}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get raw file content from a repo at a specific ref.
+   */
+  async getFileContent(repo: string, ref: string, filePath: string): Promise<string> {
+    const response = await axios.get(
+      `${BB_API}/repositories/${BB_WORKSPACE}/${repo}/src/${ref}/${filePath}`,
+      { headers: this.headers, timeout: 15000, responseType: 'text' },
+    );
+    return String(response.data || '');
+  }
+
+  /**
    * Format pipeline status icon.
    */
   static statusIcon(state: string, result: string): string {
