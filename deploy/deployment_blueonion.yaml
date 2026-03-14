@@ -91,7 +91,7 @@ spec:
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       containers:
-        - image: 716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/blue.y:latest
+        - image: <ECR>:<tag>-<HASH>
           name: blue-y
           imagePullPolicy: Always
           env:
