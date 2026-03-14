@@ -790,17 +790,88 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
   if (cmd === '/waf' || cmd === '/security' || cmd.match(/^(waf|firewall)\s*(status|dashboard|health)?$/i)) {
     await telegram.send('🛡️ Loading WAF security dashboard...');
     try {
-      const [metrics, rules] = await Promise.all([
+      const [metrics1h, metrics5m, rules, samples] = await Promise.all([
         wafClient.getMetrics(60),
+        wafClient.getMetrics(5),
         wafClient.getRuleMetrics(60),
+        wafClient.getSampledRequests('ALL', 100),
       ]);
-      await telegram.send(wafClient.formatMetricsForTelegram(metrics));
-      if (rules.length > 0) {
-        await telegram.send(wafClient.formatRulesForTelegram(rules));
+
+      const blockIcon = metrics1h.blockRate > 20 ? '🔴' : metrics1h.blockRate > 5 ? '🟡' : '🟢';
+      let msg = `🛡️ <b>WAF Security Dashboard</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      msg += `<b>Last 60 min:</b>\n`;
+      msg += `✅ Allowed: <b>${metrics1h.allowedRequests.toLocaleString()}</b>  🚫 Blocked: <b>${metrics1h.blockedRequests.toLocaleString()}</b>\n`;
+      msg += `${blockIcon} Block Rate: <b>${metrics1h.blockRate}%</b>\n\n`;
+      const blockIcon5 = metrics5m.blockRate > 20 ? '🔴' : metrics5m.blockRate > 5 ? '🟡' : '🟢';
+      msg += `<b>Last 5 min:</b>  ✅ ${metrics5m.allowedRequests.toLocaleString()}  🚫 ${metrics5m.blockedRequests.toLocaleString()}  ${blockIcon5} ${metrics5m.blockRate}%\n`;
+
+      // Top blocking rules
+      const activeRules = rules.filter((r) => r.blockedCount > 0);
+      if (activeRules.length > 0) {
+        msg += `\n<b>🔒 Top Blocking Rules:</b>\n`;
+        for (const r of activeRules.slice(0, 5)) {
+          const icon = r.blockedCount > 100 ? '🔴' : r.blockedCount > 20 ? '🟡' : '🟢';
+          msg += `  ${icon} <code>${r.name}</code>: <b>${r.blockedCount}</b>\n`;
+        }
       }
-      // Show blocked IPs
-      const blockedMsg = wafClient.formatBlockedIPsForTelegram();
-      await telegram.send(blockedMsg);
+
+      // Sampled requests breakdown
+      if (samples.length > 0) {
+        const ipCounts = new Map<string, { count: number; country: string; uris: Set<string> }>();
+        const countryCounts = new Map<string, number>();
+        const uriCounts = new Map<string, number>();
+        const ruleCounts = new Map<string, number>();
+
+        for (const s of samples) {
+          const ipEntry = ipCounts.get(s.ip) || { count: 0, country: s.country, uris: new Set<string>() };
+          ipEntry.count++;
+          ipEntry.uris.add(s.uri);
+          ipCounts.set(s.ip, ipEntry);
+          countryCounts.set(s.country, (countryCounts.get(s.country) || 0) + 1);
+          const uriBase = s.uri.split('?')[0].substring(0, 40);
+          uriCounts.set(uriBase, (uriCounts.get(uriBase) || 0) + 1);
+          if (s.rule && s.rule !== 'ALL') {
+            ruleCounts.set(s.rule, (ruleCounts.get(s.rule) || 0) + 1);
+          }
+        }
+
+        const topIPs = [...ipCounts.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 5);
+        const topCountries = [...countryCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+        const topURIs = [...uriCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+        msg += `\n<b>🌐 Top Attacking IPs</b> (from ${samples.length} samples):\n`;
+        for (const [ip, data] of topIPs) {
+          const uriList = [...data.uris].slice(0, 2).join(', ');
+          msg += `  🔴 <code>${ip}</code> (${data.country}) — <b>${data.count}x</b>\n`;
+          if (uriList) msg += `       ↳ <code>${uriList}</code>\n`;
+        }
+
+        msg += `\n<b>🌍 By Country:</b> `;
+        msg += topCountries.map(([c, n]) => `${c}:<b>${n}</b>`).join('  ') + '\n';
+
+        msg += `\n<b>🎯 Top Targeted URIs:</b>\n`;
+        for (const [uri, n] of topURIs) {
+          msg += `  <code>${uri}</code> — <b>${n}x</b>\n`;
+        }
+
+        if (ruleCounts.size > 0) {
+          const topRules = [...ruleCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+          msg += `\n<b>📋 Triggered Rules:</b>\n`;
+          msg += topRules.map(([r, n]) => `  <code>${r}</code>: <b>${n}</b>`).join('\n') + '\n';
+        }
+      } else {
+        msg += `\nℹ️ No sampled blocked requests in last 30min.\n`;
+      }
+
+      const autoBlocked = wafClient.getBlockedIPs();
+      msg += `\n<b>🔒 BLUE.Y Managed Blocks:</b> ${autoBlocked.length > 0 ? autoBlocked.length : '0 (none active)'}\n`;
+      for (const b of autoBlocked.slice(0, 3)) {
+        const mins = Math.max(0, Math.round((b.expiresAt.getTime() - Date.now()) / 60000));
+        msg += `  🚫 <code>${b.ip}</code> ${b.autoBlocked ? '[AUTO]' : '[MANUAL]'} — ${mins}min left\n`;
+      }
+
+      msg += `\n💡 <code>/blocked</code> — full blocked request list | <code>/threats</code> — 24h threat log`;
+      await telegram.send(msg);
     } catch (err) {
       await telegram.send(`❌ WAF dashboard failed: ${(err as Error).message}`);
     }
