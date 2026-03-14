@@ -79,6 +79,6 @@ pipelines:
           caches: [docker]
           script:
             - export ENV=prod
-            - export TAG=production
+            - export TAG=blueonion
             # CLUSTERNAME and NAMESPACE must be set as Bitbucket repo variables
             - *deploy
