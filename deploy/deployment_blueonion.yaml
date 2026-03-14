@@ -317,7 +317,7 @@ spec:
 
             # ── Load monitor watch list ───────────────────────────────────────
             - name: LOAD_WATCH_LIST
-              value: '[{"deployment":"jcp-blo-backend-hubs20-production","namespace":"prod","label":"Backend"},{"deployment":"jcp-blo-frontend-fund-update-production","namespace":"prod","label":"Frontend"},{"deployment":"user-management-be-production","namespace":"prod","label":"User Mgmt API"},{"deployment":"pdf-service-production","namespace":"prod","label":"PDF Service"}]'
+              value: '[{"deployment":"jcp-blo-backend-hubs20-production","namespace":"prod","label":"Backend","memLimitMB":18100,"memWarnMB":14000,"memCritMB":16500,"cpuWarnPct":70,"nodeGroup":"backend_highmem","nodeGroupFull":"backend_highmem-20260211013708218100000001","maxReplicas":1,"minReplicas":1},{"deployment":"jcp-blo-frontend-fund-update-production","namespace":"prod","label":"Frontend","memLimitMB":512,"memWarnMB":400,"memCritMB":470,"cpuWarnPct":70,"nodeGroup":"spot_nodes","nodeGroupFull":"spot_nodes-20260211020045376800000001","maxReplicas":3,"minReplicas":1},{"deployment":"user-management-be-production","namespace":"prod","label":"User Mgmt API","memLimitMB":512,"memWarnMB":400,"memCritMB":470,"cpuWarnPct":70,"nodeGroup":"spot_nodes","nodeGroupFull":"spot_nodes-20260211020045376800000001","maxReplicas":2,"minReplicas":1},{"deployment":"pdf-service-production","namespace":"prod","label":"PDF Service","memLimitMB":1024,"memWarnMB":800,"memCritMB":950,"cpuWarnPct":70,"nodeGroup":"spot_nodes","nodeGroupFull":"spot_nodes-20260211020045376800000001","maxReplicas":2,"minReplicas":1}]'
 
             # ── Backend-specific pod access ───────────────────────────────────
             - name: BACKEND_POD_SEARCH
