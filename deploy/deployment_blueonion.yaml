@@ -19,7 +19,8 @@
 #     --from-literal=bitbucket-token=... \
 #     --from-literal=grafana-admin-password=... \
 #     --from-literal=slack-app-token=... \
-#     --from-literal=slack-bot-token=...
+#     --from-literal=slack-bot-token=... \
+#     --dry-run=client -o yaml | kubectl apply -f -
 #
 ---
 apiVersion: v1
@@ -118,7 +119,6 @@ spec:
               value: "2048"
 
             # ── Cluster-specific AI knowledge (injected into system prompt) ──
-            # Keep this up to date as deployments change.
             - name: AI_SYSTEM_CONTEXT
               value: |
                 === CLUSTER: blo-cluster (ap-southeast-1) ===
@@ -166,11 +166,9 @@ spec:
                 hubsprod RDS (r8g.large, 3TB, MySQL 8.0) — ap-southeast-1
                   Databases: jeecg-boot (system), dwd (business data)
                   User: admin. Read-only: bluey_readonly
-                  Critical: ~90GB business data, used by all backend services
 
                 bo-prod-sg RDS (t4g.small, 20GB, MySQL 8.0)
                   Databases: blo_user (User Mgmt), blo_05072022
-                  User: hubs_admin
 
                 blueonion RDS (t4g.micro, 20GB, MariaDB 10.6)
                   Databases: prod_blueonion (WordPress), stg_blueonion, blo_user
@@ -183,14 +181,6 @@ spec:
                 Trino (on EKS, prod namespace)
                   trinodb/trino:470. Internal NLB port 8889.
                   DNS: trino.blueonion.today. 4 catalogs: myods, mydwd, myprod, doris.
-                  Replaced EMR (Mar 2026). JDBC: jdbc:trino://trino.blueonion.today:8889
-
-                Redis/Valkey (ElastiCache):
-                  5 clusters (cache.t3.micro), Valkey 8.2. Namespaced: prod, dev, stg.
-
-                === CLIENTS & TENANTS ===
-                Multi-tenant platform. Key clients: PwC, ICBC, PRI, RIMM, MOR, DLG.
-                Partners pushing data via API: Diginex, Evercomm, Bluecomm.
 
                 === COMMON ISSUES & FIXES ===
                 1. Backend OOMKilled → check heap usage; likely nightly Doris sync at 2AM
@@ -202,7 +192,6 @@ spec:
                 === MONITORING ===
                 Grafana: https://grafana.blueonion.today
                 Loki: http://loki.monitoring.svc.cluster.local:3100
-                Prometheus: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
                 WAF: bluecomm-production-waf (REGIONAL, 11 rules)
 
             # ── Kubernetes ────────────────────────────────────────────────────
@@ -283,14 +272,8 @@ spec:
                 secretKeyRef:
                   name: blue-y-secrets
                   key: db-readonly-password
-            # JSON array of databases BLUE.Y can query.
-            # Update hostnames from AWS Console → RDS → Connectivity & security → Endpoint.
             - name: DATABASE_REGISTRY
-              value: '[
-                {"name":"hubsprod","host":"<hubsprod-endpoint>.ap-southeast-1.rds.amazonaws.com","port":3306,"databases":["jeecg-boot","dwd"],"description":"Main business DB (system tables, business data)"},
-                {"name":"bo-prod-sg","host":"<bo-prod-sg-endpoint>.ap-southeast-1.rds.amazonaws.com","port":3306,"databases":["blo_user","blo_05072022"],"description":"User management DB"},
-                {"name":"blueonion","host":"blueonion.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com","port":3306,"databases":["prod_blueonion","stg_blueonion","blo_user"],"description":"WordPress + legacy DB"}
-              ]'
+              value: '[{"name":"hubsprod","host":"hubsprod.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com","port":3306,"databases":["jeecg-boot","dwd"],"description":"Main business DB"},{"name":"bo-prod-sg","host":"bo-prod-sg.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com","port":3306,"databases":["blo_user","blo_05072022"],"description":"User management DB"},{"name":"blueonion","host":"blueonion.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com","port":3306,"databases":["prod_blueonion","stg_blueonion","blo_user"],"description":"WordPress + legacy DB"}]'
 
             # ── Grafana ───────────────────────────────────────────────────────
             - name: GRAFANA_INTERNAL_URL
@@ -310,75 +293,37 @@ spec:
             - name: BB_WORKSPACE
               value: "blueonion"
             - name: BB_USER
-              value: "blueonion-pipeline"   # Bitbucket service account username
+              value: "blueonion-pipeline"
             - name: BB_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: blue-y-secrets
                   key: bitbucket-token
                   optional: true
-            # Pipelines BLUE.Y can trigger via /deploy command.
             - name: BB_PIPELINES
-              value: '{
-                "backend":  {"repo":"jcp-blo-backend",  "branches":{"hubs":"production-hubs20","production":"production-hubs20"}},
-                "frontend": {"repo":"jcp-blo-frontend", "branches":{"hubs":"production-fund-update","bas":"basprod-frontend","bloconnect":"production-fund-bloconnect"}},
-                "user-mgmt":{"repo":"user-management-be","branches":{"main":"feature/aws-account-migration"}},
-                "user-fe":  {"repo":"user-management-fe","branches":{"main":"feature/aws-account-migration"}},
-                "pdf":      {"repo":"pdf-service",       "branches":{"main":"feature/aws-account-migration"}},
-                "bluey":    {"repo":"blue.y",            "branches":{"main":"main"}}
-              }'
+              value: '{"backend":{"repo":"jcp-blo-backend","branches":{"hubs":"production-hubs20","production":"production-hubs20"}},"frontend":{"repo":"jcp-blo-frontend","branches":{"hubs":"production-fund-update","bas":"basprod-frontend","bloconnect":"production-fund-bloconnect"}},"user-mgmt":{"repo":"user-management-be","branches":{"main":"feature/aws-account-migration"}},"user-fe":{"repo":"user-management-fe","branches":{"main":"feature/aws-account-migration"}},"pdf":{"repo":"pdf-service","branches":{"main":"feature/aws-account-migration"}},"bluey":{"repo":"blue.y","branches":{"main":"main"}}}'
 
             # ── Production URLs (for /qa smoke tests) ────────────────────────
             - name: PRODUCTION_URLS
-              value: '[
-                {"name":"Hubs Frontend",    "url":"https://hubs.blueonion.today",        "expect":200},
-                {"name":"Backend API",      "url":"https://api-hubs.blueonion.today/sys/health/info","expect":200},
-                {"name":"User Mgmt API",    "url":"https://api-users.blueonion.today/health","expect":200},
-                {"name":"User Mgmt UI",     "url":"https://users.blueonion.today",        "expect":200},
-                {"name":"PDF Service",      "url":"https://hubspdf.blueonion.today/health","expect":200},
-                {"name":"WordPress",        "url":"https://www.blueonion.today",           "expect":200},
-                {"name":"Grafana",          "url":"https://grafana.blueonion.today",       "expect":200}
-              ]'
+              value: '[{"name":"Hubs Frontend","url":"https://hubs.blueonion.today","expect":200},{"name":"Backend API","url":"https://api-hubs.blueonion.today/sys/health/info","expect":200},{"name":"User Mgmt API","url":"https://api-users.blueonion.today/health","expect":200},{"name":"User Mgmt UI","url":"https://users.blueonion.today","expect":200},{"name":"PDF Service","url":"https://hubspdf.blueonion.today/health","expect":200},{"name":"WordPress","url":"https://www.blueonion.today","expect":200},{"name":"Grafana","url":"https://grafana.blueonion.today","expect":200}]'
 
             # ── Ping service map (for user-facing /ping command) ──────────────
             - name: PING_SERVICE_MAP
-              value: '{
-                "hubs":    {"label":"Hubs",            "url":"https://hubs.blueonion.today"},
-                "api":     {"label":"Backend API",     "url":"https://api-hubs.blueonion.today/sys/health/info"},
-                "users":   {"label":"User Management", "url":"https://users.blueonion.today"},
-                "pdf":     {"label":"PDF Service",     "url":"https://hubspdf.blueonion.today/health"},
-                "grafana": {"label":"Grafana",         "url":"https://grafana.blueonion.today"},
-                "website": {"label":"Website",         "url":"https://www.blueonion.today"}
-              }'
+              value: '{"hubs":{"label":"Hubs","url":"https://hubs.blueonion.today"},"api":{"label":"Backend API","url":"https://api-hubs.blueonion.today/sys/health/info"},"users":{"label":"User Management","url":"https://users.blueonion.today"},"pdf":{"label":"PDF Service","url":"https://hubspdf.blueonion.today/health"},"grafana":{"label":"Grafana","url":"https://grafana.blueonion.today"},"website":{"label":"Website","url":"https://www.blueonion.today"}}'
 
             # ── Team email aliases (for /email <name> shorthand) ──────────────
-            # Format: {"alias": "email@domain.com"}
             - name: TEAM_EMAILS
-              value: '{
-                "ops":      "ops@blueonion.today",
-                "dev":      "dev@blueonion.today",
-                "support":  "support@blueonion.today"
-              }'
+              value: '{"ops":"ops@blueonion.today","dev":"dev@blueonion.today","support":"support@blueonion.today"}'
 
             # ── Load monitor watch list ───────────────────────────────────────
             - name: LOAD_WATCH_LIST
-              value: '[
-                {"deployment":"jcp-blo-backend-hubs20-production",   "namespace":"prod","label":"Backend"},
-                {"deployment":"jcp-blo-frontend-fund-update-production","namespace":"prod","label":"Frontend"},
-                {"deployment":"user-management-be-production",        "namespace":"prod","label":"User Mgmt API"},
-                {"deployment":"pdf-service-production",               "namespace":"prod","label":"PDF Service"}
-              ]'
+              value: '[{"deployment":"jcp-blo-backend-hubs20-production","namespace":"prod","label":"Backend"},{"deployment":"jcp-blo-frontend-fund-update-production","namespace":"prod","label":"Frontend"},{"deployment":"user-management-be-production","namespace":"prod","label":"User Mgmt API"},{"deployment":"pdf-service-production","namespace":"prod","label":"PDF Service"}]'
 
             # ── Backend-specific pod access ───────────────────────────────────
             - name: BACKEND_POD_SEARCH
               value: "jcp-blo-backend"
             - name: BACKEND_HEALTH_ENDPOINTS
-              value: '[
-                {"name":"System",   "port":7001,"path":"/sys/health/info"},
-                {"name":"BlueOnion","port":7002,"path":"/sys/health/info"},
-                {"name":"Gateway",  "port":9999,"path":"/sys/health/info"},
-                {"name":"Nacos",    "port":8848,"path":"/nacos/actuator/health"}
-              ]'
+              value: '[{"name":"System","port":7001,"path":"/sys/health/info"},{"name":"BlueOnion","port":7002,"path":"/sys/health/info"},{"name":"Gateway","port":9999,"path":"/sys/health/info"},{"name":"Nacos","port":8848,"path":"/nacos/actuator/health"}]'
             - name: LUCENE_CHECK_URL
               value: "http://localhost:7002/sys/lucene/checkIndex"
 
@@ -424,7 +369,7 @@ spec:
 
             # ── Schedules ────────────────────────────────────────────────────
             - name: SCHEDULE_DAILY_REPORT
-              value: "0 9 * * *"   # 9AM SGT (UTC+8) = 1AM UTC
+              value: "0 9 * * *"
 
             # ── Safety ───────────────────────────────────────────────────────
             - name: MAX_ACTIONS_PER_HOUR
