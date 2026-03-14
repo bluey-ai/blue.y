@@ -31,45 +31,12 @@ const BLOCKED_PATTERNS = [
 const MAX_ROWS = 50;
 const QUERY_TIMEOUT_MS = 10000;
 
-// Database registry — all accessible databases
-export const DATABASE_REGISTRY: DatabaseInfo[] = [
-  {
-    name: 'hubsprod',
-    host: 'hubsprod.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com',
-    port: 3306,
-    databases: ['jeecg-boot', 'dwd'],
-    description: 'Main backend DB: system tables (jeecg-boot) + business data (dwd: BAS, DD, SFDR, PwC, funds, portfolios)',
-  },
-  {
-    name: 'bo-prod-sg',
-    host: 'bo-prod-sg.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com',
-    port: 3306,
-    databases: ['blo_user', 'prod_blueonion', 'stg_blueonion', 'blo_user_dev'],
-    description: 'User Management + WordPress: members, companies, roles, permissions, login history, WordPress prod/stg',
-  },
-  // blueonion RDS removed 2026-03-13 — databases migrated to bo-prod-sg
-  {
-    name: 'faceset-prod',
-    host: 'faceset-prod.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com',
-    port: 3306,
-    databases: ['dwd', 'factset', 'equity', 'edw'],
-    description: 'Market data: FactSet feeds, equity, EDW',
-  },
-  {
-    name: 'data-transfer',
-    host: 'data-transfer.cjwo2em4gzz8.ap-southeast-1.rds.amazonaws.com',
-    port: 3306,
-    databases: ['ods', 'hive', 'irs'],
-    description: 'ETL staging: ODS, Hive metastore, IRS data',
-  },
-  {
-    name: 'doris',
-    host: 'doris-prod-fe-service.doris.svc.cluster.local',
-    port: 9030,
-    databases: ['dwd'],
-    description: 'Doris analytics: 151 tables, fund performance, ESG scores, screening',
-  },
-];
+// Database registry — configure via DATABASE_REGISTRY env var (JSON array).
+// Example (set in K8s Secret or values.yaml):
+//   DATABASE_REGISTRY='[{"name":"mydb","host":"mydb.rds.amazonaws.com","port":3306,"databases":["app"],"description":"Main DB"}]'
+export const DATABASE_REGISTRY: DatabaseInfo[] = JSON.parse(
+  process.env.DATABASE_REGISTRY || '[]'
+);
 
 export class DatabaseClient {
   private pools: Map<string, mysql.Pool> = new Map();

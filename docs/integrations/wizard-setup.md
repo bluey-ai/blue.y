@@ -2,7 +2,6 @@
 
 > **Design spec for the first-run setup wizard.**
 > Covers all four supported messaging platforms.
-> Jira: HUBS-6144 (wizard), HUBS-6146 (Slack), HUBS-6147 (Teams), HUBS-6148 (WhatsApp)
 
 ---
 
@@ -111,7 +110,7 @@ Step 2: Connect your chat
   ⏳ Waiting for your message...
   (auto-polls every 2 seconds)
 
-  ✅ Got it! Message from: Zeeshan    (auto-advances to step 3)
+  ✅ Got it! Message from: Alice    (auto-advances to step 3)
 
 ─────────────────────────────────────
 Step 3: Add your team (→ shared with all platforms, see below)
@@ -148,7 +147,7 @@ Step 1: Connect Slack
                                             → Clicks [Allow]
                                             → Redirects back to wizard
 
-  ✅ Connected to: BlueOnion Slack
+  ✅ Connected to: Your Workspace Slack
   (token stored automatically)
 
 ─────────────────────────────────────
@@ -404,7 +403,7 @@ This step is identical for all platforms:
 │                                              │
 │  ADMINS  (full cluster access)               │
 │  ┌────────────────────────────────────────┐  │
-│  │ @zeeshan (you)    DevOps Admin   ✅    │  │
+│  │ @alice (you)      DevOps Admin   ✅    │  │
 │  │                                        │  │
 │  │ [+ Add admin]                          │  │
 │  │   Enter their Telegram username /      │  │
@@ -480,9 +479,9 @@ This step is identical for all platforms:
 # Secrets are stored separately in K8s Secret 'blue-y-secrets'
 
 cluster:
-  name: blo-cluster
-  region: ap-southeast-1
-  namespace: prod
+  name: my-eks-cluster        # your EKS cluster name
+  region: us-east-1           # your AWS region
+  namespace: default          # namespace where BLUE.Y is deployed
 
 integrations:
   telegram:
@@ -503,10 +502,10 @@ rbac:
   admins:
     - platform: telegram
       id: "123456789"
-      name: "Zeeshan"
+      name: "Alice"
     - platform: slack
       id: "U01ABC123"
-      name: "Imran"
+      name: "Bob"
   operators: []
   users:
     - platform: whatsapp
@@ -550,8 +549,8 @@ stringData:
 
 For Teams and WhatsApp: wizard auto-detects the cluster's ingress URL:
 ```bash
-kubectl get ingress -n prod -o jsonpath='{.items[0].spec.rules[0].host}'
-# → api-hubs.blueonion.today
+kubectl get ingress -n <namespace> -o jsonpath='{.items[0].spec.rules[0].host}'
+# → your-cluster-ingress.example.com
 ```
 If no ingress exists, wizard offers a temporary tunnel option (localtunnel).
 
@@ -579,4 +578,4 @@ The sandbox also requires users to send the join code first (one-time).
 
 ---
 
-*Last updated: 2026-03-14 | Jira: HUBS-6144*
+*Last updated: 2026-03-14*

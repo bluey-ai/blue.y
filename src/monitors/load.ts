@@ -37,61 +37,17 @@ interface NodeScaleAction {
   reason: string;
 }
 
-// Deployments BLUE.Y monitors for load
-const WATCH_LIST = [
-  {
-    deployment: 'jcp-blo-backend-hubs20-production',
-    namespace: 'prod',
-    label: 'Backend',
-    memLimitMB: 18000,         // 18GB (14GB heap + overhead)
-    memWarnMB: 12000,          // warn at 12GB
-    memCritMB: 15000,          // scale at 15GB
-    cpuWarnPct: 70,            // warn at 70% of HPA trigger
-    nodeGroup: 'backend_highmem',
-    nodeGroupFull: 'backend_highmem-20260211013708218100000001',
-    maxReplicas: 2,
-    minReplicas: 1,
-  },
-  {
-    deployment: 'jcp-blo-frontend-fund-update-production',
-    namespace: 'prod',
-    label: 'Frontend',
-    memLimitMB: 512,
-    memWarnMB: 400,
-    memCritMB: 490,
-    cpuWarnPct: 70,
-    nodeGroup: 'spot_nodes',
-    nodeGroupFull: 'spot_nodes-20260211020045376800000001',
-    maxReplicas: 3,
-    minReplicas: 1,
-  },
-  {
-    deployment: 'user-management-be-production',
-    namespace: 'prod',
-    label: 'User Mgmt BE',
-    memLimitMB: 512,
-    memWarnMB: 400,
-    memCritMB: 490,
-    cpuWarnPct: 70,
-    nodeGroup: 'spot_nodes',
-    nodeGroupFull: 'spot_nodes-20260211020045376800000001',
-    maxReplicas: 2,
-    minReplicas: 1,
-  },
-  {
-    deployment: 'pdf-service-pdf-production',
-    namespace: 'prod',
-    label: 'PDF Service',
-    memLimitMB: 2048,
-    memWarnMB: 1500,
-    memCritMB: 1900,
-    cpuWarnPct: 70,
-    nodeGroup: 'spot_nodes',
-    nodeGroupFull: 'spot_nodes-20260211020045376800000001',
-    maxReplicas: 2,
-    minReplicas: 1,
-  },
-];
+// Deployments BLUE.Y monitors for load.
+// Configure via LOAD_WATCH_LIST env var (JSON array).
+// Example:
+// [{"deployment":"backend-production","namespace":"default","label":"Backend",
+//   "memLimitMB":4096,"memWarnMB":3000,"memCritMB":3800,"cpuWarnPct":70,
+//   "nodeGroup":"workers","nodeGroupFull":"workers-xxxxx","maxReplicas":3,"minReplicas":1}]
+const WATCH_LIST: Array<{
+  deployment: string; namespace: string; label: string;
+  memLimitMB: number; memWarnMB: number; memCritMB: number; cpuWarnPct: number;
+  nodeGroup: string; nodeGroupFull: string; maxReplicas: number; minReplicas: number;
+}> = JSON.parse(process.env.LOAD_WATCH_LIST || '[]');
 
 const HISTORY_SIZE = 10;              // 20 min history (2 min interval × 10)
 const COOLDOWN_MS = 20 * 60_000;     // 20 min between replica scale actions
@@ -143,7 +99,7 @@ export class LoadMonitor implements Monitor {
     private bedrock: BedrockClient,
     private telegram: TelegramClient,
   ) {
-    this.eks = new EKSClient({ region: 'ap-southeast-1' });
+    this.eks = new EKSClient({ region: process.env.AWS_REGION || 'us-east-1' });
   }
 
   async check(): Promise<MonitorResult> {
@@ -241,7 +197,8 @@ export class LoadMonitor implements Monitor {
     if (!isPreBusinessHours()) return;
 
     for (const { config, reading } of snapshots) {
-      if (config.deployment !== 'jcp-blo-backend-hubs20-production') continue;
+      // Only scale the first deployment in the watch list (assumed to be the main backend)
+      if (config !== WATCH_LIST[0]) continue;
       if (reading.replicas >= 2) continue;
       if (this.isOnCooldown(config.deployment)) continue;
 
@@ -435,7 +392,7 @@ Respond with JSON array only:
 
     try {
       const current = await this.eks.send(new DescribeNodegroupCommand({
-        clusterName: 'blo-cluster',
+        clusterName: process.env.CLUSTER_NAME || 'my-eks-cluster',
         nodegroupName: action.fullName,
       }));
 
@@ -445,7 +402,7 @@ Respond with JSON array only:
       const newDesired = Math.max(config.minSize || 1, Math.min(config.maxSize || 10, action.to));
 
       await this.eks.send(new UpdateNodegroupConfigCommand({
-        clusterName: 'blo-cluster',
+        clusterName: process.env.CLUSTER_NAME || 'my-eks-cluster',
         nodegroupName: action.fullName,
         scalingConfig: { desiredSize: newDesired },
       }));

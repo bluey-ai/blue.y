@@ -1,6 +1,6 @@
 # BLUE.Y — AI Ops Assistant
 
-**BLUE.Y asks why, so you don't have to.** 24/7 AI-powered infrastructure monitoring and incident response for BlueOnion's EKS cluster, operated entirely via Telegram.
+**BLUE.Y asks why, so you don't have to.** 24/7 AI-powered infrastructure monitoring and incident response for your EKS cluster, operated entirely via Telegram (or Slack, MS Teams, or WhatsApp).
 
 ## Architecture
 
@@ -32,7 +32,7 @@ Telegram Bot  ←→  BLUE.Y (Node.js, EKS pod)
 | K8s Client | `@kubernetes/client-node` v1 |
 | AI | DeepSeek V3 (fast) + R1 (reasoner), OpenAI-compatible API |
 | Alerts | Telegram Bot API (long polling) |
-| Email | AWS SES (`noreply@blueonion.today`) |
+| Email | AWS SES (configurable sender address) |
 | Ticketing | Jira REST API |
 | Scheduling | `cron` library |
 | Container | Alpine-based, non-root user, 256Mi/512Mi |
@@ -121,18 +121,25 @@ When the pod monitor detects a critical issue, BLUE.Y automatically:
 | `AI_INCIDENT_MODEL` | No | `deepseek-reasoner` | Reasoning model (R1) |
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | Yes | — | Authorized chat ID |
-| `WATCH_NAMESPACES` | No | `prod,doris,monitoring,wordpress` | Comma-separated namespaces |
+| `WATCH_NAMESPACES` | No | `default,monitoring` | Comma-separated namespaces to watch |
 | `KUBE_IN_CLUSTER` | No | `true` | Use in-cluster K8s config |
 | `JIRA_EMAIL` | No | — | Jira account email |
 | `JIRA_API_TOKEN` | No | — | Jira API token |
-| `JIRA_BASE_URL` | No | `https://blueonion.atlassian.net` | Jira instance URL |
-| `JIRA_PROJECT_KEY` | No | `HUBS` | Jira project key |
+| `JIRA_BASE_URL` | No | `https://your-org.atlassian.net` | Jira instance URL |
+| `JIRA_PROJECT_KEY` | No | `OPS` | Jira project key |
+| `EMAIL_FROM` | No | `noreply@example.com` | SES sender address |
+| `GRAFANA_EXTERNAL_URL` | No | — | Public Grafana URL (shown in password reset messages) |
+| `AI_SYSTEM_CONTEXT` | No | — | Cluster-specific context injected into AI prompt (deployments, URLs, troubleshooting) |
+| `AI_VISION_CONTEXT` | No | — | Service list for Vision AI image analysis |
+| `PING_SERVICE_MAP` | No | `{}` | JSON map of service name → `{label, url}` for `/ping` command |
+| `TEAM_EMAILS` | No | `{}` | JSON map of name → email for `/email <name>` shorthand |
+| `PRODUCTION_URLS` | No | `[]` | JSON array of `{name, url, expect}` for QA smoke tests |
 
 All secrets are stored in K8s Secret `blue-y-secrets`.
 
 ## Deployment
 
-Runs on EKS (`blo-cluster`, `prod` namespace). CI/CD via Bitbucket Pipelines.
+Runs on EKS (any cluster and namespace). CI/CD via your pipeline of choice (Bitbucket Pipelines example included).
 
 ```bash
 # Local development
