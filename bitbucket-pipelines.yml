@@ -14,18 +14,19 @@ definitions:
       set -euo pipefail
 
       # 1. AUTHENTICATE WITH AWS (OIDC)
+      # Set AWS_ACCOUNT_ID, AWS_REGION, and CLUSTERNAME in Bitbucket repo variables
       export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
       echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
-      export AWS_ROLE_ARN=arn:aws:iam::716156543026:role/BitbucketPipelineRole
-      export AWS_REGION=ap-southeast-1
+      export AWS_ROLE_ARN=arn:aws:iam::${AWS_ACCOUNT_ID}:role/BitbucketPipelineRole
+      # AWS_REGION is set via Bitbucket repo variable
 
       # 2. LOGIN TO ECR & UPDATE KUBECONFIG
-      aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 716156543026.dkr.ecr.$AWS_REGION.amazonaws.com
+      aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
       aws eks update-kubeconfig --region $AWS_REGION --name ${CLUSTERNAME}
 
       # 3. DEFINE VARIABLES
       appname="blue-y"
-      ECR=716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/blue.y
+      ECR=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/blue.y
       BUILD_VERSION=$(grep '"version"' package.json | head -1 | awk -F'"' '{print $4}')
       BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       SHORT_COMMIT=${BITBUCKET_COMMIT:0:8}
@@ -68,12 +69,16 @@ pipelines:
           deployment: Production
           oidc: true
           image:
-            name: 716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/backend-build-environment:latest
+            # Replace with your build image (needs: aws-cli, docker, kubectl, node 22)
+            # e.g. public.ecr.aws/docker/library/node:22 + install tools in script, or your own ECR image
+            # Note: Bitbucket does not support variable expansion in image.name — set your account/region literally here
+            name: <YOUR_ACCOUNT_ID>.dkr.ecr.<YOUR_REGION>.amazonaws.com/<YOUR_BUILD_IMAGE>:latest
             aws:
-              oidc-role: arn:aws:iam::716156543026:role/BitbucketPipelineRole
+              oidc-role: arn:aws:iam::<YOUR_ACCOUNT_ID>:role/BitbucketPipelineRole
           services: [docker]
           caches: [docker]
           script:
             - export ENV=prod
-            - export TAG=production
+            - export TAG=blueonion
+            # CLUSTERNAME and NAMESPACE must be set as Bitbucket repo variables
             - *deploy

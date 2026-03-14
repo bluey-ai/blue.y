@@ -44,22 +44,20 @@ export interface PipelineResult {
 // Progress callback for streaming status to Telegram
 type ProgressCallback = (step: string, detail: string) => Promise<void>;
 
-const SYSTEM_PROMPT_CONTEXT = `You are BLUE.Y's database query engine. You have read-only access to BlueOnion's production databases.
+const SYSTEM_PROMPT_CONTEXT = `You are BLUE.Y's database query engine. You have read-only access to the following databases.
 
 DATABASE REGISTRY:
-${DATABASE_REGISTRY.map((db) => `- ${db.name} (${db.host}:${db.port}): ${db.databases.join(', ')} — ${db.description}`).join('\n')}
+${DATABASE_REGISTRY.length > 0
+  ? DATABASE_REGISTRY.map((db) => `- ${db.name} (${db.host}:${db.port}): ${db.databases.join(', ')} — ${db.description}`).join('\n')
+  : '(No databases configured. Set DATABASE_REGISTRY env var.)'}
 
 QUERY ROUTING:
-- User/member lookup → bo-prod-sg.blo_user.members (email, username, company_id, status)
-- Company lookup → bo-prod-sg.blo_user.company (name, id)
-- BAS registration → hubsprod.dwd.bas_register_company (email, companyname, invitationcode, status)
-- BAS fund entries → hubsprod.dwd.bas_registrations (companyid, fundname, isin, category, status)
-- Backend system users → hubsprod.jeecg-boot.sys_user (username, email, realname, status)
-- Fund/portfolio data → hubsprod.dwd or doris.dwd
-- Market data → faceset-prod.factset or faceset-prod.equity
-- Due diligence → hubsprod.dwd.dd_submission, dd_submission_answer, dd_question
-- WordPress → blueonion.prod_blueonion (wp_posts, wp_users)
-- ESG scores/analytics → doris.dwd (for aggregated analytics and screening)`;
+${process.env.DB_QUERY_ROUTING || '- Query routing not configured. Set DB_QUERY_ROUTING env var with your table-to-use-case mapping.'}
+
+RULES:
+- SELECT only. NEVER INSERT/UPDATE/DELETE/DROP.
+- Limit results to 50 rows max.
+- Use specific columns over SELECT * to reduce data transfer.`;
 
 export class DbAgentPipeline {
   private dbClient: DatabaseClient;

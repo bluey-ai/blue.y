@@ -1,7 +1,6 @@
 # BLUE.Y — User Roles & RBAC Architecture
 
 > **Design spec for the Admin / Operator / User permission model.**
-> Jira: HUBS-6145
 
 ---
 
@@ -165,15 +164,15 @@ service up      │       │          │      │ "Login service is back ✅"
 ```yaml
 services:
   - name: "login"
-    deployment: user-management-be-production
+    deployment: auth-service-production
     userFacing: true          # triggers user notifications on down/up
     friendlyName: "Login"     # used in plain English messages
   - name: "platform"
-    deployment: jcp-blo-backend-hubs20-production
+    deployment: backend-production
     userFacing: true
     friendlyName: "Main platform"
   - name: "reports"
-    deployment: pdf-service-pdf-production
+    deployment: reports-service-production
     userFacing: true
     friendlyName: "Reports"
 ```
@@ -217,7 +216,7 @@ rbac:
   admins:
     - platform: telegram
       id: "123456789"          # Telegram user ID (number, not username)
-      name: "Zeeshan"
+      name: "Alice"
     - platform: slack
       id: "U01ABC123"          # Slack user ID (NOT @username)
       name: "Imran"
@@ -250,7 +249,7 @@ rbac:
       awsUsername: "finance.shared"
 
   # Same person on multiple platforms → list twice, same role
-  # Example: Zeeshan uses both Telegram and Slack as admin:
+  # Example: Alice uses both Telegram and Slack as admin:
   # Already covered above — two separate entries under admins[]
 ```
 
@@ -279,27 +278,27 @@ In Slack: click your profile → "Copy member ID" → starts with `U`.
 
 4. restart.cmd.ts
    → Sends confirmation prompt to Telegram:
-     "⚠️ Restart jcp-blo-backend-hubs20-production?
+     "⚠️ Restart backend-production?
       Reply /yes to confirm or /no to cancel. (60s timeout)"
 
 5. Admin replies /yes
-   → kubectl rollout restart deployment/jcp-blo-backend-hubs20-production -n prod
+   → kubectl rollout restart deployment/backend-production -n <namespace>
 
 6. Response formatter (admin mode)
    → Technical response:
      "✅ Rolling restart triggered.
-      Deployment: jcp-blo-backend-hubs20-production
-      Pods restarting: jcp-blo-backend-7d9f4b-xk2p → Terminating
-      Expected ready in: ~120s"
+      Deployment: backend-production
+      Pods restarting: backend-7d9f4b-xk2p → Terminating
+      Expected ready in: ~60s"
 
 7. Audit log
-   { user: 'Zeeshan', role: 'admin', platform: 'telegram',
-     command: 'restart', target: 'jcp-blo-backend-hubs20-production',
+   { user: 'Alice', role: 'admin', platform: 'telegram',
+     command: 'restart', target: 'backend-production',
      outcome: 'success', ts: '2026-03-14T08:32:11Z' }
 
 8. Notification router (optional)
    → Sends notification to Slack #ops-alerts:
-     "🔄 Restart triggered by Zeeshan: jcp-blo-backend-hubs20-production"
+     "🔄 Restart triggered by Alice: backend-production"
 ```
 
 ---
@@ -349,17 +348,17 @@ In Slack: click your profile → "Copy member ID" → starts with `U`.
 
 ```
 1. PodMonitor detects
-   user-management-be-production → CrashLoopBackOff
+   auth-service-production → CrashLoopBackOff
    severity: critical
    service: userFacing: true, friendlyName: "Login"
 
 2. NotificationRouter.route('critical', details, service)
 
    → Admin DMs (all platforms they're configured on):
-     Telegram DM to Zeeshan:
-     "🔴 CRITICAL — user-management-be-production
+     Telegram DM to Alice:
+     "🔴 CRITICAL — auth-service-production
       Status: CrashLoopBackOff (5 restarts in 10 min)
-      Node: ip-10-50-1-45 | Namespace: prod
+      Node: ip-10-0-1-45 | Namespace: <namespace>
       [AI diagnose running...]"
 
    → Operator DMs:
@@ -374,10 +373,10 @@ In Slack: click your profile → "Copy member ID" → starts with `U`.
              We'll update you when it's resolved. ⏰ 3:14 AM"
 
 3. BLUE.Y auto-diagnoses (admin + operator only)
-   AI analysis → "OOMKill due to memory spike during nightly Doris sync..."
+   AI analysis → "OOMKill due to memory spike during nightly batch job..."
 
 4. Service recovers (10 min later)
-   → Admins + Operators: "✅ Recovered: user-management-be-production (10m 23s)"
+   → Admins + Operators: "✅ Recovered: auth-service-production (10m 23s)"
    → Users: "✅ Login service is back and working normally. Sorry for the disruption."
 ```
 
@@ -387,12 +386,12 @@ In Slack: click your profile → "Copy member ID" → starts with `U`.
 
 **Admin sees:**
 ```
-🟢 Cluster: 14/14 pods running
+🟢 Cluster: 8/8 pods running
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-jcp-blo-backend-hubs20-production   1/1 ✅  CPU: 420m  Mem: 9.1GB  (50%)
-jcp-blo-frontend-fund-update        2/2 ✅  CPU: 45m   Mem: 210MB  (41%)
-user-management-be-production       1/1 ✅  CPU: 12m   Mem: 89MB   (17%)
-pdf-service-pdf-production          1/1 ✅  CPU: 5m    Mem: 120MB  (6%)
+backend-production       1/1 ✅  CPU: 420m  Mem: 1.2GB  (60%)
+frontend-production      2/2 ✅  CPU: 45m   Mem: 210MB  (41%)
+auth-service-production  1/1 ✅  CPU: 12m   Mem: 89MB   (17%)
+reports-production       1/1 ✅  CPU: 5m    Mem: 120MB  (6%)
 Nodes: 3 healthy | CPU 34% | Mem 61%
 ```
 
@@ -469,4 +468,4 @@ src/
 
 ---
 
-*Last updated: 2026-03-14 | Jira: HUBS-6145, HUBS-6149*
+*Last updated: 2026-03-14*

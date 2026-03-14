@@ -1,6 +1,6 @@
 /**
  * MS Teams Notifier — STUB
- * Full implementation: HUBS-6147
+ * Full implementation: BLY-3
  *
  * Uses Microsoft Bot Framework + Adaptive Cards.
  * Requires Azure Bot App ID + Client Secret.
@@ -15,14 +15,14 @@ export class TeamsNotifier implements Notifier {
   readonly enabled = false; // enabled when TEAMS_APP_ID + TEAMS_APP_PASSWORD set
 
   async send(message: string, _options?: SendOptions): Promise<void> {
-    logger.debug('[Teams] send() not yet implemented — HUBS-6147');
+    logger.debug('[Teams] send() not yet implemented — BLY-3');
   }
 
   async sendAlert(severity: AlertSeverity, message: string, _options?: SendOptions): Promise<void> {
-    logger.debug(`[Teams] sendAlert(${severity}) not yet implemented — HUBS-6147`);
+    logger.debug(`[Teams] sendAlert(${severity}) not yet implemented — BLY-3`);
   }
 
   async sendDM(userId: string, message: string): Promise<void> {
-    logger.debug(`[Teams] sendDM(${userId}) not yet implemented — HUBS-6147`);
+    logger.debug(`[Teams] sendDM(${userId}) not yet implemented — BLY-3`);
   }
 }

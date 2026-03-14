@@ -4,7 +4,7 @@
  * Shows deployment names, timestamps, durations, technical descriptions.
  * Full implementation in main.ts; this stub satisfies command registration.
  *
- * Jira: HUBS-6128
+
  */
 
 import { CommandHandler } from '../../command-router';
