@@ -106,7 +106,7 @@ export const config = {
     webAclName: process.env.WAF_WEB_ACL_NAME || 'bluecomm-production-waf',
     scope: (process.env.WAF_SCOPE || 'REGIONAL') as 'REGIONAL' | 'CLOUDFRONT',
     region: process.env.WAF_REGION || 'ap-southeast-1',
-    ipSetName: process.env.WAF_IP_SET_NAME || 'blue-y-blocked-ips',
+    ipSetName: process.env.WAF_IP_SET_NAME || 'blocked-ips',
     autoBlockDurationMinutes: parseInt(process.env.WAF_AUTO_BLOCK_DURATION || '1440', 10), // 24h default
     enabled: process.env.WAF_ENABLED !== 'false', // enabled by default
   },
