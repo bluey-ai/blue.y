@@ -1,6 +1,6 @@
 /**
  * Slack Adapter — STUB
- * Full implementation: HUBS-6146
+ * Full implementation: BLY-3
  *
  * Normalises a @slack/bolt event into CallerIdentity.
  * Supports slash commands (/bluey <cmd>) and @mentions.

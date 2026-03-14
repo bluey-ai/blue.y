@@ -1,6 +1,6 @@
 /**
  * WhatsApp Adapter — STUB
- * Full implementation: HUBS-6148
+ * Full implementation: BLY-3
  *
  * Normalises a Twilio WhatsApp webhook payload into CallerIdentity.
  * User identity = E.164 phone number (e.g. +6512345678).

@@ -1,6 +1,6 @@
 /**
  * MS Teams Adapter — STUB
- * Full implementation: HUBS-6147
+ * Full implementation: BLY-3
  *
  * Normalises a Bot Framework Activity into CallerIdentity.
  * User identity = Azure AD Object ID (aadObjectId).

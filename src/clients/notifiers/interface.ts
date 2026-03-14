@@ -3,7 +3,7 @@
  * Allows BLUE.Y to send alerts and messages without knowing
  * which platform the caller is on.
  *
- * Jira: HUBS-6133 (Slack), HUBS-6146, HUBS-6147, HUBS-6148
+ (Slack), BLY-3, BLY-3, BLY-3
  */
 
 export type AlertSeverity = 'critical' | 'high' | 'warning' | 'info';

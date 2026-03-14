@@ -561,7 +561,7 @@ export class JiraClient {
     content.push(
       panel('info',
         paragraph(bold('Auto-created by BLUE.Y Incident Monitor')),
-        paragraph(text(`Cluster: blo-cluster | Region: ap-southeast-1 | Time: ${new Date().toISOString()}`)),
+        paragraph(text(`Cluster: ${process.env.CLUSTER_NAME || 'my-eks-cluster'} | Region: ${process.env.AWS_REGION || 'us-east-1'} | Time: ${new Date().toISOString()}`)),
       ),
     );
 
@@ -572,8 +572,8 @@ export class JiraClient {
       if (incident.pod) rows.push(['Pod', `${incident.namespace || 'prod'}/${incident.pod}`]);
       if (incident.namespace) rows.push(['Namespace', incident.namespace]);
       if (incident.status) rows.push(['Status', incident.status]);
-      rows.push(['Cluster', 'blo-cluster']);
-      rows.push(['Region', 'ap-southeast-1']);
+      rows.push(['Cluster', process.env.CLUSTER_NAME || 'my-eks-cluster']);
+      rows.push(['Region', process.env.AWS_REGION || 'us-east-1']);
       content.push(table(['Field', 'Value'], rows));
     }
 

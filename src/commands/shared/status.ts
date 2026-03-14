@@ -5,9 +5,9 @@
  * Delegates to KubeClient.getClusterSummary() (existing implementation in main.ts).
  *
  * This stub satisfies the command registration pattern.
- * Full implementation migrated from main.ts in HUBS-6128.
+
  *
- * Jira: HUBS-6128
+
  */
 
 import { CommandHandler } from '../../command-router';

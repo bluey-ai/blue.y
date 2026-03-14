@@ -5,7 +5,7 @@
  * and called from main.ts. This handler covers the multi-platform
  * user-facing case where ResponseFormatter is used correctly by role.
  *
- * Jira: HUBS-6145
+
  */
 
 import { CommandHandler } from '../../command-router';

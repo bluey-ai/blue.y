@@ -9,7 +9,7 @@
  * Identity is platform-specific (Telegram user ID, Slack user ID, phone number, etc.).
  * Config is loaded from values.yaml → env var RBAC_CONFIG → config.rbac.
  *
- * Jira: HUBS-6145
+
  */
 
 export type Role = 'admin' | 'operator' | 'user';

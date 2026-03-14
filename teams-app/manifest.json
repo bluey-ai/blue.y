@@ -4,18 +4,18 @@
   "version": "1.0.0",
   "id": "852d2940-6887-4b4b-a410-eab46c888b55",
   "developer": {
-    "name": "BlueOnion Limited",
-    "websiteUrl": "https://www.blueonion.today",
-    "privacyUrl": "https://www.blueonion.today/privacy",
-    "termsOfUseUrl": "https://www.blueonion.today/terms"
+    "name": "Your Organization",
+    "websiteUrl": "https://www.example.com",
+    "privacyUrl": "https://www.example.com/privacy",
+    "termsOfUseUrl": "https://www.example.com/terms"
   },
   "name": {
     "short": "BLUE.Y",
-    "full": "BLUE.Y - IT Support Assistant"
+    "full": "BLUE.Y - AI Ops Assistant"
   },
   "description": {
     "short": "Report IT issues and get instant help from BLUE.Y",
-    "full": "BLUE.Y is BlueOnion's AI-powered IT support assistant. Report infrastructure issues in plain English — BLUE.Y diagnoses, fixes minor problems automatically (with ops approval), and escalates complex issues to the team. Available 24/7."
+    "full": "BLUE.Y is an AI-powered ops assistant. Report infrastructure issues in plain English — BLUE.Y diagnoses, fixes minor problems automatically (with ops approval), and escalates complex issues to the team. Available 24/7."
   },
   "icons": {
     "outline": "outline.png",
@@ -46,5 +46,5 @@
     }
   ],
   "permissions": ["identity", "messageTeamMembers"],
-  "validDomains": ["bluey.blueonion.today"]
+  "validDomains": ["<your-bluey-host>"]
 }

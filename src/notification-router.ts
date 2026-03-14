@@ -11,7 +11,7 @@
  * audience logic on top. Think of NotifierRouter as the transport layer,
  * NotificationRouter as the routing policy layer.
  *
- * Jira: HUBS-6133
+
  */
 
 import { NotifierRouter } from './clients/notifiers/router';

@@ -4,7 +4,7 @@
  * Shows plain-English outage history (friendly service names, no K8s details).
  * Admin/Operator view is handled separately with technical details.
  *
- * Jira: HUBS-6145
+
  */
 
 import { CommandHandler } from '../../command-router';
@@ -14,7 +14,7 @@ const formatter = new ResponseFormatter();
 
 export function createUserIncidentsHandler(): CommandHandler {
   return async (ctx) => {
-    // TODO (HUBS-6128): Fetch real incident history from the incident store.
+    // TODO (BLY-2): Fetch real incident history from the incident store.
     // For now, return a placeholder until the incident store is wired up.
     const incidents: IncidentSummary[] = [];
     const response = formatter.formatIncidents(incidents, 'user');

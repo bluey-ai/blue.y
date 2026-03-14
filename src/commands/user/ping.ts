@@ -4,23 +4,19 @@
  * Checks if a named service is reachable by its friendly name.
  * Returns plain English — no endpoints, no HTTP status codes.
  *
- * Example: "/ping login" → "✅ Login is up and running."
+ * Configure services via PING_SERVICE_MAP env var (JSON):
+ *   PING_SERVICE_MAP='{"login":{"label":"Login","url":"https://api.example.com/health"}}'
  *
- * Jira: HUBS-6145
+ * Example: "/ping login" → "✅ Login is up and running."
  */
 
 import { CommandHandler } from '../../command-router';
 import { QAClient } from '../../clients/qa';
 
-/** Map friendly names → production URLs for the QA smoke test. */
-const SERVICE_MAP: Record<string, { label: string; url: string }> = {
-  login:    { label: 'Login',         url: 'https://api-users.blueonion.today' },
-  platform: { label: 'Main platform', url: 'https://api-hubs.blueonion.today' },
-  frontend: { label: 'Frontend',      url: 'https://hubs.blueonion.today' },
-  pdf:      { label: 'PDF service',   url: 'https://hubspdf.blueonion.today' },
-  website:  { label: 'Website',       url: 'https://www.blueonion.today' },
-  grafana:  { label: 'Grafana',       url: 'https://grafana.blueonion.today/api/health' },
-};
+/** Map friendly names → production URLs. Configure via PING_SERVICE_MAP env var. */
+const SERVICE_MAP: Record<string, { label: string; url: string }> = JSON.parse(
+  process.env.PING_SERVICE_MAP || '{}'
+);
 
 export function createUserPingHandler(qa: QAClient): CommandHandler {
   return async (ctx) => {
@@ -41,7 +37,7 @@ export function createUserPingHandler(qa: QAClient): CommandHandler {
 
     await ctx.reply(`Checking ${svc.label}…`);
 
-    // TODO (HUBS-6145): QAClient.pingUrl(url) — single-URL probe returning boolean.
+    // TODO (BLY-2): QAClient.pingUrl(url) — single-URL probe returning boolean.
     // Until implemented, use a best-effort HTTP check here.
     try {
       const axios = (await import('axios')).default;

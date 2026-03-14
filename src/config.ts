@@ -22,7 +22,7 @@ export const config = {
   // Kubernetes
   kube: {
     // When running in-cluster, these are auto-detected
-    namespaces: (process.env.WATCH_NAMESPACES || 'prod,doris,monitoring,wordpress').split(','),
+    namespaces: (process.env.WATCH_NAMESPACES || 'default,monitoring').split(','),
     inCluster: process.env.KUBE_IN_CLUSTER !== 'false',
   },
 
@@ -46,10 +46,10 @@ export const config = {
 
   // Jira
   jira: {
-    baseUrl: process.env.JIRA_BASE_URL || 'https://blueonion.atlassian.net',
+    baseUrl: process.env.JIRA_BASE_URL || 'https://your-org.atlassian.net',
     email: process.env.JIRA_EMAIL || '',
     apiToken: process.env.JIRA_API_TOKEN || '',
-    projectKey: process.env.JIRA_PROJECT_KEY || 'HUBS',
+    projectKey: process.env.JIRA_PROJECT_KEY || 'OPS',
   },
 
   // Vision AI (for screenshot/image analysis — Google Gemini free tier)
@@ -60,20 +60,19 @@ export const config = {
     enabled: !!process.env.VISION_API_KEY,
   },
 
-  // Production URLs for QA smoke tests
+  // Production URLs for QA smoke tests — configure via PRODUCTION_URLS env var (JSON array)
+  // or set this list directly for your environment.
   // expect: expected HTTP status (default 200). Services that require auth or have no root page
   // should set the expected status code they actually return when healthy (e.g., 302, 403, 404).
-  productionUrls: [
-    { name: 'Backend API', url: 'https://api-hubs.blueonion.today', expect: 200 },
-    { name: 'Frontend', url: 'https://hubs.blueonion.today', expect: 200 },
-    { name: 'User Mgmt API', url: 'https://api-users.blueonion.today', expect: 404 },   // NestJS returns 404 at root (no route)
-    { name: 'User Mgmt UI', url: 'https://users.blueonion.today', expect: 200 },
-    { name: 'PDF Service', url: 'https://hubspdf.blueonion.today', expect: 404 },        // No root handler, 404 = server is running
-    { name: 'BLUE.AI', url: 'https://ai.blueonion.today', expect: 404 },                 // No root handler, 404 = server is running
-    { name: 'Grafana', url: 'https://grafana.blueonion.today/api/health', expect: 200 },   // Grafana health endpoint (bypasses auth)
-    { name: 'Status Page', url: 'https://status.blueonion.today', expect: 200 },
-    { name: 'WordPress', url: 'https://www.blueonion.today', expect: 200 },
-  ],
+  // Example:
+  //   { name: 'My API', url: 'https://api.example.com/health', expect: 200 },
+  //   { name: 'My Frontend', url: 'https://app.example.com', expect: 200 },
+  productionUrls: JSON.parse(process.env.PRODUCTION_URLS || '[]'),
+
+  // Email sender
+  email: {
+    from: process.env.EMAIL_FROM || 'noreply@example.com',
+  },
 
   // Loki (log aggregation)
   loki: {
@@ -97,6 +96,7 @@ export const config = {
   // Grafana (admin API for password resets)
   grafana: {
     internalUrl: process.env.GRAFANA_INTERNAL_URL || 'http://grafana.monitoring.svc.cluster.local:3000',
+    externalUrl: process.env.GRAFANA_EXTERNAL_URL || '',
     adminUser: process.env.GRAFANA_ADMIN_USER || 'admin',
     adminPassword: process.env.GRAFANA_ADMIN_PASSWORD || '',
     enabled: !!process.env.GRAFANA_ADMIN_PASSWORD,
@@ -104,9 +104,9 @@ export const config = {
 
   // WAF Security
   waf: {
-    webAclName: process.env.WAF_WEB_ACL_NAME || 'bluecomm-production-waf',
+    webAclName: process.env.WAF_WEB_ACL_NAME || 'my-production-waf',
     scope: (process.env.WAF_SCOPE || 'REGIONAL') as 'REGIONAL' | 'CLOUDFRONT',
-    region: process.env.WAF_REGION || 'ap-southeast-1',
+    region: process.env.WAF_REGION || 'us-east-1',
     ipSetName: process.env.WAF_IP_SET_NAME || 'blocked-ips',
     autoBlockDurationMinutes: parseInt(process.env.WAF_AUTO_BLOCK_DURATION || '1440', 10), // 24h default
     enabled: process.env.WAF_ENABLED !== 'false', // enabled by default

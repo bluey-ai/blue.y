@@ -4,7 +4,7 @@
  * Admin/Operator: technical output (pod names, namespaces, CPU millicores, MB, etc.)
  * User:           plain English (no K8s jargon, service names only, friendly timestamps)
  *
- * Jira: HUBS-6145
+
  */
 
 import { Role } from './rbac';
