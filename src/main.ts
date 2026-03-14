@@ -25,6 +25,7 @@ import { BitbucketClient } from './clients/bitbucket';
 import { SecurityScanner } from './clients/scanner';
 import { AwsMonitorClient } from './clients/aws-monitor';
 import { CronJob } from 'cron';
+import { buildInfo, uptime } from './version';
 import { RBAC, loadRBACConfig } from './rbac';
 import { CommandRouter } from './command-router';
 import { TelegramNotifier } from './clients/notifiers/telegram';
@@ -36,7 +37,14 @@ app.use(express.json());
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'blue.y', uptime: process.uptime() });
+  res.json({
+    status: 'ok',
+    service: 'blue.y',
+    version: buildInfo.version,
+    commit: buildInfo.commit,
+    buildDate: buildInfo.buildDate,
+    uptime: Math.floor(process.uptime()),
+  });
 });
 
 // Manual trigger endpoint (for testing)
@@ -2738,6 +2746,20 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     return;
   }
 
+  if (cmd === '/version' || cmd === 'version') {
+    const msg =
+      `📦 <b>BLUE.Y v${buildInfo.version}</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🔖 Version:     <code>${buildInfo.version}</code>\n` +
+      `🔀 Commit:      <code>${buildInfo.commit}</code>\n` +
+      `🏗️ Built:       ${buildInfo.buildDate}\n` +
+      `⏱️ Uptime:      ${uptime()}\n` +
+      `🐳 Image:       production-v${buildInfo.version}`;
+    lastBotResponse = msg;
+    await telegram.send(msg);
+    return;
+  }
+
   // --- AI-powered Jira query (catches any Jira-related natural language) ---
   const isJiraQuery = config.jira.apiToken && (
     /\bjira\b/i.test(text) ||
@@ -3422,7 +3444,7 @@ async function generateDailyReport(): Promise<void> {
 
 // Start
 app.listen(config.port, async () => {
-  logger.info(`BLUE.Y started on port ${config.port}`);
+  logger.info(`BLUE.Y v${buildInfo.version} (${buildInfo.commit}) started on port ${config.port} — built ${buildInfo.buildDate}`);
 
   // Initialize WAF client
   if (config.waf.enabled) {
