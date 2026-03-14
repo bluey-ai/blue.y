@@ -568,7 +568,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       if (analysis.suggestedAction) {
         await telegram.send(`💡 <b>Suggested:</b> ${analysis.suggestedAction}\n\nReply /yes to execute.`);
         pendingAction = {
-          action: analysis.suggestedCommand || analysis.suggestedAction || '',
+          action: (analysis.suggestedCommand || analysis.suggestedAction || '').split(' ')[0].toLowerCase(),
           target: found.pod.name,
           namespace: found.namespace,
           timestamp: Date.now(),
@@ -1421,8 +1421,15 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
 
   // --- Confirmation flow ---
   if (cmd === '/yes' || cmd === 'yes' || cmd === 'y') {
-    if (!pendingAction || Date.now() - pendingAction.timestamp > 300000) {
-      await telegram.send('❌ No pending action or it expired (5 min timeout).');
+    if (!pendingAction || Date.now() - pendingAction.timestamp > 900000) {
+      // No global pending action — check if LoadMonitor has a pending node scale
+      if (loadMonitor.pendingNodeScale) {
+        const ns = loadMonitor.pendingNodeScale;
+        loadMonitor.pendingNodeScale = null;
+        await loadMonitor.scaleNodeGroup(ns);
+        return;
+      }
+      await telegram.send('❌ No pending action or it expired (15 min timeout).');
       pendingAction = null;
       return;
     }
