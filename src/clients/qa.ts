@@ -56,7 +56,7 @@ export class QAClient {
   async smokeTest(): Promise<SmokeTestResult[]> {
     const results: SmokeTestResult[] = [];
 
-    const promises = config.productionUrls.map(async (endpoint) => {
+    const promises = config.productionUrls.map(async (endpoint: { name: string; url: string; expect?: number }) => {
       const start = Date.now();
       try {
         const response = await axios.get(endpoint.url, {
