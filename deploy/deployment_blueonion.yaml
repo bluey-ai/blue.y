@@ -366,6 +366,12 @@ spec:
                   name: blue-y-secrets
                   key: teams-app-password
                   optional: true
+            - name: TEAMS_TENANT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: teams-tenant-id
+                  optional: true
 
             # ── Schedules ────────────────────────────────────────────────────
             - name: SCHEDULE_DAILY_REPORT

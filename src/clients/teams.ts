@@ -60,7 +60,7 @@ export class TeamsClient {
   private conversationHistory: Map<string, ConversationEntry[]> = new Map();
 
   constructor() {
-    if (!config.teams.enabled) {
+    if (!config.teams.enabled || !config.teams.tenantId) {
       logger.info('[Teams] Not configured — Teams integration disabled');
       return;
     }
