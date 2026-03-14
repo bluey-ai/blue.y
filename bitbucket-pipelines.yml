@@ -72,9 +72,9 @@ pipelines:
             # Replace with your build image (needs: aws-cli, docker, kubectl, node 22)
             # e.g. public.ecr.aws/docker/library/node:22 + install tools in script, or your own ECR image
             # Note: Bitbucket does not support variable expansion in image.name — set your account/region literally here
-            name: <YOUR_ACCOUNT_ID>.dkr.ecr.<YOUR_REGION>.amazonaws.com/<YOUR_BUILD_IMAGE>:latest
+            name: 716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/backend-build-environment:latest
             aws:
-              oidc-role: arn:aws:iam::<YOUR_ACCOUNT_ID>:role/BitbucketPipelineRole
+              oidc-role: arn:aws:iam::716156543026:role/BitbucketPipelineRole
           services: [docker]
           caches: [docker]
           script:
