@@ -97,6 +97,7 @@ const HISTORY_SIZE = 10;              // 20 min history (2 min interval × 10)
 const COOLDOWN_MS = 20 * 60_000;     // 20 min between replica scale actions
 const NODE_COOLDOWN_MS = 45 * 60_000; // 45 min between node group changes
 const SCALE_DOWN_READINGS = 8;        // 16 min of low load before scale down
+const ALERT_COOLDOWN_MS = 30 * 60_000; // 30 min between AI-triggered alerts per deployment
 
 // Business hours: 8:30AM–9PM SGT (UTC+8) Mon–Fri
 function isBusinessHours(): boolean {
@@ -126,6 +127,7 @@ export class LoadMonitor implements Monitor {
 
   private history = new Map<string, LoadReading[]>();
   private cooldowns = new Map<string, number>();
+  private alertCooldowns = new Map<string, number>();
   private nodeScaleCooldown = 0;
   private eks: EKSClient;
 
@@ -307,7 +309,7 @@ export class LoadMonitor implements Monitor {
           : 'insufficient history';
         const memPct = Math.round((reading.memoryMB / config.memLimitMB) * 100);
         return `${config.label} (${config.deployment}):
-  Current: CPU=${reading.cpuMilli}m, Mem=${reading.memoryMB}MB (${memPct}% of ${config.memLimitMB}MB limit), Replicas=${reading.replicas}/${config.maxReplicas}
+  Current: CPU=${reading.cpuMilli}m, Mem=${reading.memoryMB}MB (${memPct}% of ${config.memLimitMB}MB limit), Replicas=${reading.replicas} (min=${config.minReplicas}, max=${config.maxReplicas})
   Trend (last 3 readings): ${trend}
   Thresholds: memWarn=${config.memWarnMB}MB, memCrit=${config.memCritMB}MB`;
       }).join('\n\n');
@@ -334,6 +336,11 @@ Rules:
 - Only recommend scale_down if low memory (<40% of limit) AND low CPU (<50m) for 8+ readings AND NOT business hours
 - If scale_up replicas is at max, consider node_scale_up for that node group instead
 - Never recommend scaling Doris
+- Use "none" for ALL stable, normal, or expected states — do NOT alert on these
+- Use "alert" ONLY for genuinely abnormal situations: sudden spike, unexpected pattern, memory leak trend, or something that requires immediate human investigation
+- Do NOT use "alert" for: memory <80%, stable trends, normal replica counts, or anything that resolves itself
+- A deployment running at minimum replicas (e.g. 1/2 where min=1) is NORMAL — do not alert
+- If you would say "but stable" or "but no scaling needed" — use "none" instead
 
 Respond with JSON array only:
 [{"deployment": "<name>", "action": "scale_up|scale_down|none|alert", "reason": "<1 sentence>", "urgency": "immediate|normal|low"}]`;
@@ -370,8 +377,13 @@ Respond with JSON array only:
             to: snap.reading.replicas - 1,
             reason: `🧠 AI: ${rec.reason}`,
           });
-        } else if (rec.action === 'alert') {
-          await this.telegram.sendAlert('warning', `⚠️ <b>${snap.config.label}</b>\n${rec.reason}`);
+        } else if (rec.action === 'alert' && rec.urgency === 'immediate') {
+          // Only send if not already alerted for this deployment recently
+          const lastAlert = this.alertCooldowns.get(snap.config.deployment) || 0;
+          if (Date.now() - lastAlert > ALERT_COOLDOWN_MS) {
+            await this.telegram.sendAlert('warning', `⚠️ <b>${snap.config.label}</b>\n${rec.reason}`);
+            this.alertCooldowns.set(snap.config.deployment, Date.now());
+          }
         }
       }
     } catch (err) {
