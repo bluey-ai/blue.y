@@ -1,6 +1,6 @@
 {
   "name": "blue.y",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "BLUE.Y — asks why, so you don't have to. AI ops assistant for 24/7 infrastructure monitoring.",
   "main": "dist/main.js",
   "scripts": {
