@@ -459,33 +459,63 @@ Respond with JSON array only:
   // ========================
 
   private async getNodeGroupStates(nodeMetrics: Array<{ name: string; cpu: string; memory: string }>): Promise<NodeGroupState[]> {
-    // capacityMilli = total CPU capacity per node in millicores
-    const ngMap: Record<string, { cpuMilli: number[]; desired: number; min: number; max: number; fullName: string; capacityMilli: number }> = {
-      'backend_highmem': { cpuMilli: [], desired: 1, min: 1, max: 3, fullName: 'backend_highmem-20260211013708218100000001', capacityMilli: 8000 }, // m5.2xlarge = 8 vCPU
-      'spot_nodes': { cpuMilli: [], desired: 3, min: 2, max: 10, fullName: 'spot_nodes-20260211020045376800000001', capacityMilli: 4000 },           // c5.xlarge = 4 vCPU
-    };
-
-    for (const node of nodeMetrics) {
-      const cpuMilli = parseInt(node.cpu);  // e.g. "50m" → 50
-      const memMi    = parseInt(node.memory); // e.g. "28560Mi" → 28560
-      // Classify by memory: m5.2xlarge ~32GB, c5.xlarge ~8GB. Threshold at 12GB (12288 Mi).
-      if (memMi > 12_000) {
-        ngMap['backend_highmem'].cpuMilli.push(cpuMilli);
-      } else {
-        ngMap['spot_nodes'].cpuMilli.push(cpuMilli);
+    // Build lookup: nodeGroupFull → shortName from WATCH_LIST config
+    const fullToShort = new Map<string, string>();
+    for (const entry of WATCH_LIST) {
+      if (entry.nodeGroupFull && entry.nodeGroup) {
+        fullToShort.set(entry.nodeGroupFull, entry.nodeGroup);
       }
     }
 
-    return Object.entries(ngMap).map(([name, ng]) => ({
-      name,
-      fullName: ng.fullName,
-      desired: ng.desired,
-      min: ng.min,
-      max: ng.max,
-      nodeUtilPct: ng.cpuMilli.length > 0
-        ? Math.round((ng.cpuMilli.reduce((a, b) => a + b, 0) / ng.cpuMilli.length) / (ng.capacityMilli / 100))
-        : 0,
-    }));
+    // Read actual eks.amazonaws.com/nodegroup labels + allocatable CPU from K8s API
+    const nodeInfoMap = await this.kube.getNodeGroupMap();
+
+    // Group node metrics by their actual node group label
+    const groups: Record<string, { cpuUsageMilli: number[]; allocatableCpuMilli: number }> = {};
+    for (const metric of nodeMetrics) {
+      const info = nodeInfoMap.get(metric.name);
+      if (!info || info.nodeGroup === 'unknown') continue;
+      if (info.nodeGroup.startsWith('doris')) continue; // never touch Doris
+
+      const key = info.nodeGroup; // e.g. "backend_highmem-20260211013708218100000001"
+      if (!groups[key]) {
+        groups[key] = { cpuUsageMilli: [], allocatableCpuMilli: info.allocatableCpuMilli };
+      }
+      groups[key].cpuUsageMilli.push(parseInt(metric.cpu));
+    }
+
+    // Enrich each group with EKS scaling config (min/max/desired)
+    const clusterName = process.env.CLUSTER_NAME || 'my-eks-cluster';
+    const result: NodeGroupState[] = [];
+
+    for (const [fullName, group] of Object.entries(groups)) {
+      const shortName = fullToShort.get(fullName) || fullName;
+      let min = 1, max = 10, desired = group.cpuUsageMilli.length;
+
+      try {
+        const desc = await this.eks.send(new DescribeNodegroupCommand({
+          clusterName,
+          nodegroupName: fullName,
+        }));
+        const sc = desc.nodegroup?.scalingConfig;
+        min = sc?.minSize ?? 1;
+        max = sc?.maxSize ?? 10;
+        desired = sc?.desiredSize ?? desired;
+      } catch {
+        // EKS query failed — use actual node count as desired, safe defaults for min/max
+      }
+
+      const avgCpu = group.cpuUsageMilli.length > 0
+        ? group.cpuUsageMilli.reduce((a, b) => a + b, 0) / group.cpuUsageMilli.length
+        : 0;
+      const nodeUtilPct = group.allocatableCpuMilli > 0
+        ? Math.round(avgCpu / (group.allocatableCpuMilli / 100))
+        : 0;
+
+      result.push({ name: shortName, fullName, desired, min, max, nodeUtilPct });
+    }
+
+    return result;
   }
 
   private isOnCooldown(deployment: string): boolean {
