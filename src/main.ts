@@ -3430,8 +3430,36 @@ async function generateDailyReport(): Promise<void> {
   }
 }
 
+// ─── Graceful shutdown ────────────────────────────────────────────────────────
+let isShuttingDown = false;
+
+async function shutdown(signal: string): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  logger.info(`Received ${signal} — shutting down BLUE.Y gracefully...`);
+
+  // 1. Stop all monitors (no new alerts or cron ticks)
+  scheduler.pause();
+
+  // 2. Stop accepting new HTTP connections
+  server.close(() => {
+    logger.info('HTTP server closed');
+  });
+
+  // 3. Give in-flight operations up to 8 seconds, then exit cleanly
+  setTimeout(() => {
+    logger.info('BLUE.Y shutdown complete');
+    process.exit(0);
+  }, 8000).unref();
+}
+
+process.on('SIGTERM', () => { shutdown('SIGTERM').catch((e) => { logger.error('Shutdown error', e); process.exit(1); }); });
+process.on('SIGINT',  () => { shutdown('SIGINT').catch((e)  => { logger.error('Shutdown error', e); process.exit(1); }); });
+// ──────────────────────────────────────────────────────────────────────────────
+
 // Start
-app.listen(config.port, async () => {
+const server = app.listen(config.port, async () => {
   logger.info(`BLUE.Y v${buildInfo.version} (${buildInfo.commit}) started on port ${config.port} — built ${buildInfo.buildDate}`);
 
   // Initialize WAF client
