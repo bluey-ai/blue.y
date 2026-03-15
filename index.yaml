@@ -1,0 +1,49 @@
+apiVersion: v1
+entries:
+  blue-y:
+  - annotations:
+      artifacthub.io/changes: |
+        - kind: added
+          description: Graceful SIGTERM/SIGINT shutdown handler
+        - kind: added
+          description: docker-compose.yml for local development
+        - kind: added
+          description: SVG vector logo (assets/blue-y.svg)
+        - kind: added
+          description: Bitbucket PR template
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/operator: "false"
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/signKey: |
+        fingerprint: ""
+        url: ""
+    apiVersion: v2
+    appVersion: 1.4.0
+    created: "2026-03-15T15:54:36.444594084Z"
+    description: 'BLUE.Y — AI ops assistant for 24/7 Kubernetes cluster monitoring.
+      Monitors pods, nodes, certs, HPA, and load. Sends alerts via Telegram, Slack,
+      or Teams. Runs kubectl actions (restart, scale) via chat commands. Integrates
+      with Jira, Grafana, Loki, AWS (Bedrock, WAF, SES, RDS, Glue). '
+    digest: b290f3515c358e87b0603af91469b79087d5e37282d896e51e68525b50f3caad
+    home: https://github.com/bluey-ai/blue.y
+    icon: https://raw.githubusercontent.com/bluey-ai/blue.y/main/assets/blue-y.svg
+    keywords:
+    - kubernetes
+    - monitoring
+    - ai
+    - ops
+    - telegram
+    - slack
+    - devops
+    maintainers:
+    - email: hello@bluey.ai
+      name: BlueOnion
+      url: https://github.com/bluey-ai
+    name: blue-y
+    sources:
+    - https://github.com/bluey-ai/blue.y
+    type: application
+    urls:
+    - https://github.com/bluey-ai/blue.y/releases/download/blue-y-1.4.0/blue-y-1.4.0.tgz
+    version: 1.4.0
+generated: "2026-03-15T15:54:36.444604844Z"
