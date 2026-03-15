@@ -1,0 +1,149 @@
+# ============================================================
+# BLUE.Y Helm Chart — Default Values
+# Full reference: https://github.com/blue-onion/blue.y
+#
+# Usage:
+#   helm install blue-y bluey/blue-y -f my-values.yaml
+#
+# Secrets: never put real values here. Use --set-string or
+# reference an existing K8s Secret via existingSecret.name
+# ============================================================
+
+# -- Deployment image
+image:
+  repository: ghcr.io/blue-onion/blue.y
+  tag: latest
+  pullPolicy: Always
+
+# -- Kubernetes namespace to deploy into
+namespace: default
+
+# -- Number of replicas (keep at 1 — BLUE.Y is stateful)
+replicaCount: 1
+
+# -- Service account settings
+serviceAccount:
+  create: true
+  name: blue-y
+  # IRSA: set this to your IAM role ARN for AWS integrations (Bedrock, WAF, SES, etc.)
+  # e.g. arn:aws:iam::123456789012:role/BlueYBedrockRole
+  irsaRoleArn: ""
+
+# -- Use an existing K8s Secret instead of letting the chart create one.
+# When set, all secretKeyRef values below are ignored and your secret is used.
+existingSecret:
+  name: ""
+
+# -- AI provider (default: DeepSeek)
+ai:
+  baseUrl: "https://api.deepseek.com/v1"
+  routineModel: "deepseek-chat"
+  incidentModel: "deepseek-reasoner"
+  # Injected into every AI prompt. Tell BLUE.Y about your cluster.
+  # Example: "Cluster: prod. Deployments: backend (prod ns), frontend (prod ns)."
+  systemContext: ""
+  # Secret key — provide via existingSecret or will be created from apiKey below
+  apiKey: ""
+
+# -- Telegram (primary notification channel)
+telegram:
+  botToken: ""   # Required. xoxb-style token from @BotFather
+  chatId: ""     # Required. Group chat ID where alerts go
+  adminId: ""    # Optional. Your user ID for DMs (password reset etc.)
+
+# -- Slack (optional secondary channel)
+slack:
+  botToken: ""   # xoxb-... Bot OAuth token
+  appToken: ""   # xapp-... App-level token (Socket Mode, for inbound commands)
+  channelId: ""  # Channel ID to post alerts to
+
+# -- Microsoft Teams (optional)
+teams:
+  appId: ""
+  appPassword: ""
+  tenantId: ""
+
+# -- Jira integration
+jira:
+  baseUrl: "https://your-org.atlassian.net"
+  projectKey: "OPS"
+  email: ""
+  apiToken: ""
+
+# -- Vision AI (image analysis — optional)
+vision:
+  apiBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai"
+  model: "gemini-2.0-flash"
+  apiKey: ""
+
+# -- Kubernetes monitoring config
+kube:
+  inCluster: true
+  # Comma-separated list of namespaces to monitor
+  watchNamespaces: "default,monitoring"
+  clusterName: "my-cluster"
+  awsRegion: "us-east-1"
+
+# -- AWS WAF (optional — requires IRSA permissions)
+waf:
+  webAclName: ""
+
+# -- Loki log aggregation (optional)
+loki:
+  url: "http://loki.monitoring.svc.cluster.local:3100"
+
+# -- Grafana (optional)
+grafana:
+  internalUrl: "http://grafana.monitoring.svc.cluster.local:3000"
+  externalUrl: ""
+  adminUser: "admin"
+  adminPassword: ""
+
+# -- Database readonly access (optional — for /data queries)
+database:
+  readonlyUser: "bluey_readonly"
+  readonlyPassword: ""
+  # JSON array of DB registry entries:
+  # '[{"name":"prod","host":"db.example.com","port":3306,"user":"ro","database":"mydb","type":"mysql"}]'
+  registry: ""
+
+# -- Bitbucket (optional — for /deploy and security scan)
+bitbucket:
+  workspace: ""
+  token: ""
+  # JSON map: '{"my-repo":{"branch":"main","pipelineVar":"TAG"}}'
+  pipelines: ""
+
+# -- Load monitoring — JSON array of deployments to watch for memory/CPU pressure
+# Example: '[{"deployment":"backend","namespace":"prod","label":"Backend",
+#   "memLimitMB":4096,"memWarnMB":3000,"memCritMB":3800,"cpuWarnPct":70,
+#   "nodeGroup":"workers","nodeGroupFull":"workers-xxxxx","maxReplicas":3,"minReplicas":1}]'
+loadWatchList: ""
+
+# -- Production URLs for smoke tests (/smoketest command)
+# '[{"name":"API","url":"https://api.example.com/health","expect":200}]'
+productionUrls: ""
+
+# -- URLs for /ping <service> command
+# '{"api":"https://api.example.com/health","frontend":"https://app.example.com"}'
+pingServiceMap: ""
+
+# -- Team email directory for /email <name> shorthand
+# '{"ops":"ops@company.com","dev":"dev@company.com"}'
+teamEmails: ""
+
+# -- Email sender (AWS SES)
+emailFrom: "noreply@example.com"
+
+# -- Scheduling
+schedule:
+  dailyReport: "0 9 * * *"
+
+# -- Pod resources
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"

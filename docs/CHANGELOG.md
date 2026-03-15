@@ -5,6 +5,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] — 2026-03-15 — Helm chart (BLY-7)
+**Branch:** `feat/bly-7-helm-chart`
+
+### Added
+- `helm/blue-y/` — full Helm chart for community deployment.
+  - `Chart.yaml` — version 1.2.0, appVersion 1.2.0
+  - `values.yaml` — all config as values with sane defaults and inline comments
+  - `templates/deployment.yaml` — full Deployment with all env vars templated
+  - `templates/secret.yaml` — chart-managed Secret (skipped if `existingSecret.name` set)
+  - `templates/serviceaccount.yaml` — SA with optional IRSA annotation
+  - `templates/clusterrole.yaml` — RBAC rules (read + patch deployments/scale)
+  - `templates/clusterrolebinding.yaml`
+  - `templates/service.yaml` — ClusterIP service on port 80 → 8000
+  - `templates/_helpers.tpl` — standard Helm helper templates
+- `existingSecret.name` value: point to a pre-existing K8s Secret instead of creating one
+- IRSA support via `serviceAccount.irsaRoleArn` annotation
+- Optional integrations (Slack, Teams, Jira, Grafana, Loki, Bitbucket, WAF) only emit
+  env vars when their values are non-empty — no noise for unused features
+
+### Install
+```bash
+helm install blue-y bluey/blue-y \
+  --set ai.apiKey=$AI_API_KEY \
+  --set telegram.botToken=$BOT_TOKEN \
+  --set telegram.chatId=$CHAT_ID \
+  --set kube.clusterName=my-cluster \
+  --set kube.awsRegion=us-east-1 \
+  --namespace monitoring --create-namespace
+```
+
+---
+
 ## [1.1.1] — 2026-03-15 — Fix node group detection by EKS label
 **Branch:** `fix/hubs-6130-node-group-label` | **Jira:** HUBS-6130
 
