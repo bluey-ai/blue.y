@@ -14,6 +14,8 @@ home: https://github.com/bluey-ai/blue.y
 sources:
   - https://github.com/bluey-ai/blue.y
 
+icon: https://raw.githubusercontent.com/bluey-ai/blue.y/main/assets/blue-y.svg
+
 maintainers:
   - name: BlueOnion
     email: hello@bluey.ai
@@ -27,3 +29,20 @@ keywords:
   - telegram
   - slack
   - devops
+
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "false"
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/signKey: |
+    fingerprint: ""
+    url: ""
+  artifacthub.io/changes: |
+    - kind: added
+      description: Graceful SIGTERM/SIGINT shutdown handler
+    - kind: added
+      description: docker-compose.yml for local development
+    - kind: added
+      description: SVG vector logo (assets/blue-y.svg)
+    - kind: added
+      description: Bitbucket PR template
