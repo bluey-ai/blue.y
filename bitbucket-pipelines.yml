@@ -69,12 +69,11 @@ pipelines:
           deployment: Production
           oidc: true
           image:
-            # Build image must include: aws-cli, kubectl, docker, node22.
-            # Replace with your own ECR build image: <account>.dkr.ecr.<region>.amazonaws.com/<image>:latest
-            # Set AWS_ACCOUNT_ID, AWS_REGION, BUILD_IMAGE, CLUSTERNAME, NAMESPACE as Bitbucket repo variables.
-            name: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${BUILD_IMAGE}
+            # Internal BlueOnion build image (includes aws-cli + kubectl + node22).
+            # Community users: replace with your own ECR build image or see .github/workflows/ci.yml for GitHub Actions.
+            name: 716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/backend-build-environment:latest
             aws:
-              oidc-role: arn:aws:iam::${AWS_ACCOUNT_ID}:role/BitbucketPipelineRole
+              oidc-role: arn:aws:iam::716156543026:role/BitbucketPipelineRole
           services: [docker]
           caches: [docker]
           script:
