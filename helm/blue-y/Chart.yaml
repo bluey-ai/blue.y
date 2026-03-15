@@ -7,7 +7,7 @@ description: >
   Integrates with Jira, Grafana, Loki, AWS (Bedrock, WAF, SES, RDS, Glue).
 
 type: application
-version: 1.4.0
+version: 1.4.1
 appVersion: "1.4.0"
 
 home: https://github.com/bluey-ai/blue.y
@@ -18,7 +18,7 @@ icon: https://raw.githubusercontent.com/bluey-ai/blue.y/main/assets/blue-y.svg
 
 maintainers:
   - name: BlueOnion
-    email: hello@bluey.ai
+    email: syedzac@icloud.com
     url: https://github.com/bluey-ai
 
 keywords:
