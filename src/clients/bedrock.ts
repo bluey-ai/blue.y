@@ -294,17 +294,14 @@ IMPORTANT RULES:
 - Only generate SELECT queries. Never INSERT/UPDATE/DELETE.
 - Always add LIMIT 50 unless the user asks for a specific count.
 - Use specific columns instead of SELECT * when possible.
-- For user/member lookups, use bo-prod-sg.blo_user.members
-- For BAS registrations, use hubsprod.dwd.bas_register_company
-- For fund entries, use hubsprod.dwd.bas_registrations
-- For due diligence, use hubsprod.dwd.dd_submission / dd_submission_answer
-- For analytics/ESG scores, prefer doris.dwd
-- For market data, use faceset-prod (factset/equity schemas)
+- Use the DATABASE_REGISTRY context to pick the correct instance and database.
+- Prefer the instance/database that most logically contains the requested data.
+- If unsure, pick the first instance in the registry.
 
 Respond with ONLY valid JSON:
 {
-  "instance": "hubsprod",
-  "database": "dwd",
+  "instance": "mydb",
+  "database": "public",
   "sql": "SELECT ...",
   "explanation": "Brief explanation of what this query does"
 }
