@@ -1,0 +1,30 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "blue-y.fullname" . }}-readonly
+  labels:
+    {{- include "blue-y.labels" . | nindent 4 }}
+rules:
+  # Read-only access to pods, nodes, services, secrets (TLS only via code filter), events
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "nodes", "services", "secrets", "events", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  # Allow restart and scale (patch deployments + scale subresource)
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["patch", "update"]
+  # HPA monitoring
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  # Pod + node metrics (CPU/memory usage via metrics-server)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  # CronJob monitoring
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch"]
