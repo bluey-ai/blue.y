@@ -7,7 +7,16 @@ export class EmailClient {
   private ses: SESClient;
 
   constructor() {
-    this.ses = new SESClient({ region: process.env.AWS_REGION || 'us-east-1' });
+    const sesConfig: ConstructorParameters<typeof SESClient>[0] = {
+      region: process.env.SES_REGION || process.env.AWS_REGION || 'ap-southeast-1',
+    };
+    if (process.env.SES_ACCESS_KEY_ID && process.env.SES_SECRET_ACCESS_KEY) {
+      sesConfig.credentials = {
+        accessKeyId: process.env.SES_ACCESS_KEY_ID,
+        secretAccessKey: process.env.SES_SECRET_ACCESS_KEY,
+      };
+    }
+    this.ses = new SESClient(sesConfig);
   }
 
   async sendIncidentReport(to: string[], subject: string, body: string): Promise<boolean> {
