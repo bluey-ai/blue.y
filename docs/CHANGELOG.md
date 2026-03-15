@@ -2,6 +2,24 @@
 
 ---
 
+## [1.4.0] — 2026-03-15 — Community Quality Standards (BLY-17)
+**Branch:** `feat/bly-17-fresh`
+
+### Added
+- `docker-compose.yml` — run BLUE.Y locally without an EKS cluster. Mounts `~/.kube/config`
+  for cluster access. Includes a `dev` profile with `ts-node` live reload for contributors.
+- `.bitbucket/PULL_REQUEST_TEMPLATE.md` — standardised PR checklist: change type, testing steps,
+  and a reminder that `bitbucket-pipelines.yml` must never be pushed to the public GitHub repo.
+- `assets/blue-y.svg` — official BLUE.Y logo: navy hexagon + lightning bolt + eye icon.
+  Required for CNCF Landscape submission (BLY-12).
+
+### Fixed
+- `src/main.ts` — added `SIGTERM`/`SIGINT` graceful shutdown handler. On pod termination:
+  stops all monitor cron jobs, closes the HTTP server, then exits cleanly within 8 seconds.
+  Prevents mid-message truncation and `CrashLoopBackOff` noise during rolling deploys.
+
+---
+
 ## [1.3.0] — 2026-03-15 — GitHub open-source release (BLY-4)
 **Branch:** `feat/bly-4-github-opensource`
 
