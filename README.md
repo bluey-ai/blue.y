@@ -5,7 +5,8 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-22-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org)
-[![Helm](https://img.shields.io/badge/Helm-3-0F1689.svg)](helm/blue-y)
+[![Helm](https://img.shields.io/badge/Helm-3-0F1689.svg)](https://artifacthub.io/packages/helm/blue-y/blue-y)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/blue-y)](https://artifacthub.io/packages/helm/blue-y/blue-y)
 [![GitHub Stars](https://img.shields.io/github/stars/bluey-ai/blue.y?style=social)](https://github.com/bluey-ai/blue.y)
 
 BLUE.Y is a 24/7 AI-powered Kubernetes operations assistant that monitors your EKS cluster, auto-diagnoses incidents, and lets your on-call engineer respond via **Telegram**, **Slack**, **WhatsApp**, or **Microsoft Teams** — no VPN, no kubectl access required.
@@ -150,8 +151,8 @@ graph TD
 ### Option A — Helm (recommended)
 
 ```bash
-# 1. Add the repo (once published)
-helm repo add bluey https://charts.bluey.ai
+# 1. Add the repo
+helm repo add bluey https://bluey-ai.github.io/blue.y
 helm repo update
 
 # 2. Install with your values
