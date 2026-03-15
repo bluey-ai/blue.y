@@ -69,10 +69,10 @@ pipelines:
           deployment: Production
           oidc: true
           image:
-            # Use node:22 and install aws-cli + kubectl in the build step,
-            # or replace with your own build image that includes these tools.
-            # Set AWS_ACCOUNT_ID, AWS_REGION, CLUSTERNAME, NAMESPACE as Bitbucket repo variables.
-            name: node:22-alpine
+            # Build image must include: aws-cli, kubectl, docker, node22.
+            # Replace with your own ECR build image: <account>.dkr.ecr.<region>.amazonaws.com/<image>:latest
+            # Set AWS_ACCOUNT_ID, AWS_REGION, BUILD_IMAGE, CLUSTERNAME, NAMESPACE as Bitbucket repo variables.
+            name: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${BUILD_IMAGE}
             aws:
               oidc-role: arn:aws:iam::${AWS_ACCOUNT_ID}:role/BitbucketPipelineRole
           services: [docker]
