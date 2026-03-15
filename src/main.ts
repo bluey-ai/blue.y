@@ -29,8 +29,10 @@ import { buildInfo, uptime } from './version';
 import { RBAC, loadRBACConfig } from './rbac';
 import { CommandRouter } from './command-router';
 import { TelegramNotifier } from './clients/notifiers/telegram';
+import { SlackNotifier } from './clients/notifiers/slack';
 import { NotifierRouter } from './clients/notifiers/router';
 import { NotificationRouter } from './notification-router';
+import { startSlackBot } from './slack-bot';
 
 const app = express();
 app.use(express.json());
@@ -84,7 +86,8 @@ const wafClient = new WafClient();
 const rbacConfig = loadRBACConfig(config.telegram.chatId);
 const rbac = new RBAC(rbacConfig);
 const telegramNotifier = new TelegramNotifier(telegram);
-const notifierRouter = new NotifierRouter([telegramNotifier]);
+const slackNotifier = new SlackNotifier();
+const notifierRouter = new NotifierRouter([telegramNotifier, slackNotifier]);
 const notificationRouter = new NotificationRouter(notifierRouter, rbacConfig);
 const commandRouter = new CommandRouter(rbac);
 // ──────────────────────────────────────────────────────────────────────────
@@ -3459,4 +3462,8 @@ app.listen(config.port, async () => {
   if (config.telegram.botToken) {
     startPolling().catch((err) => logger.error('Polling fatal error', err));
   }
+
+  // Start Slack Socket Mode bot if configured
+  startSlackBot({ kube, scheduler, loadMonitor, notifier: slackNotifier })
+    .catch((err) => logger.error('[Slack] Bot startup error', err));
 });
