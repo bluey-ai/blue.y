@@ -1,0 +1,254 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "blue-y.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "blue-y.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "blue-y.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "blue-y.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "blue-y.serviceAccountName" . }}
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      containers:
+        - name: blue-y
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: PORT
+              value: "8000"
+
+            # ── AI Provider ──────────────────────────────────────────────────
+            - name: AI_BASE_URL
+              value: {{ .Values.ai.baseUrl | quote }}
+            - name: AI_ROUTINE_MODEL
+              value: {{ .Values.ai.routineModel | quote }}
+            - name: AI_INCIDENT_MODEL
+              value: {{ .Values.ai.incidentModel | quote }}
+            - name: AI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: ai-api-key
+            {{- if .Values.ai.systemContext }}
+            - name: AI_SYSTEM_CONTEXT
+              value: {{ .Values.ai.systemContext | quote }}
+            {{- end }}
+
+            # ── Kubernetes ───────────────────────────────────────────────────
+            - name: KUBE_IN_CLUSTER
+              value: {{ .Values.kube.inCluster | quote }}
+            - name: WATCH_NAMESPACES
+              value: {{ .Values.kube.watchNamespaces | quote }}
+            - name: CLUSTER_NAME
+              value: {{ .Values.kube.clusterName | quote }}
+            - name: AWS_REGION
+              value: {{ .Values.kube.awsRegion | quote }}
+
+            # ── Telegram ─────────────────────────────────────────────────────
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: telegram-bot-token
+            - name: TELEGRAM_CHAT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: telegram-chat-id
+            {{- if .Values.telegram.adminId }}
+            - name: TELEGRAM_ADMIN_ID
+              value: {{ .Values.telegram.adminId | quote }}
+            {{- end }}
+
+            # ── Slack (optional) ─────────────────────────────────────────────
+            {{- if .Values.slack.botToken }}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: slack-bot-token
+                  optional: true
+            {{- end }}
+            {{- if .Values.slack.appToken }}
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: slack-app-token
+                  optional: true
+            {{- end }}
+            {{- if .Values.slack.channelId }}
+            - name: SLACK_CHANNEL_ID
+              value: {{ .Values.slack.channelId | quote }}
+            {{- end }}
+
+            # ── Microsoft Teams (optional) ───────────────────────────────────
+            {{- if .Values.teams.appId }}
+            - name: TEAMS_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: teams-app-id
+                  optional: true
+            - name: TEAMS_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: teams-app-password
+                  optional: true
+            - name: TEAMS_TENANT_ID
+              value: {{ .Values.teams.tenantId | quote }}
+            {{- end }}
+
+            # ── Jira ─────────────────────────────────────────────────────────
+            - name: JIRA_BASE_URL
+              value: {{ .Values.jira.baseUrl | quote }}
+            - name: JIRA_PROJECT_KEY
+              value: {{ .Values.jira.projectKey | quote }}
+            - name: JIRA_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: jira-email
+                  optional: true
+            - name: JIRA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: jira-api-token
+                  optional: true
+
+            # ── Vision AI (optional) ──────────────────────────────────────────
+            - name: VISION_API_BASE_URL
+              value: {{ .Values.vision.apiBaseUrl | quote }}
+            - name: VISION_MODEL
+              value: {{ .Values.vision.model | quote }}
+            {{- if .Values.vision.apiKey }}
+            - name: VISION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: vision-api-key
+                  optional: true
+            {{- end }}
+
+            # ── Loki ──────────────────────────────────────────────────────────
+            - name: LOKI_URL
+              value: {{ .Values.loki.url | quote }}
+
+            # ── Grafana ───────────────────────────────────────────────────────
+            - name: GRAFANA_INTERNAL_URL
+              value: {{ .Values.grafana.internalUrl | quote }}
+            - name: GRAFANA_ADMIN_USER
+              value: {{ .Values.grafana.adminUser | quote }}
+            {{- if .Values.grafana.externalUrl }}
+            - name: GRAFANA_EXTERNAL_URL
+              value: {{ .Values.grafana.externalUrl | quote }}
+            {{- end }}
+            {{- if .Values.grafana.adminPassword }}
+            - name: GRAFANA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: grafana-admin-password
+                  optional: true
+            {{- end }}
+
+            # ── Database (optional) ────────────────────────────────────────────
+            - name: DB_READONLY_USER
+              value: {{ .Values.database.readonlyUser | quote }}
+            {{- if .Values.database.readonlyPassword }}
+            - name: DB_READONLY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: db-readonly-password
+                  optional: true
+            {{- end }}
+            {{- if .Values.database.registry }}
+            - name: DATABASE_REGISTRY
+              value: {{ .Values.database.registry | quote }}
+            {{- end }}
+
+            # ── Bitbucket (optional) ───────────────────────────────────────────
+            {{- if .Values.bitbucket.workspace }}
+            - name: BB_WORKSPACE
+              value: {{ .Values.bitbucket.workspace | quote }}
+            {{- end }}
+            {{- if .Values.bitbucket.token }}
+            - name: BB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: bitbucket-token
+                  optional: true
+            {{- end }}
+            {{- if .Values.bitbucket.pipelines }}
+            - name: BB_PIPELINES
+              value: {{ .Values.bitbucket.pipelines | quote }}
+            {{- end }}
+
+            # ── WAF (optional) ─────────────────────────────────────────────────
+            {{- if .Values.waf.webAclName }}
+            - name: WAF_WEB_ACL_NAME
+              value: {{ .Values.waf.webAclName | quote }}
+            {{- end }}
+
+            # ── Load monitoring ────────────────────────────────────────────────
+            {{- if .Values.loadWatchList }}
+            - name: LOAD_WATCH_LIST
+              value: {{ .Values.loadWatchList | quote }}
+            {{- end }}
+
+            # ── URLs ───────────────────────────────────────────────────────────
+            {{- if .Values.productionUrls }}
+            - name: PRODUCTION_URLS
+              value: {{ .Values.productionUrls | quote }}
+            {{- end }}
+            {{- if .Values.pingServiceMap }}
+            - name: PING_SERVICE_MAP
+              value: {{ .Values.pingServiceMap | quote }}
+            {{- end }}
+
+            # ── Team emails ────────────────────────────────────────────────────
+            {{- if .Values.teamEmails }}
+            - name: TEAM_EMAILS
+              value: {{ .Values.teamEmails | quote }}
+            {{- end }}
+
+            # ── Email ──────────────────────────────────────────────────────────
+            - name: EMAIL_FROM
+              value: {{ .Values.emailFrom | quote }}
+
+            # ── Scheduling ─────────────────────────────────────────────────────
+            - name: SCHEDULE_DAILY_REPORT
+              value: {{ .Values.schedule.dailyReport | quote }}
