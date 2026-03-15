@@ -53,7 +53,8 @@ definitions:
         sed -e "s/<appname>/${appname}/g" | \
         sed -e "s/<tag>/${TAG}/g" | \
         sed -e "s/<HASH>/${BITBUCKET_COMMIT}/g" | \
-        sed -e "s#<ECR>#${ECR}#g" > deployment.yaml
+        sed -e "s#<ECR>#${ECR}#g" | \
+        sed -e "s/<ACCOUNT_ID>/${AWS_ACCOUNT_ID}/g" > deployment.yaml
 
       # 6. APPLY & VERIFY
       kubectl apply -f deployment.yaml
@@ -78,6 +79,6 @@ pipelines:
           caches: [docker]
           script:
             - export ENV=prod
-            - export TAG=blueonion
+            - export TAG=production
             # CLUSTERNAME and NAMESPACE must be set as Bitbucket repo variables
             - *deploy
