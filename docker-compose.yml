@@ -1,0 +1,56 @@
+# BLUE.Y — Local development with docker-compose
+#
+# Prerequisites:
+#   1. Copy .env.example to .env and fill in your values
+#   2. Set KUBE_IN_CLUSTER=false in .env (uses ~/.kube/config instead)
+#   3. docker compose up
+#
+# The bot will connect to whatever cluster your current kubeconfig context points to.
+# Use `kubectl config use-context <name>` to switch clusters before starting.
+
+services:
+  blue-y:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: blue-y:local
+    container_name: blue-y
+    env_file:
+      - .env
+    environment:
+      # Override in-cluster detection — uses mounted kubeconfig instead
+      - KUBE_IN_CLUSTER=false
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount your local kubeconfig (read-only) so the bot can reach your cluster
+      - ${HOME}/.kube:/root/.kube:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Development variant — runs ts-node with live source reload
+  blue-y-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    image: blue-y:dev
+    container_name: blue-y-dev
+    command: ["npx", "ts-node", "src/main.ts"]
+    env_file:
+      - .env
+    environment:
+      - KUBE_IN_CLUSTER=false
+      - NODE_ENV=development
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./src:/app/src:ro
+      - ${HOME}/.kube:/root/.kube:ro
+    profiles:
+      - dev
