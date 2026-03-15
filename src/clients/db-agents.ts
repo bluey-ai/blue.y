@@ -157,7 +157,7 @@ export class DbAgentPipeline {
     try {
       const response = await this.callLLM(
         config.ai.routineModel, // V3 — fast
-        SYSTEM_PROMPT_CONTEXT + `\n\nRespond with ONLY valid JSON:\n{"instance": "hubsprod", "database": "dwd", "sql": "SELECT ...", "explanation": "..."}`,
+        SYSTEM_PROMPT_CONTEXT + `\n\nRespond with ONLY valid JSON:\n{"instance": "mydb", "database": "public", "sql": "SELECT ...", "explanation": "..."}`,
         prompt,
         30000,
       );
@@ -167,8 +167,8 @@ export class DbAgentPipeline {
 
       const parsed = JSON.parse(jsonMatch[0]);
       return {
-        instance: parsed.instance || 'hubsprod',
-        database: parsed.database || 'dwd',
+        instance: parsed.instance || 'mydb',
+        database: parsed.database || 'public',
         sql: parsed.sql || '',
         explanation: parsed.explanation || '',
       };

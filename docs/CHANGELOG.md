@@ -2,6 +2,30 @@
 
 ---
 
+## [1.3.0] — 2026-03-15 — GitHub open-source release (BLY-4)
+**Branch:** `feat/bly-4-github-opensource`
+
+### Added
+- `.github/workflows/ci.yml` — GitHub Actions CI: TypeScript type-check + build + Docker build on every push/PR.
+- `.github/ISSUE_TEMPLATE/bug_report.yml` — Structured bug report template.
+- `.github/ISSUE_TEMPLATE/feature_request.yml` — Feature request template.
+- `CODE_OF_CONDUCT.md` — Contributor Covenant 2.1.
+
+### Changed
+- `LICENSE` — switched from MIT to **Apache 2.0** (explicit patent grant; better for enterprise adoption).
+- `README.md` — full rewrite: Mermaid architecture diagram, Quick Start (Helm + raw K8s + local dev),
+  full configuration reference, architecture diagram, RBAC summary, safety section.
+- `CONTRIBUTING.md` — updated license reference (MIT → Apache 2.0); GitHub Discussions link.
+- `bitbucket-pipelines.yml` — removed hardcoded internal account ID; switched to `${AWS_ACCOUNT_ID}` variable.
+
+### Fixed
+- `src/clients/bedrock.ts`, `src/clients/db-agents.ts`, `src/main.ts` — removed all BlueOnion-specific
+  table names, schema references, and org-specific example values from source code and help text.
+- `deploy/deployment_blueonion.yaml` — removed from community repo (contains org-specific production values;
+  belongs in a private infrastructure repo per the file's own comment).
+
+---
+
 ## [1.2.0] — 2026-03-15 — Slack integration (BLY-3)
 **Branch:** `feat/hubs-6133-slack-notifier`
 

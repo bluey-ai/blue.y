@@ -69,15 +69,16 @@ pipelines:
           deployment: Production
           oidc: true
           image:
-            # BlueOnion internal build image (aws-cli + kubectl + node22).
-            # This file stays private (Bitbucket). Community releases use GitHub Actions instead.
-            name: 716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/backend-build-environment:latest
+            # Use node:22 and install aws-cli + kubectl in the build step,
+            # or replace with your own build image that includes these tools.
+            # Set AWS_ACCOUNT_ID, AWS_REGION, CLUSTERNAME, NAMESPACE as Bitbucket repo variables.
+            name: node:22-alpine
             aws:
-              oidc-role: arn:aws:iam::716156543026:role/BitbucketPipelineRole
+              oidc-role: arn:aws:iam::${AWS_ACCOUNT_ID}:role/BitbucketPipelineRole
           services: [docker]
           caches: [docker]
           script:
             - export ENV=prod
-            - export TAG=blueonion
+            - export TAG=production   # override with your own deployment tag
             # CLUSTERNAME and NAMESPACE must be set as Bitbucket repo variables
             - *deploy
