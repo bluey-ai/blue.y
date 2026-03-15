@@ -1,0 +1,73 @@
+name: Bug Report
+description: Something isn't working correctly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out as much detail as you can.
+
+  - type: input
+    id: version
+    attributes:
+      label: BLUE.Y version
+      description: Run `kubectl exec -n <namespace> deploy/blue-y-production -- node -e "const p=require('./package.json');console.log(p.version)"` or check your image tag
+      placeholder: "e.g. 1.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Notification platform
+      options:
+        - Telegram
+        - Slack
+        - Microsoft Teams
+        - WhatsApp
+        - N/A (monitor / background)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Clear description of the bug
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Send command `/diagnose my-pod`
+        2. Wait for response
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste relevant pod logs (`kubectl logs -n <ns> deploy/blue-y-production --tail=100`)
+      render: shell
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: K8s version, cloud provider, any relevant env vars (no secrets!)
+      placeholder: |
+        - K8s: 1.30 (EKS)
+        - Cloud: AWS ap-southeast-1
+        - WATCH_NAMESPACES: prod,monitoring

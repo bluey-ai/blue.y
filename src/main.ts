@@ -2165,7 +2165,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
 
     // /tables [instance.database] — list tables
     if (cmd === '/tables' || cmd.startsWith('/tables ')) {
-      const target = cmd.replace('/tables', '').trim() || 'hubsprod.dwd';
+      const target = cmd.replace('/tables', '').trim() || (DATABASE_REGISTRY[0] ? `${DATABASE_REGISTRY[0].name}.${DATABASE_REGISTRY[0].databases?.[0] || 'public'}` : 'mydb.public');
       const resolved = dbClient.resolveTarget(target);
       if (!resolved) {
         await telegram.send(`❌ Unknown database: <code>${target}</code>\n\nUse /databases to see available databases.`);
@@ -2198,7 +2198,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       const args = cmd.replace('/query ', '').trim();
       const spaceIdx = args.indexOf(' ');
       if (spaceIdx === -1) {
-        await telegram.send('Usage: /query &lt;instance.database&gt; &lt;SQL&gt;\nExample: /query hubsprod.dwd SELECT * FROM bas_register_company LIMIT 5');
+        await telegram.send('Usage: /query &lt;instance.database&gt; &lt;SQL&gt;\nExample: /query mydb.public SELECT * FROM users LIMIT 5');
         return;
       }
       const target = args.substring(0, spaceIdx);
@@ -2591,16 +2591,13 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       `<b>🗄️ DATABASE (3-Agent AI Pipeline)</b>\n` +
       `<code>/databases</code> — List all accessible databases\n` +
       `<code>/db &lt;question&gt;</code> — Ask in natural language (AI generates SQL)\n` +
-      `  └ <code>/db how many active users in UM?</code>\n` +
-      `  └ <code>/db find user ng.peixiu@uobgroup.com</code>\n` +
-      `  └ <code>/db top 10 ESG companies from doris</code>\n` +
-      `  └ <code>/db BAS registrations for UOB this year</code>\n` +
+      `  └ <code>/db how many active users?</code>\n` +
+      `  └ <code>/db find user john@example.com</code>\n` +
+      `  └ <code>/db top 10 records from orders this month</code>\n` +
       `<code>/tables &lt;instance.database&gt;</code> — List tables\n` +
-      `  └ <code>/tables hubsprod.dwd</code>\n` +
-      `  └ <code>/tables bo-prod-sg.blo_user</code>\n` +
-      `  └ <code>/tables doris.dwd</code>\n` +
+      `  └ <code>/tables mydb.public</code>\n` +
       `<code>/query &lt;instance.database&gt; &lt;SQL&gt;</code> — Run raw SELECT\n` +
-      `  └ <code>/query hubsprod.dwd SELECT * FROM bas_register_company LIMIT 5</code>\n\n` +
+      `  └ <code>/query mydb.public SELECT * FROM users LIMIT 5</code>\n\n` +
 
       `<b>Pipeline:</b> Agent 1 (Generator) → Agent 2 (Validator) → Agent 3 (Verifier)\n` +
       `<b>Databases:</b> ${DATABASE_REGISTRY.map(d => d.name).join(', ') || '(none configured — set DATABASE_REGISTRY env var)'}\n` +
@@ -2714,7 +2711,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       `<b>Database:</b>\n` +
       `/db &lt;question&gt; — Ask about data in natural language\n` +
       `/databases — List all accessible databases\n` +
-      `/tables &lt;db&gt; — List tables (e.g. /tables hubsprod.dwd)\n` +
+      `/tables &lt;db&gt; — List tables (e.g. /tables mydb.public)\n` +
       `/query &lt;db&gt; &lt;SQL&gt; — Run raw SELECT query\n\n` +
       `<b>CI/CD:</b>\n` +
       `/build &lt;search&gt; — Trigger pipeline (e.g. /build backend prod)\n` +
