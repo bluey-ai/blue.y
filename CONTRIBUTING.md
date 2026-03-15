@@ -1,6 +1,6 @@
 # Contributing to BLUE.Y
 
-Thank you for your interest in contributing! BLUE.Y is an open-core project — the core monitoring engine is MIT-licensed and community-driven.
+Thank you for your interest in contributing! BLUE.Y is an open-core project — the core monitoring engine is Apache 2.0-licensed and community-driven.
 
 ## Getting Started
 
@@ -77,4 +77,4 @@ Every PR **must** add an entry to `docs/CHANGELOG.md` before merging:
 
 ## Questions?
 
-Open a GitHub Discussion or email **hello@blueonion.today**.
+Open a [GitHub Discussion](https://github.com/bluey-ai/blue.y/discussions) or email **hello@bluey.ai**.

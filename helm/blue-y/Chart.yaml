@@ -7,16 +7,17 @@ description: >
   Integrates with Jira, Grafana, Loki, AWS (Bedrock, WAF, SES, RDS, Glue).
 
 type: application
-version: 1.2.0
-appVersion: "1.2.0"
+version: 1.3.0
+appVersion: "1.3.0"
 
-home: https://github.com/blue-onion/blue.y
+home: https://github.com/bluey-ai/blue.y
 sources:
-  - https://github.com/blue-onion/blue.y
+  - https://github.com/bluey-ai/blue.y
 
 maintainers:
   - name: BlueOnion
-    url: https://blueonion.today
+    email: hello@bluey.ai
+    url: https://github.com/bluey-ai
 
 keywords:
   - kubernetes
