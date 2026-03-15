@@ -669,6 +669,32 @@ export class KubeClient {
   }
 
   /**
+   * Returns a map of node-name → { nodeGroup label, allocatableCpuMilli }
+   * Reads the actual eks.amazonaws.com/nodegroup label from each node's metadata.
+   */
+  async getNodeGroupMap(): Promise<Map<string, { nodeGroup: string; allocatableCpuMilli: number }>> {
+    try {
+      const res = await this.coreApi.listNode();
+      const map = new Map<string, { nodeGroup: string; allocatableCpuMilli: number }>();
+      for (const node of (res.items || [])) {
+        const name = node.metadata?.name || '';
+        if (!name) continue;
+        const labels = node.metadata?.labels || {};
+        const nodeGroup = labels['eks.amazonaws.com/nodegroup'] || 'unknown';
+        const cpuStr = node.status?.allocatable?.cpu || '0';
+        const allocatableCpuMilli = cpuStr.endsWith('m')
+          ? parseInt(cpuStr)
+          : Math.round(parseFloat(cpuStr) * 1000);
+        map.set(name, { nodeGroup, allocatableCpuMilli });
+      }
+      return map;
+    } catch (err) {
+      logger.error('Failed to get node group map', err);
+      return new Map();
+    }
+  }
+
+  /**
    * Get the BatchV1Api client for CronJob operations.
    */
   getBatchApi(): k8s.BatchV1Api {
