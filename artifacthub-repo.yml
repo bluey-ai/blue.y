@@ -1,0 +1,7 @@
+# ArtifactHub repository metadata
+# https://artifacthub.io/docs/topics/repositories/
+repositoryID: blue-y
+owners:
+  - name: BlueOnion
+    email: hello@bluey.ai
+ignore: []
