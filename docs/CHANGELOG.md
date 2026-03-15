@@ -1,5 +1,28 @@
 # BLUE.Y Changelog
 
+---
+
+## [1.2.0] — 2026-03-15 — Slack integration (BLY-3)
+**Branch:** `feat/hubs-6133-slack-notifier`
+
+### Added
+- `SlackNotifier` (`src/clients/notifiers/slack.ts`) — outbound messages via `@slack/web-api`.
+  Wired into `NotifierRouter` alongside `TelegramNotifier` — all monitor alerts now fan out
+  to both Telegram and Slack simultaneously when `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID` set.
+  Converts Telegram HTML tags (`<b>`, `<code>`, `<pre>`) to Slack mrkdwn automatically.
+- `startSlackBot` (`src/slack-bot.ts`) — Socket Mode inbound command handler via `@slack/bolt`.
+  Listens for `@BLUE.Y` mentions, DMs, and `/bluey` slash commands.
+  Supports: `status`, `check`, `nodes`, `load`, `help`.
+  Administrative commands (restart, scale, etc.) remain Telegram-only until full platform
+  refactor (future BLY ticket).
+
+### Config
+- `SLACK_BOT_TOKEN` (xoxb-...) — enables outbound Slack alerts
+- `SLACK_CHANNEL_ID` — channel to post alerts to
+- `SLACK_APP_TOKEN` (xapp-...) — enables Socket Mode inbound commands
+
+---
+
 All notable changes to BLUE.Y are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
