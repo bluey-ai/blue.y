@@ -1234,15 +1234,27 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       return;
     }
     const link = adminModule.generateMagicLink(platformUserId, 'telegram', adminUser.displayName);
-    await telegram.send(
+    const magicMsg =
       `🔵 <b>BLUE.Y Admin Dashboard</b>\n\n` +
       `Hi <b>${adminUser.displayName}</b>, your magic link is ready:\n\n` +
       `<a href="${link}">🔓 Open Admin Dashboard →</a>\n\n` +
       `⏱ Expires in <b>4 hours</b> • Single use\n\n` +
-      `⚠️ <b>Security notice:</b> This link grants full cluster control (restart pods, scale deployments, edit config). ` +
-      `Do not share it or open it on untrusted devices. If compromised, your session expires automatically in 4 hours.`,
-      fromId || chatId,
-    );
+      `⚠️ <b>Security notice:</b> This link grants full cluster control. Do not share it.`;
+    // Try to DM the user privately first; fall back to the group chat if the bot has no DM session
+    if (fromId && fromId !== chatId) {
+      try {
+        await telegram.send(magicMsg, fromId);
+        await telegram.send(`✅ Magic link sent to you via private message.`, chatId);
+      } catch {
+        // Bot can't DM (user hasn't started a private chat) — send in group with note
+        await telegram.send(
+          magicMsg + `\n\n<i>Tip: Start a private chat with @BlueOnionBot so future links are sent securely via DM.</i>`,
+          chatId,
+        );
+      }
+    } else {
+      await telegram.send(magicMsg, chatId);
+    }
     return;
   }
 
