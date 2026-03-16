@@ -128,26 +128,12 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
       invalid_state: 'Login session expired. Please try again.',
       sso_failed:    'SSO authentication failed. Please try again.',
       sso_disabled:  'SSO is not configured on this instance.',
+      seat_limit:    'Seat limit reached — contact your administrator to upgrade the license.',
     };
     const errorHtml = error ? `
-      <div style="background:#f85149/10;border:1px solid #f85149;border-radius:8px;padding:10px 14px;margin-bottom:20px;font-size:0.8rem;color:#f85149;">
+      <div class="error-box">
         ${errorMessages[error] ?? 'Authentication failed. Please try again.'}
       </div>` : '';
-
-    const msButton = config.admin.microsoft.enabled ? `
-      <a href="/admin/auth/microsoft" class="sso-btn ms">
-        <svg width="18" height="18" viewBox="0 0 21 21" fill="none" style="margin-right:10px"><rect x="1" y="1" width="9" height="9" fill="#f35325"/><rect x="11" y="1" width="9" height="9" fill="#81bc06"/><rect x="1" y="11" width="9" height="9" fill="#05a6f0"/><rect x="11" y="11" width="9" height="9" fill="#ffba08"/></svg>
-        Continue with Microsoft
-      </a>` : '';
-
-    const googleButton = config.admin.google.enabled ? `
-      <a href="/admin/auth/google" class="sso-btn google">
-        <svg width="18" height="18" viewBox="0 0 24 24" style="margin-right:10px"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-        Continue with Google
-      </a>` : '';
-
-    const hasSso = config.admin.microsoft.enabled || config.admin.google.enabled;
-    const divider = hasSso ? `<div class="divider"><span>or</span></div>` : '';
 
     res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -162,18 +148,15 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
            justify-content: center; min-height: 100vh; margin: 0; }
     .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px;
             padding: 36px 32px; width: 100%; max-width: 360px; }
-    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
-    .logo-dot { width: 28px; height: 28px; background: linear-gradient(135deg, #58a6ff, #bc8cff);
-                border-radius: 6px; display: flex; align-items: center; justify-content: center;
-                font-size: 14px; color: white; font-weight: bold; }
-    .logo-text { font-size: 1.1rem; font-weight: 700; background: linear-gradient(90deg, #58a6ff, #bc8cff);
+    .logo { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+    .logo-text { font-size: 1.2rem; font-weight: 700; background: linear-gradient(90deg, #58a6ff, #bc8cff);
                  -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .logo-sub { font-size: 0.7rem; color: #6e7681; text-transform: uppercase; letter-spacing: .08em; }
+    .logo-sub { font-size: 0.7rem; color: #6e7681; text-transform: uppercase; letter-spacing: .08em; margin-top: 1px; }
     h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 0 0 6px; }
     .sub { font-size: 0.8rem; color: #8b949e; margin: 0 0 24px; }
     .sso-btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 10px 16px;
                border-radius: 8px; font-size: 0.875rem; font-weight: 500; text-decoration: none;
-               transition: background 0.15s; margin-bottom: 10px; border: 1px solid #30363d; }
+               transition: background 0.15s; margin-bottom: 10px; border: 1px solid #30363d; cursor: pointer; }
     .sso-btn.ms     { background: #0078d4; color: white; border-color: transparent; }
     .sso-btn.ms:hover { background: #106ebe; }
     .sso-btn.google { background: #fff; color: #3c4043; border-color: #dadce0; }
@@ -184,12 +167,18 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     .magic-hint { font-size: 0.8rem; color: #8b949e; text-align: center; line-height: 1.5; }
     .magic-hint code { background: #21262d; padding: 1px 6px; border-radius: 4px; font-family: monospace; color: #79c0ff; }
     .note { margin-top: 8px; font-size: 0.7rem; color: #6e7681; text-align: center; }
+    .error-box { background: rgba(248,81,73,0.1); border: 1px solid #f85149; border-radius: 8px;
+                 padding: 10px 14px; margin-bottom: 20px; font-size: 0.8rem; color: #f85149; }
+    #sso-area { display: none; }
+    #sso-area.visible { display: block; }
+    #no-sso { display: none; font-size: 0.78rem; color: #8b949e; text-align: center; margin-bottom: 12px; }
+    #no-sso.visible { display: block; }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="logo">
-      <div class="logo-dot">B</div>
+      <img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Cpolygon%20points%3D%22476%2C256%20366%2C65.5%20146%2C65.5%2036%2C256%20146%2C446.5%20366%2C446.5%22%20fill%3D%22%230D1B4B%22%2F%3E%3Cpolygon%20points%3D%22298%2C112%20224%2C112%20194%2C272%20256%2C272%20218%2C402%20300%2C264%20242%2C264%22%20fill%3D%22white%22%2F%3E%3Cpath%20d%3D%22M%20183%2C364%20Q%20256%2C306%20329%2C364%22%20stroke%3D%22white%22%20stroke-width%3D%2216%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22378%22%20r%3D%2223%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E" alt="BLUE.Y" width="36" height="36" />
       <div>
         <div class="logo-text">BLUE.Y</div>
         <div class="logo-sub">Admin</div>
@@ -198,14 +187,52 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     ${errorHtml}
     <h2>Sign in to continue</h2>
     <p class="sub">Access is restricted to authorised users only.</p>
-    ${msButton}
-    ${googleButton}
-    ${divider}
+
+    <!-- SSO buttons — populated by JS after fetching /admin/auth/providers -->
+    <div id="sso-area"></div>
+    <p id="no-sso">SSO is not configured. Contact your administrator.</p>
+    <div id="divider" class="divider" style="display:none;"><span>or</span></div>
+
     <p class="magic-hint">
       SuperAdmins: send <code>/admin</code> on Telegram, Slack, or Teams to receive a magic link.
     </p>
     <p class="note">Links expire in 4 hours and are single-use.</p>
   </div>
+  <script>
+    (function() {
+      fetch('/admin/auth/providers').then(function(r) { return r.json(); }).then(function(p) {
+        var area = document.getElementById('sso-area');
+        var noSso = document.getElementById('no-sso');
+        var divider = document.getElementById('divider');
+        var html = '';
+        if (p.microsoft) {
+          html += '<a href="/admin/auth/microsoft" class="sso-btn ms">' +
+            '<svg width="18" height="18" viewBox="0 0 21 21" fill="none" style="margin-right:10px">' +
+            '<rect x="1" y="1" width="9" height="9" fill="#f35325"/><rect x="11" y="1" width="9" height="9" fill="#81bc06"/>' +
+            '<rect x="1" y="11" width="9" height="9" fill="#05a6f0"/><rect x="11" y="11" width="9" height="9" fill="#ffba08"/></svg>' +
+            'Continue with Microsoft</a>';
+        }
+        if (p.google) {
+          html += '<a href="/admin/auth/google" class="sso-btn google">' +
+            '<svg width="18" height="18" viewBox="0 0 24 24" style="margin-right:10px">' +
+            '<path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>' +
+            '<path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>' +
+            '<path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>' +
+            '<path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>' +
+            'Continue with Google</a>';
+        }
+        if (html) {
+          area.innerHTML = html;
+          area.classList.add('visible');
+          divider.style.display = 'flex';
+        } else {
+          noSso.classList.add('visible');
+        }
+      }).catch(function() {
+        document.getElementById('no-sso').classList.add('visible');
+      });
+    })();
+  </script>
 </body>
 </html>`);
   });
