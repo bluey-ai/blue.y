@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon } from 'lucide-react';
+import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText } from 'lucide-react';
 import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods } from '../api';
 import type { DeploymentInfo, PodInfo } from '../types';
 import PodTerminal from '../components/PodTerminal';
+import PodLogsViewer from '../components/PodLogsViewer';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import clsx from 'clsx';
@@ -26,11 +27,13 @@ export default function Deployments() {
   const [scaleTargets, setScaleTargets] = useState<Record<string, number>>({});
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const sseCancelRef = useRef<Record<string, () => void>>({});
-  // Pod expansion + terminal (BLY-63)
+  // Pod expansion + terminal (BLY-63) + logs viewer (BLY-65) + container picker (BLY-66)
   const [expandedDep, setExpandedDep] = useState<string | null>(null);
   const [podsMap, setPodsMap] = useState<Record<string, PodInfo[]>>({});
   const [loadingPods, setLoadingPods] = useState<string | null>(null);
   const [terminal, setTerminal] = useState<{ namespace: string; pod: string; container: string } | null>(null);
+  const [logsModal, setLogsModal] = useState<{ namespace: string; pod: string; container: string; containers: string[] } | null>(null);
+  const [containerMenu, setContainerMenu] = useState<string | null>(null); // pod name whose shell menu is open
 
   const load = useCallback(async (namespace: string, silent = false) => {
     if (!silent) setLoading(true);
@@ -418,8 +421,12 @@ export default function Deployments() {
                           <p className="text-xs text-[#6e7681]">No running pods found for this deployment.</p>
                         ) : (
                           <div className="flex flex-wrap gap-2">
-                            {(podsMap[d.name] ?? []).map(pod => (
-                              <div key={pod.name} className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2">
+                            {(podsMap[d.name] ?? []).map(pod => {
+                              const cnames = pod.containers.map(c => c.name);
+                              const firstContainer = cnames[0] ?? '';
+                              const multiContainer = cnames.length > 1;
+                              return (
+                              <div key={pod.name} className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2 relative">
                                 <div className={clsx('w-1.5 h-1.5 rounded-full shrink-0', pod.status === 'Running' ? 'bg-[#3fb950]' : 'bg-[#f85149]')} />
                                 <span className="font-mono text-[10px] text-[#8b949e] max-w-[200px] truncate" title={pod.name}>{pod.name}</span>
                                 <span className={clsx('text-[10px]', pod.status === 'Running' ? 'text-[#3fb950]' : 'text-[#f85149]')}>{pod.status}</span>
@@ -427,15 +434,52 @@ export default function Deployments() {
                                 {typeof pod.restarts === 'number' && pod.restarts > 0 && (
                                   <span className="text-[10px] text-[#d29922]" title="Restart count">{pod.restarts}↺</span>
                                 )}
+
+                                {/* Logs button (BLY-65) */}
                                 <button
-                                  onClick={() => setTerminal({ namespace: ns, pod: pod.name, container: pod.containers[0]?.name ?? '' })}
-                                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-[#58a6ff]/10 text-[#58a6ff] hover:bg-[#58a6ff]/20 border border-[#58a6ff]/20 transition-colors"
-                                  title="Open shell"
+                                  onClick={() => setLogsModal({ namespace: ns, pod: pod.name, container: firstContainer, containers: cnames })}
+                                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-[#3fb950]/10 text-[#3fb950] hover:bg-[#3fb950]/20 border border-[#3fb950]/20 transition-colors"
+                                  title="View logs"
                                 >
-                                  <TerminalIcon size={9} /> Shell
+                                  <ScrollText size={9} /> Logs
                                 </button>
+
+                                {/* Shell button — single or multi-container picker (BLY-66) */}
+                                {!multiContainer ? (
+                                  <button
+                                    onClick={() => setTerminal({ namespace: ns, pod: pod.name, container: firstContainer })}
+                                    className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-[#58a6ff]/10 text-[#58a6ff] hover:bg-[#58a6ff]/20 border border-[#58a6ff]/20 transition-colors"
+                                    title="Open shell"
+                                  >
+                                    <TerminalIcon size={9} /> Shell
+                                  </button>
+                                ) : (
+                                  <div className="relative">
+                                    <button
+                                      onClick={() => setContainerMenu(containerMenu === pod.name ? null : pod.name)}
+                                      className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-[#58a6ff]/10 text-[#58a6ff] hover:bg-[#58a6ff]/20 border border-[#58a6ff]/20 transition-colors"
+                                      title="Pick container to shell into"
+                                    >
+                                      <TerminalIcon size={9} /> Shell <ChevronDown size={8} />
+                                    </button>
+                                    {containerMenu === pod.name && (
+                                      <div className="absolute bottom-full left-0 mb-1 bg-[#161b22] border border-[#30363d] rounded shadow-xl z-20 min-w-[160px] py-1">
+                                        {cnames.map(c => (
+                                          <button
+                                            key={c}
+                                            onClick={() => { setTerminal({ namespace: ns, pod: pod.name, container: c }); setContainerMenu(null); }}
+                                            className="w-full text-left px-3 py-1.5 text-[10px] font-mono text-[#8b949e] hover:bg-[#21262d] hover:text-[#58a6ff] transition-colors"
+                                          >
+                                            {c}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </td>
@@ -455,6 +499,17 @@ export default function Deployments() {
           pod={terminal.pod}
           container={terminal.container}
           onClose={() => setTerminal(null)}
+        />
+      )}
+
+      {/* Pod logs viewer modal (BLY-65) */}
+      {logsModal && (
+        <PodLogsViewer
+          namespace={logsModal.namespace}
+          pod={logsModal.pod}
+          container={logsModal.container}
+          containers={logsModal.containers}
+          onClose={() => setLogsModal(null)}
         />
       )}
     </div>
