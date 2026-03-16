@@ -21,6 +21,7 @@ import deploymentsRoutes from './routes/deployments';
 import invitesRoutes from './routes/invites';
 import allowlistRoutes from './routes/allowlist';
 import ssoRoutes from './routes/sso';
+import integrationsRoutes from './routes/integrations';
 import { ipEnforcementMiddleware } from './middleware/ipEnforcement';
 import { KubeClient } from '../clients/kube';
 import { config } from '../config';
@@ -302,6 +303,9 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
   router.use('/api/invites',     requireSession, requireRole('superadmin'), invitesRoutes);
   router.use('/api/allowlist',   requireSession, requireRole('superadmin'), allowlistRoutes);
 
+  // integrations — GET: all roles (secrets masked for non-superadmin), PUT: superadmin only (enforced inside route)
+  router.use('/api/integrations', requireSession, requireRole('viewer'), integrationsRoutes);
+
   // API: current session info
   router.get('/api/me', requireSession, (req: Request, res: Response) => {
     res.json((req as any).adminUser);
@@ -314,6 +318,15 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
 // ── Exported helpers for main.ts ─────────────────────────────────────────────
 
 export { generateMagicLink, isAdminUser, insertIncident };
+
+/**
+ * BLY-60: Check if a Telegram user is SuperAdmin.
+ * Used to gate the /admin magic-link command — only SuperAdmins may use it.
+ */
+export function isSuperAdmin(telegramId: string): boolean {
+  const row = getAdminUser(telegramId, 'telegram');
+  return row?.role === 'superadmin';
+}
 
 export function shutdown(): void {
   stopConfigWatcher();

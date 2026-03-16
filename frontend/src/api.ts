@@ -119,6 +119,13 @@ export const getMyIp = () => get<{ ip: string }>('/allowlist/myip');
 export const addAllowlistEntry = (cidr: string, label: string) => post<{ ok: boolean; cidr: string }>('/allowlist', { cidr, label });
 export const deleteAllowlistEntry = (id: number) => del(`/allowlist/${id}`);
 
+// Integrations (BLY-59)
+export interface IntegrationField { key: string; label: string; type: string; value: string; hasValue: boolean; }
+export interface Integration { id: string; label: string; icon: string; enabled: boolean; fields: IntegrationField[]; }
+export const getIntegrations = () => get<{ integrations: Integration[]; readOnly: boolean }>('/integrations');
+export const saveIntegration = (id: string, fields: Record<string, string>) =>
+  put<{ ok: boolean; integration: string }>(`/integrations/${encodeURIComponent(id)}`, { fields });
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });

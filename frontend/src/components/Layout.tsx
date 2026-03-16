@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LayoutDashboard, AlertTriangle, Server, Layers, Terminal, Users, Settings, LogOut, Wifi, WifiOff, Menu, X } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, Server, Layers, Terminal, Users, Settings, LogOut, Wifi, WifiOff, Menu, X, Plug } from 'lucide-react';
 import type { Page } from '../App';
 import Logo from './Logo';
 import { getMe } from '../api';
@@ -18,8 +18,9 @@ const NAV: { id: Page; label: string; Icon: React.ElementType }[] = [
   { id: 'cluster',     label: 'Cluster',      Icon: Server },
   { id: 'deployments', label: 'Deployments',  Icon: Layers },
   { id: 'logs',        label: 'Log Explorer', Icon: Terminal },
-  { id: 'users',       label: 'Users',        Icon: Users },
-  { id: 'config',      label: 'Config',       Icon: Settings },
+  { id: 'users',        label: 'Users',        Icon: Users },
+  { id: 'integrations', label: 'Integrations', Icon: Plug },
+  { id: 'config',       label: 'Config',       Icon: Settings },
 ];
 
 const PLATFORM_COLOR: Record<string, string> = {

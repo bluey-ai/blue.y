@@ -1213,7 +1213,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     return;
   }
 
-  // --- Admin dashboard magic link (premium) ---
+  // --- Admin dashboard magic link (premium, SuperAdmin only — BLY-60) ---
   if (cmd === '/admin') {
     if (!adminModule || !config.admin.enabled) {
       await telegram.send(
@@ -1224,19 +1224,24 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       return;
     }
     const platformUserId = String(fromId || chatId);
-    const adminUser = adminModule.isAdminUser('telegram', platformUserId);
-    if (!adminUser) {
+
+    // BLY-60: Only SuperAdmin can use the Telegram /admin magic link (break-glass)
+    if (!adminModule.isSuperAdmin(platformUserId)) {
       await telegram.send(
-        '⛔ Your Telegram ID is not in the admin whitelist.\n' +
-        'Ask your cluster admin to add you to the <code>blue-y-admin-users</code> ConfigMap.',
+        '⛔ The <code>/admin</code> magic link is reserved for SuperAdmins.\n' +
+        'Admin and Viewer roles must sign in via the dashboard SSO buttons.',
         chatId,
       );
       return;
     }
-    const link = adminModule.generateMagicLink(platformUserId, 'telegram', adminUser.displayName);
+
+    // Use ConfigMap display name if available; fall back to 'SuperAdmin'
+    const configMapUser = adminModule.isAdminUser('telegram', platformUserId);
+    const displayName = configMapUser?.displayName ?? 'SuperAdmin';
+    const link = adminModule.generateMagicLink(platformUserId, 'telegram', displayName);
     const magicMsg =
       `🔵 <b>BLUE.Y Admin Dashboard</b>\n\n` +
-      `Hi <b>${adminUser.displayName}</b>, your magic link is ready:\n\n` +
+      `Hi <b>${displayName}</b>, your SuperAdmin magic link is ready:\n\n` +
       `<a href="${link}">🔓 Open Admin Dashboard →</a>\n\n` +
       `⏱ Expires in <b>4 hours</b> • Single use\n\n` +
       `⚠️ <b>Security notice:</b> This link grants full cluster control. Do not share it.`;
