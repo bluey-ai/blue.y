@@ -69,6 +69,8 @@ spec:
       serviceAccountName: blue-y
       dnsPolicy: ClusterFirst
       restartPolicy: Always
+      securityContext:
+        fsGroup: 1001   # ensures /data PVC is writable by bluey user (uid 1001)
       containers:
         - image: <ECR>:<tag>-<HASH>
           name: blue-y
