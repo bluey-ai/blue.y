@@ -1,0 +1,34 @@
+# BLUE.Y — Premium Code Exclusion List
+# ======================================
+# Paths listed here are STRIPPED before any push to github.com/bluey-ai/blue.y
+# They exist only in Bitbucket (private) and are built into the premium Docker image.
+#
+# READ BY:
+#   - scripts/sync-to-github.sh  (strips these before GitHub push)
+#   - hooks/pre-push             (blocks direct push to GitHub if these exist)
+#
+# RULES:
+#   - One path per line (directory or file)
+#   - Lines starting with # are comments
+#   - Trailing slashes optional but recommended for directories
+#   - DO NOT remove entries without a team decision + updating all dependents
+
+# ── Admin panel (BLY-37) ─────────────────────────────────────────────────────
+src/admin/
+
+# ── React dashboard frontend (BLY-36) ────────────────────────────────────────
+frontend/
+
+# ── Premium Helm chart (BLY-37/38) ───────────────────────────────────────────
+helm/blue-y-premium/
+
+# ── Premium documentation (BLY-40) ───────────────────────────────────────────
+docs/premium/
+
+# ── Premium changelog ─────────────────────────────────────────────────────────
+docs/CHANGELOG-premium.md
+
+# ── Future premium modules (pre-declare to prevent accidental exposure) ───────
+# src/license/           # Phase 2 license key validation (BLY-future)
+# src/multi-tenant/      # Multi-tenant support (BLY-future)
+# src/analytics/         # Advanced analytics (BLY-future)

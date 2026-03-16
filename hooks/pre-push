@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# ============================================================
+# BLUE.Y — Pre-push hook: Premium code leak prevention
+# ============================================================
+# Installed by: scripts/install-hooks.sh
+# Blocks any direct git push to github.com if premium paths
+# (listed in .github-sync-ignore) are present in the repo.
+#
+# To push to GitHub safely, always use:
+#   ./scripts/sync-to-github.sh
+# ============================================================
+
+set -euo pipefail
+
+REMOTE="$1"
+REMOTE_URL="$2"
+IGNORE_FILE=".github-sync-ignore"
+
+# Only enforce on GitHub pushes
+if [[ "$REMOTE_URL" != *"github.com"* ]]; then
+  exit 0
+fi
+
+# Must be at repo root to find .github-sync-ignore
+if [[ ! -f "$IGNORE_FILE" ]]; then
+  echo "⚠️  WARNING: .github-sync-ignore not found — cannot verify premium code safety."
+  echo "   Run this from the repo root, or check that .github-sync-ignore exists."
+  exit 1
+fi
+
+echo ""
+echo "🔒 BLUE.Y pre-push guard: scanning for premium code before GitHub push..."
+echo "   Remote: $REMOTE ($REMOTE_URL)"
+echo ""
+
+PREMIUM_FOUND=0
+FOUND_PATHS=()
+
+while IFS= read -r pattern; do
+  # Skip comments and blank lines
+  [[ "$pattern" =~ ^[[:space:]]*# ]] && continue
+  [[ -z "${pattern// }" ]] && continue
+
+  # Strip trailing slash for git ls-files check
+  clean="${pattern%/}"
+
+  # Check if any tracked files match this premium path
+  if git ls-files --cached --error-unmatch "$clean" > /dev/null 2>&1 || \
+     git ls-files --cached "$clean/" 2>/dev/null | grep -q .; then
+    FOUND_PATHS+=("  ❌  $pattern")
+    PREMIUM_FOUND=1
+  fi
+done < "$IGNORE_FILE"
+
+if [[ "$PREMIUM_FOUND" -eq 1 ]]; then
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║         🚨  PUSH TO GITHUB BLOCKED — PREMIUM LEAK!          ║"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "  The following premium paths were found in your working tree:"
+  echo ""
+  for p in "${FOUND_PATHS[@]}"; do
+    echo "$p"
+  done
+  echo ""
+  echo "  These paths must NEVER go to GitHub (github.com/bluey-ai/blue.y)."
+  echo "  They are BlueOnion premium features, Bitbucket-only."
+  echo ""
+  echo "  ✅  To safely publish community code to GitHub, run:"
+  echo "      ./scripts/sync-to-github.sh"
+  echo ""
+  echo "  ✅  To push premium code, push to Bitbucket (origin) only:"
+  echo "      git push origin <branch>"
+  echo ""
+  exit 1
+fi
+
+echo "  ✅  No premium code detected. GitHub push allowed."
+echo ""
+exit 0
