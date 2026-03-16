@@ -379,7 +379,7 @@ async function handleTelegramDM(text: string, chatId: string, userName: string):
 }
 
 // Handle incoming Telegram commands (group channel)
-async function handleTelegramCommand(text: string, chatId: string, userName?: string): Promise<void> {
+async function handleTelegramCommand(text: string, chatId: string, userName?: string, fromId?: string): Promise<void> {
   // Strip @BotName suffix from commands (Telegram appends it in groups)
   const cmd = text.toLowerCase().trim().replace(/@\w+/g, '');
 
@@ -1198,7 +1198,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
   // --- Admin dashboard magic link (premium) ---
   if (cmd === '/admin') {
     if (!adminModule || !config.admin.enabled) {
-      await notifier.send(
+      await telegram.send(
         '🔵 <b>Admin Dashboard</b> is a premium feature.\n' +
         'Contact <a href="mailto:hello@bluey.ai">hello@bluey.ai</a> for access.',
         chatId,
@@ -1208,7 +1208,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     const platformUserId = String(fromId || chatId);
     const adminUser = adminModule.isAdminUser('telegram', platformUserId);
     if (!adminUser) {
-      await notifier.send(
+      await telegram.send(
         '⛔ Your Telegram ID is not in the admin whitelist.\n' +
         'Ask your cluster admin to add you to the <code>blue-y-admin-users</code> ConfigMap.',
         chatId,
@@ -1216,12 +1216,12 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       return;
     }
     const link = adminModule.generateMagicLink(platformUserId, 'telegram', adminUser.displayName);
-    await telegram.sendDirect(
-      fromId || chatId,
+    await telegram.send(
       `🔵 <b>BLUE.Y Admin Dashboard</b>\n\n` +
       `Hi <b>${adminUser.displayName}</b>, your magic link is ready:\n\n` +
       `<a href="${link}">Open Admin Dashboard →</a>\n\n` +
       `⏱ Expires in <b>4 hours</b> • Single use • Do not share`,
+      fromId || chatId,
     );
     return;
   }
@@ -3022,7 +3022,7 @@ async function startPolling(): Promise<void> {
         try {
           if (chatId === config.telegram.chatId) {
             // Group channel message — full command set (RBAC gate via commandRouter in future tickets)
-            await handleTelegramCommand(msg.text, chatId, userName);
+            await handleTelegramCommand(msg.text, chatId, userName, userId);
           } else if (msg.chat.type === 'private') {
             // Direct message — try CommandRouter first (handles multi-platform user commands),
             // fall through to legacy DM handler (password reset NLP) if no handler registered.
@@ -3536,7 +3536,7 @@ const server = app.listen(config.port, async () => {
     } else if (!config.admin.host) {
       logger.warn('[admin] ADMIN_ENABLED=true but ADMIN_HOST is not set — admin disabled');
     } else {
-      adminModule.createAdminApp({ kube, namespace: config.kube.watchNamespaces.split(',')[0].trim() })
+      adminModule.createAdminApp({ kube, namespace: config.kube.namespaces[0] })
         .then((adminApp: any) => {
           app.use('/admin', adminApp);
           logger.info(`[admin] Dashboard mounted at /admin — ${config.admin.host}/admin`);
