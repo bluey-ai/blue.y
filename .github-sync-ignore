@@ -33,6 +33,9 @@ docs/CHANGELOG-premium.md
 bitbucket-pipelines.yml
 Dockerfile.premium
 
+# ── Internal git hooks (Bitbucket/BlueOnion workflow only) ────────────────────
+hooks/
+
 # ── Internal test scripts (contain hardcoded credentials / internal endpoints) ─
 scripts/test-telegram.js
 scripts/test-polling.js
