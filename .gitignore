@@ -4,3 +4,8 @@ dist/
 *.log
 .DS_Store
 .idea/
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+frontend/tsconfig.*.tsbuildinfo
