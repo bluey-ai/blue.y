@@ -1,0 +1,25 @@
+🤖 BLUE.Y is deploying...
+
+  kubectl rollout status deployment/{{ include "blue-y.fullname" . }} -n {{ .Values.namespace }}
+
+──────────────────────────────────────────────────────────────
+  Once running, open Telegram and send /help to your bot.
+──────────────────────────────────────────────────────────────
+
+{{- if not .Values.telegram.botToken }}
+⚠️  telegram.botToken is not set — bot will not start.
+   Get a token from @BotFather on Telegram, then:
+
+   helm upgrade blue-y bluey/blue-y \
+     --reuse-values \
+     --set telegram.botToken=YOUR_TOKEN \
+     --set telegram.chatId=YOUR_CHAT_ID
+{{- end }}
+
+{{- if not .Values.ai.apiKey }}
+⚠️  ai.apiKey is not set — AI diagnosis will not work.
+   Get a key at https://platform.deepseek.com
+{{- end }}
+
+📖 Full setup guide: https://github.com/bluey-ai/blue.y/blob/main/docs/deploy.md
+🐛 Issues / Questions: https://github.com/bluey-ai/blue.y/issues

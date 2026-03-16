@@ -11,7 +11,7 @@
 
 # -- Deployment image
 image:
-  repository: ghcr.io/blue-onion/blue.y
+  repository: ghcr.io/bluey-ai/blue.y
   tag: latest
   pullPolicy: Always
 
