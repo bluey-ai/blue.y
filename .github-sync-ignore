@@ -42,6 +42,9 @@ scripts/test-polling.js
 scripts/test-scan.js
 scripts/smoke-test.sh
 
+# ── License key issuer (private key tooling — never expose publicly) ──────────
+scripts/licensing/
+
 # ── Future premium modules (pre-declare to prevent accidental exposure) ───────
 # src/license/           # Phase 2 license key validation (BLY-future)
 # src/multi-tenant/      # Multi-tenant support (BLY-future)
