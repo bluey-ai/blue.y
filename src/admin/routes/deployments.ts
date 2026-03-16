@@ -27,6 +27,20 @@ export function setDeploymentsTelegramSend(fn: typeof telegramSend): void {
 
 const router = Router();
 
+// GET /api/deployments/:namespace/:pod/pod-detail — rich pod/node detail (BLY-69)
+router.get('/:namespace/:pod/pod-detail', requireAdmin, async (req: Request, res: Response) => {
+  if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }
+  const namespace = req.params.namespace as string;
+  const podName   = req.params.pod as string;
+  try {
+    const detail = await kubeClient.getPodDetail(namespace, podName);
+    if (!detail) { res.status(404).json({ error: 'Pod not found or detail unavailable' }); return; }
+    res.json({ detail });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? String(e) });
+  }
+});
+
 // GET /api/deployments/:namespace/:name/history — revision history from ReplicaSets (BLY-68)
 router.get('/:namespace/:name/history', requireAdmin, async (req: Request, res: Response) => {
   if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }

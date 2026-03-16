@@ -109,3 +109,46 @@ export interface ConfigData {
   adminUsers: AdminUser[];
   note: string;
 }
+
+// BLY-69: Rich pod/node detail
+export interface PodDetail {
+  pod: {
+    name: string;
+    namespace: string;
+    nodeName: string;
+    phase: string;
+    qosClass: string;
+    ip: string;
+    age: string;
+    tolerations: { key?: string; operator?: string; effect?: string; value?: string }[];
+    nodeSelector: Record<string, string>;
+    volumes: { name: string; type: string; claim?: string }[];
+  };
+  containers: {
+    name: string;
+    image: string;
+    state: string;
+    reason?: string;
+    ready: boolean;
+    restartCount: number;
+    cpuRequest: number;
+    cpuLimit:   number;
+    memRequest: number;
+    memLimit:   number;
+    cpuUsage?:  number;
+    memUsage?:  number;
+  }[];
+  node: {
+    name: string;
+    instanceType: string;
+    capacityType: string;
+    zone: string;
+    nodeGroup: string;
+    cpuAllocatable: number;
+    memAllocatable: number;
+    cpuUsage?: number;
+    memUsage?: number;
+    taints: { key: string; effect: string; value?: string }[];
+    labels: Record<string, string>;
+  } | null;
+}

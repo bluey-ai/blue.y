@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X } from 'lucide-react';
-import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment } from '../api';
-import type { DeploymentRevision } from '../api';
+import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X, Info, Server, Tag, Database } from 'lucide-react';
+import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment, getPodDetail } from '../api';
+import type { DeploymentRevision, PodDetail } from '../api';
 import type { DeploymentInfo, PodInfo } from '../types';
 import PodTerminal from '../components/PodTerminal';
 import PodLogsViewer from '../components/PodLogsViewer';
@@ -40,6 +40,10 @@ export default function Deployments() {
   const [rollbackHistory, setRollbackHistory] = useState<DeploymentRevision[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [confirmRevision, setConfirmRevision] = useState<DeploymentRevision | null>(null);
+  // Pod detail panel (BLY-69)
+  const [selectedPodName, setSelectedPodName] = useState<string | null>(null);
+  const [podDetailMap, setPodDetailMap] = useState<Record<string, PodDetail | null>>({});
+  const [loadingPodDetail, setLoadingPodDetail] = useState<string | null>(null);
 
   const load = useCallback(async (namespace: string, silent = false) => {
     if (!silent) setLoading(true);
@@ -243,9 +247,23 @@ export default function Deployments() {
     }
   };
 
+  const togglePodDetail = async (podName: string) => {
+    if (selectedPodName === podName) { setSelectedPodName(null); return; }
+    setSelectedPodName(podName);
+    if (podDetailMap[podName] !== undefined) return; // already loaded
+    setLoadingPodDetail(podName);
+    try {
+      const r = await getPodDetail(ns, podName);
+      setPodDetailMap(prev => ({ ...prev, [podName]: r.detail }));
+    } catch {
+      setPodDetailMap(prev => ({ ...prev, [podName]: null }));
+    } finally { setLoadingPodDetail(null); }
+  };
+
   const togglePods = async (depName: string) => {
-    if (expandedDep === depName) { setExpandedDep(null); return; }
+    if (expandedDep === depName) { setExpandedDep(null); setSelectedPodName(null); return; }
     setExpandedDep(depName);
+    setSelectedPodName(null);
     if (podsMap[depName]) return; // already loaded
     setLoadingPods(depName);
     try {
@@ -530,9 +548,41 @@ export default function Deployments() {
                                     )}
                                   </div>
                                 )}
+
+                                {/* Detail button (BLY-69) */}
+                                <button
+                                  onClick={() => togglePodDetail(pod.name)}
+                                  className={clsx(
+                                    'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors',
+                                    selectedPodName === pod.name
+                                      ? 'bg-[#bc8cff]/20 text-[#bc8cff] border-[#bc8cff]/30'
+                                      : 'bg-[#21262d] text-[#6e7681] hover:text-[#8b949e] border-transparent',
+                                  )}
+                                  title="View pod/node detail"
+                                >
+                                  {loadingPodDetail === pod.name
+                                    ? <Loader size={9} className="animate-spin" />
+                                    : <Info size={9} />
+                                  }
+                                </button>
                               </div>
                               );
                             })}
+                          </div>
+                        )}
+
+                        {/* Pod detail panel (BLY-69) */}
+                        {selectedPodName && (podsMap[d.name] ?? []).some(p => p.name === selectedPodName) && (
+                          <div className="mt-3 border border-[#30363d] rounded-lg overflow-hidden">
+                            {loadingPodDetail === selectedPodName ? (
+                              <div className="flex items-center gap-2 px-4 py-3 text-xs text-[#6e7681]">
+                                <Loader size={12} className="animate-spin" /> Loading detail…
+                              </div>
+                            ) : podDetailMap[selectedPodName] === null ? (
+                              <div className="px-4 py-3 text-xs text-[#f85149]">Failed to load pod detail.</div>
+                            ) : podDetailMap[selectedPodName] ? (
+                              <PodDetailPanel detail={podDetailMap[selectedPodName]!} onClose={() => setSelectedPodName(null)} />
+                            ) : null}
                           </div>
                         )}
                       </td>
@@ -693,6 +743,201 @@ function ReplicaBar({ ready, desired, animating }: { ready: number; desired: num
         />
       </div>
       <span className="font-mono text-xs text-[#8b949e]">{ready}/{desired}</span>
+    </div>
+  );
+}
+
+// BLY-69 helpers
+function fmtCpu(m: number): string {
+  if (m === 0) return '—';
+  return m >= 1000 ? `${(m / 1000).toFixed(2)}` : `${m}m`;
+}
+function fmtMem(mi: number): string {
+  if (mi === 0) return '—';
+  return mi >= 1024 ? `${(mi / 1024).toFixed(1)}Gi` : `${mi}Mi`;
+}
+
+function ResourceBar({ label, used, limit, request, unit }: {
+  label: string; used?: number; limit: number; request: number; unit: 'cpu' | 'mem';
+}) {
+  const max = Math.max(limit > 0 ? limit : request, 1);
+  const usedPct  = used !== undefined ? Math.min(100, Math.round((used  / max) * 100)) : null;
+  const reqPct   = limit > 0 ? Math.min(100, Math.round((request / max) * 100)) : 100;
+  const barColor = usedPct !== null
+    ? (usedPct > 85 ? '#f85149' : usedPct > 65 ? '#d29922' : '#3fb950')
+    : '#58a6ff';
+  const fmt = unit === 'cpu' ? fmtCpu : fmtMem;
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-2 text-[10px] font-mono">
+        <span className="text-[#6e7681] w-7 shrink-0">{label}</span>
+        <div className="flex-1 h-2 bg-[#0d1117] rounded-full overflow-hidden relative">
+          {limit > 0 && request > 0 && (
+            <div className="absolute inset-y-0 bg-[#58a6ff]/15 rounded-full" style={{ width: `${reqPct}%` }} />
+          )}
+          <div
+            className="absolute inset-y-0 rounded-full transition-all duration-300"
+            style={{ width: `${Math.max(usedPct ?? reqPct, 1)}%`, background: barColor }}
+          />
+        </div>
+        <span className="text-[#8b949e] shrink-0 min-w-[110px] text-right">
+          {used !== undefined && <span style={{ color: barColor }}>{fmt(used)}</span>}
+          {used !== undefined && ' / '}
+          {limit > 0 ? `${fmt(limit)} lim` : `${fmt(request)} req`}
+          {usedPct !== null && <span className="text-[#6e7681] ml-1">({usedPct}%)</span>}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PodDetailPanel({ detail, onClose }: { detail: PodDetail; onClose: () => void }) {
+  const { pod, containers, node } = detail;
+  const qosColor = pod.qosClass === 'Guaranteed' ? '#3fb950' : pod.qosClass === 'Burstable' ? '#d29922' : '#8b949e';
+  const userVolumes = pod.volumes.filter(v => v.type !== 'secret' || !v.name.startsWith('kube-'));
+
+  return (
+    <div className="bg-[#0d1117] text-xs">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#21262d] bg-[#161b22]">
+        <Info size={11} className="text-[#bc8cff] shrink-0" />
+        <span className="font-mono text-[#e6edf3] font-medium">{pod.name}</span>
+        <span className={clsx('text-[10px]', pod.phase === 'Running' ? 'text-[#3fb950]' : 'text-[#f85149]')}>{pod.phase}</span>
+        {pod.ip && <span className="text-[#6e7681] font-mono">{pod.ip}</span>}
+        <span className="text-[#6e7681]">{pod.age}</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ color: qosColor, background: `${qosColor}18` }}>
+          QoS: {pod.qosClass}
+        </span>
+        <button onClick={onClose} className="ml-auto p-0.5 rounded text-[#6e7681] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors">
+          <X size={12} />
+        </button>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Node section */}
+        {node ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#8b949e] uppercase tracking-wider">
+              <Server size={10} className="text-[#58a6ff]" /> Node
+            </div>
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-3 space-y-2">
+              {/* Node identity */}
+              <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono mb-2">
+                <span className="text-[#e6edf3] font-medium">{node.name}</span>
+                <span className="px-1.5 py-0.5 rounded bg-[#21262d] text-[#8b949e]">{node.instanceType}</span>
+                <span className={clsx('px-1.5 py-0.5 rounded text-[10px]',
+                  node.capacityType === 'SPOT' ? 'bg-[#d29922]/15 text-[#d29922]' : 'bg-[#3fb950]/15 text-[#3fb950]'
+                )}>{node.capacityType}</span>
+                <span className="text-[#6e7681]">{node.zone}</span>
+                {node.nodeGroup !== 'unknown' && <span className="text-[#6e7681]">{node.nodeGroup}</span>}
+              </div>
+              {/* Node resource bars */}
+              <ResourceBar label="CPU" used={node.cpuUsage} limit={0} request={node.cpuAllocatable} unit="cpu" />
+              <ResourceBar label="Mem" used={node.memUsage} limit={0} request={node.memAllocatable} unit="mem" />
+              {/* Taints */}
+              {node.taints.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                  <span className="text-[10px] text-[#6e7681]">Taints:</span>
+                  {node.taints.map((t, i) => (
+                    <span key={i} className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[#f85149]/10 text-[#f85149] border border-[#f85149]/20">
+                      {t.key}{t.value ? `=${t.value}` : ''}:{t.effect}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : pod.nodeName ? (
+          <div className="text-[10px] text-[#6e7681]">Node: <span className="font-mono text-[#8b949e]">{pod.nodeName}</span></div>
+        ) : null}
+
+        {/* Containers section */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#8b949e] uppercase tracking-wider">
+            <Database size={10} className="text-[#58a6ff]" /> Containers
+          </div>
+          {containers.map(c => (
+            <div key={c.name} className="bg-[#161b22] border border-[#21262d] rounded-lg p-3 space-y-2">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="font-mono text-[10px] text-[#e6edf3] font-medium">{c.name}</span>
+                <span className={clsx('text-[10px] px-1.5 py-0.5 rounded',
+                  c.state === 'running' ? 'bg-[#3fb950]/15 text-[#3fb950]' : 'bg-[#f85149]/15 text-[#f85149]'
+                )}>{c.state}{c.reason ? ` (${c.reason})` : ''}</span>
+                {c.restartCount > 0 && <span className="text-[10px] text-[#d29922]">{c.restartCount}↺</span>}
+                <span className="ml-auto font-mono text-[10px] text-[#6e7681] max-w-[200px] truncate" title={c.image}>
+                  {c.image.split('/').pop()?.split(':').join(' : ')}
+                </span>
+              </div>
+              <ResourceBar
+                label="CPU"
+                used={c.cpuUsage}
+                limit={c.cpuLimit}
+                request={c.cpuRequest}
+                unit="cpu"
+              />
+              <ResourceBar
+                label="Mem"
+                used={c.memUsage}
+                limit={c.memLimit}
+                request={c.memRequest}
+                unit="mem"
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Scheduling section */}
+        {(pod.tolerations.length > 0 || Object.keys(pod.nodeSelector).length > 0) && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#8b949e] uppercase tracking-wider">
+              <Tag size={10} className="text-[#58a6ff]" /> Scheduling
+            </div>
+            {Object.keys(pod.nodeSelector).length > 0 && (
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-[10px] text-[#6e7681] mr-1">nodeSelector:</span>
+                {Object.entries(pod.nodeSelector).map(([k, v]) => (
+                  <span key={k} className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[#bc8cff]/10 text-[#bc8cff] border border-[#bc8cff]/20">
+                    {k}={v}
+                  </span>
+                ))}
+              </div>
+            )}
+            {pod.tolerations.filter(t => t.key).length > 0 && (
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-[10px] text-[#6e7681] mr-1">tolerations:</span>
+                {pod.tolerations.filter(t => t.key).map((t, i) => (
+                  <span key={i} className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[#58a6ff]/10 text-[#58a6ff] border border-[#58a6ff]/20">
+                    {t.key}{t.value ? `=${t.value}` : ''}{t.effect ? `:${t.effect}` : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Volumes */}
+        {userVolumes.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#8b949e] uppercase tracking-wider">
+              <Database size={10} className="text-[#58a6ff]" /> Volumes
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {userVolumes.map((v, i) => (
+                <div key={i} className="flex items-center gap-1.5 px-2 py-1 rounded bg-[#161b22] border border-[#21262d] text-[10px] font-mono">
+                  <span className="text-[#8b949e]">{v.name}</span>
+                  <span className={clsx('px-1 py-0.5 rounded text-[9px]',
+                    v.type === 'pvc'       ? 'bg-[#3fb950]/15 text-[#3fb950]' :
+                    v.type === 'configMap' ? 'bg-[#58a6ff]/15 text-[#58a6ff]' :
+                    v.type === 'secret'    ? 'bg-[#d29922]/15 text-[#d29922]' :
+                    'bg-[#21262d] text-[#6e7681]'
+                  )}>{v.type}</span>
+                  {v.claim && <span className="text-[#6e7681]">→ {v.claim}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

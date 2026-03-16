@@ -43,6 +43,49 @@ export interface HPAInfo {
   conditions: { type: string; status: string; reason?: string; message?: string }[];
 }
 
+// BLY-69: Rich pod/node detail panel
+export interface PodDetail {
+  pod: {
+    name: string;
+    namespace: string;
+    nodeName: string;
+    phase: string;
+    qosClass: string;
+    ip: string;
+    age: string;
+    tolerations: { key?: string; operator?: string; effect?: string; value?: string }[];
+    nodeSelector: Record<string, string>;
+    volumes: { name: string; type: string; claim?: string }[];
+  };
+  containers: {
+    name: string;
+    image: string;
+    state: string;
+    reason?: string;
+    ready: boolean;
+    restartCount: number;
+    cpuRequest: number;   // millicores
+    cpuLimit:   number;   // millicores (0 = no limit)
+    memRequest: number;   // MiB
+    memLimit:   number;   // MiB (0 = no limit)
+    cpuUsage?:  number;   // from metrics-server
+    memUsage?:  number;   // from metrics-server
+  }[];
+  node: {
+    name: string;
+    instanceType: string;
+    capacityType: string;
+    zone: string;
+    nodeGroup: string;
+    cpuAllocatable: number;
+    memAllocatable: number;
+    cpuUsage?: number;
+    memUsage?: number;
+    taints: { key: string; effect: string; value?: string }[];
+    labels: Record<string, string>;
+  } | null;
+}
+
 export class KubeClient {
   private coreApi: k8s.CoreV1Api;
   private appsApi: k8s.AppsV1Api;
@@ -575,6 +618,158 @@ export class KubeClient {
     } catch (err) {
       logger.error(`Failed to get HPAs in ${namespace}`, err);
       return [];
+    }
+  }
+
+  // BLY-69: Rich pod/node detail — node resources, container resources, scheduling, volumes
+  async getPodDetail(namespace: string, podName: string): Promise<PodDetail | null> {
+    try {
+      const pod = await this.coreApi.readNamespacedPod({ name: podName, namespace });
+      const spec = pod.spec!;
+      const status = pod.status!;
+      const meta = pod.metadata!;
+      const nodeName = spec.nodeName || '';
+
+      // Inline parsers (same logic as getTopNodes/getTopPods)
+      const cpuToMilli = (s: string): number => {
+        if (!s || s === '0') return 0;
+        if (s.endsWith('n')) return Math.round(parseInt(s) / 1_000_000);
+        if (s.endsWith('m')) return parseInt(s);
+        return parseInt(s) * 1000;
+      };
+      const memToMi = (s: string): number => {
+        if (!s || s === '0') return 0;
+        if (s.endsWith('Ki')) return Math.round(parseInt(s) / 1024);
+        if (s.endsWith('Mi')) return parseInt(s);
+        if (s.endsWith('Gi')) return parseInt(s) * 1024;
+        if (s.endsWith('Ti')) return parseInt(s) * 1024 * 1024;
+        return Math.round(parseInt(s) / (1024 * 1024));
+      };
+
+      // Pod container metrics (optional — graceful degradation)
+      const containerUsage: Record<string, { cpuMilli: number; memMi: number }> = {};
+      try {
+        const metricsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+        const res = await metricsApi.listNamespacedCustomObject({
+          group: 'metrics.k8s.io', version: 'v1beta1', namespace, plural: 'pods',
+        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const podMetric = ((res as any).items || []).find((p: any) => p.metadata?.name === podName);
+        if (podMetric) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (podMetric.containers || []).forEach((c: any) => {
+            containerUsage[c.name] = {
+              cpuMilli: cpuToMilli(c.usage?.cpu || '0'),
+              memMi:    memToMi(c.usage?.memory || '0'),
+            };
+          });
+        }
+      } catch { /* metrics-server unavailable */ }
+
+      // Container specs
+      const containerStatuses = status.containerStatuses || [];
+      const containers: PodDetail['containers'] = (spec.containers || []).map(c => {
+        const cs = containerStatuses.find(s => s.name === c.name);
+        const usage = containerUsage[c.name];
+        return {
+          name: c.name,
+          image: c.image || 'unknown',
+          state: Object.keys(cs?.state || {})[0] || 'unknown',
+          reason: cs?.state?.waiting?.reason || cs?.state?.terminated?.reason,
+          ready: cs?.ready ?? false,
+          restartCount: cs?.restartCount ?? 0,
+          cpuRequest: cpuToMilli(c.resources?.requests?.cpu   || '0'),
+          cpuLimit:   cpuToMilli(c.resources?.limits?.cpu     || '0'),
+          memRequest: memToMi(c.resources?.requests?.memory   || '0'),
+          memLimit:   memToMi(c.resources?.limits?.memory     || '0'),
+          cpuUsage: usage?.cpuMilli,
+          memUsage: usage?.memMi,
+        };
+      });
+
+      // Node info (optional)
+      let node: PodDetail['node'] = null;
+      if (nodeName) {
+        try {
+          const nodeObj = await this.coreApi.readNode({ name: nodeName });
+          const nodeLabels = nodeObj.metadata?.labels || {};
+          const taints = (nodeObj.spec?.taints || []).map(t => ({
+            key: t.key || '', effect: t.effect || '', value: t.value,
+          }));
+          const cpuAllocatable = cpuToMilli(nodeObj.status?.allocatable?.cpu    || '0');
+          const memAllocatable = memToMi(nodeObj.status?.allocatable?.memory    || '0');
+
+          let cpuUsage: number | undefined;
+          let memUsage: number | undefined;
+          try {
+            const metricsApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+            const res = await metricsApi.listClusterCustomObject({
+              group: 'metrics.k8s.io', version: 'v1beta1', plural: 'nodes',
+            });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const nm = ((res as any).items || []).find((n: any) => n.metadata?.name === nodeName);
+            if (nm) {
+              cpuUsage = cpuToMilli(nm.usage?.cpu    || '0');
+              memUsage = memToMi(nm.usage?.memory    || '0');
+            }
+          } catch { /* ignore */ }
+
+          const labelKeys = [
+            'node.kubernetes.io/instance-type',
+            'eks.amazonaws.com/capacityType',
+            'eks.amazonaws.com/nodegroup',
+            'topology.kubernetes.io/zone',
+            'kubernetes.io/hostname',
+            'kubernetes.io/arch',
+          ];
+          const labels: Record<string, string> = {};
+          labelKeys.forEach(k => { if (nodeLabels[k]) labels[k] = nodeLabels[k]; });
+
+          node = {
+            name: nodeName,
+            instanceType: nodeLabels['node.kubernetes.io/instance-type'] || 'unknown',
+            capacityType: nodeLabels['eks.amazonaws.com/capacityType']   || 'unknown',
+            zone:      nodeLabels['topology.kubernetes.io/zone']          || 'unknown',
+            nodeGroup: nodeLabels['eks.amazonaws.com/nodegroup']          || 'unknown',
+            cpuAllocatable, memAllocatable, cpuUsage, memUsage,
+            taints, labels,
+          };
+        } catch (e) {
+          logger.warn(`[getPodDetail] Could not fetch node ${nodeName}: ${e}`);
+        }
+      }
+
+      // Volumes
+      const volumes: PodDetail['pod']['volumes'] = (spec.volumes || []).map(v => {
+        let type = 'other';
+        let claim: string | undefined;
+        if (v.persistentVolumeClaim) { type = 'pvc';       claim = v.persistentVolumeClaim.claimName; }
+        else if (v.configMap)         type = 'configMap';
+        else if (v.secret)            type = 'secret';
+        else if (v.emptyDir)          type = 'emptyDir';
+        else if (v.hostPath)          type = 'hostPath';
+        return { name: v.name, type, claim };
+      });
+
+      return {
+        pod: {
+          name: meta.name || podName, namespace, nodeName,
+          phase: status.phase || 'Unknown',
+          qosClass: status.qosClass || 'Unknown',
+          ip: status.podIP || '',
+          age: this.getAge(meta.creationTimestamp),
+          tolerations: (spec.tolerations || []).map(t => ({
+            key: t.key, operator: t.operator, effect: t.effect, value: t.value,
+          })),
+          nodeSelector: spec.nodeSelector || {},
+          volumes,
+        },
+        containers,
+        node,
+      };
+    } catch (err) {
+      logger.error(`Failed to get pod detail for ${namespace}/${podName}`, err);
+      return null;
     }
   }
 

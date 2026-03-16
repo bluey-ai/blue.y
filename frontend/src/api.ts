@@ -1,4 +1,4 @@
-import type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, ConfigData, NamespaceHealth, StreamEvent, DeploymentInfo, LogAnalysis } from './types';
+import type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, ConfigData, NamespaceHealth, StreamEvent, DeploymentInfo, LogAnalysis, PodDetail } from './types';
 
 const BASE = '/admin/api';
 
@@ -159,6 +159,11 @@ export const testIntegration = (id: string) =>
 // Pod terminal — BLY-63
 export const getDeploymentPods = (namespace: string, deployment: string) =>
   get<{ pods: PodInfo[]; namespace: string; deployment: string }>(`/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(deployment)}/pods`);
+
+// Pod detail — BLY-69
+export const getPodDetail = (namespace: string, pod: string) =>
+  get<{ detail: PodDetail }>(`/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/pod-detail`);
+export type { PodDetail };
 
 // Deployment rollback — BLY-68
 export interface DeploymentRevision {
