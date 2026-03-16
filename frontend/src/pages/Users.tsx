@@ -1,163 +1,330 @@
-import { useEffect, useState } from 'react';
-import { UserPlus, Trash2, RefreshCw, Shield } from 'lucide-react';
-import { getUsers, addUser, deleteUser } from '../api';
-import type { AdminUser } from '../types';
+import { useEffect, useState, useCallback } from 'react';
+import { UserPlus, Trash2, RefreshCw, Shield, Mail, Globe, ShieldCheck, Eye, MapPin, Plus, X } from 'lucide-react';
+import {
+  getInvites, createInvite, revokeInvite, changeInviteRole,
+  getAllowlist, getMyIp, addAllowlistEntry, deleteAllowlistEntry,
+} from '../api';
+import type { SsoInvite, AllowlistEntry } from '../api';
 import Card from '../components/Card';
-import Badge from '../components/Badge';
 import clsx from 'clsx';
 
-const PLATFORMS = ['telegram', 'slack', 'teams', 'whatsapp'];
-const PLATFORM_ICONS: Record<string, string> = {
-  telegram: '✈️', slack: '💬', teams: '🟦', whatsapp: '📱',
+const ROLE_OPTS = [
+  { value: 'admin',  label: 'Admin' },
+  { value: 'viewer', label: 'Viewer' },
+];
+
+const ROLE_COLORS: Record<string, string> = {
+  superadmin: 'text-[#f0883e] bg-[#f0883e]/10 border-[#f0883e]/20',
+  admin:      'text-[#58a6ff] bg-[#58a6ff]/10 border-[#58a6ff]/20',
+  viewer:     'text-[#8b949e] bg-[#21262d] border-[#30363d]',
 };
 
+function RoleBadge({ role }: { role: string }) {
+  return (
+    <span className={clsx('inline-flex items-center gap-1 px-2 py-px rounded-full text-[10px] font-medium border', ROLE_COLORS[role] ?? ROLE_COLORS.viewer)}>
+      {role === 'superadmin' ? <ShieldCheck size={9} /> : role === 'admin' ? <Shield size={9} /> : <Eye size={9} />}
+      {role}
+    </span>
+  );
+}
+
 export default function Users() {
-  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [invites, setInvites] = useState<SsoInvite[]>([]);
+  const [activeCount, setActiveCount] = useState(0);
+  const [seatLimit, setSeatLimit] = useState(10);
+  const [allowlist, setAllowlist] = useState<AllowlistEntry[]>([]);
+  const [myIp, setMyIp] = useState('');
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ platform: 'telegram', userId: '', displayName: '' });
-  const [adding, setAdding] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [deleting, setDeleting] = useState<string | null>(null);
 
-  const load = async () => {
+  const [inviteForm, setInviteForm] = useState({ email: '', role: 'admin' });
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+  const [inviteSuccess, setInviteSuccess] = useState('');
+
+  const [ipForm, setIpForm] = useState({ cidr: '', label: '' });
+  const [addingIp, setAddingIp] = useState(false);
+  const [ipError, setIpError] = useState('');
+
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [deletingIp, setDeletingIp] = useState<number | null>(null);
+  const [changingRole, setChangingRole] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
     setLoading(true);
-    try { const r = await getUsers(); setUsers(r.users); } finally { setLoading(false); }
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.userId.trim() || !form.displayName.trim()) { setError('All fields required.'); return; }
-    setAdding(true); setError(''); setSuccess('');
     try {
-      await addUser(form);
-      setSuccess(`Added ${form.displayName} (${form.platform}).`);
-      setForm(f => ({ ...f, userId: '', displayName: '' }));
+      const [inv, al, ip] = await Promise.all([getInvites(), getAllowlist(), getMyIp()]);
+      setInvites(inv.invites);
+      setActiveCount(inv.activeCount);
+      setSeatLimit(inv.seatLimit);
+      setAllowlist(al.entries);
+      setMyIp(ip.ip);
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteForm.email.trim()) { setInviteError('Email is required.'); return; }
+    setInviting(true); setInviteError(''); setInviteSuccess('');
+    try {
+      await createInvite(inviteForm.email.trim(), inviteForm.role);
+      setInviteSuccess(`Invite created for ${inviteForm.email.trim()}`);
+      setInviteForm(f => ({ ...f, email: '' }));
       await load();
-    } catch (e: any) { setError(e.message); }
-    finally { setAdding(false); }
+    } catch (e: any) { setInviteError(e.message); }
+    finally { setInviting(false); }
   };
 
-  const handleDelete = async (platform: string, userId: string, name: string) => {
-    if (!confirm(`Remove ${name} (${platform})?`)) return;
-    const key = `${platform}:${userId}`;
-    setDeleting(key);
-    try { await deleteUser(platform, userId); await load(); }
-    catch (e: any) { setError(e.message); }
-    finally { setDeleting(null); }
+  const handleRevoke = async (email: string) => {
+    if (!confirm(`Revoke access for ${email}?`)) return;
+    setRevoking(email);
+    try { await revokeInvite(email); await load(); }
+    catch (e: any) { setInviteError(e.message); }
+    finally { setRevoking(null); }
   };
+
+  const handleRoleChange = async (email: string, role: string) => {
+    setChangingRole(email);
+    try { await changeInviteRole(email, role); await load(); }
+    catch (e: any) { setInviteError(e.message); }
+    finally { setChangingRole(null); }
+  };
+
+  const handleAddIp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ipForm.cidr.trim()) { setIpError('IP or CIDR is required.'); return; }
+    setAddingIp(true); setIpError('');
+    try { await addAllowlistEntry(ipForm.cidr.trim(), ipForm.label.trim()); setIpForm({ cidr: '', label: '' }); await load(); }
+    catch (e: any) { setIpError(e.message); }
+    finally { setAddingIp(false); }
+  };
+
+  const handleDeleteIp = async (id: number) => {
+    setDeletingIp(id);
+    try { await deleteAllowlistEntry(id); await load(); }
+    catch { /* ignore */ }
+    finally { setDeletingIp(null); }
+  };
+
+  const activeInvites = invites.filter(i => i.status === 'active');
+  const revokedInvites = invites.filter(i => i.status === 'revoked');
+  const seatPct = Math.round((activeCount / seatLimit) * 100);
 
   return (
     <div className="p-6 space-y-5 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-[#e6edf3]">Admin Users</h1>
-          <p className="text-sm text-[#8b949e] mt-0.5">Manage who can access this dashboard via magic link</p>
+          <h1 className="text-xl font-bold text-[#e6edf3]">Users & Access</h1>
+          <p className="text-sm text-[#8b949e] mt-0.5">Invite SSO users, manage roles, and control IP access</p>
         </div>
         <button onClick={load} className="p-1.5 rounded text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors">
           <RefreshCw size={14} className={clsx(loading && 'animate-spin')} />
         </button>
       </div>
 
-      {/* Add user form */}
+      {/* Seat usage bar */}
+      <Card>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Shield size={14} className="text-[#58a6ff]" />
+            <span className="text-sm font-semibold text-[#e6edf3]">License Seats</span>
+          </div>
+          <span className="text-xs text-[#8b949e]">{activeCount} / {seatLimit} used</span>
+        </div>
+        <div className="h-1.5 bg-[#21262d] rounded-full overflow-hidden">
+          <div
+            className={clsx('h-full rounded-full transition-all', seatPct >= 100 ? 'bg-[#f85149]' : seatPct >= 80 ? 'bg-[#d29922]' : 'bg-[#3fb950]')}
+            style={{ width: `${Math.min(seatPct, 100)}%` }}
+          />
+        </div>
+        {seatPct >= 100 && <p className="mt-1.5 text-[10px] text-[#f85149]">Seat limit reached. Upgrade your license to invite more users.</p>}
+      </Card>
+
+      {/* Invite form */}
       <Card>
         <div className="flex items-center gap-2 mb-4">
-          <UserPlus size={14} className="text-[#58a6ff]" />
-          <h2 className="text-sm font-semibold text-[#e6edf3]">Add Admin User</h2>
+          <Mail size={14} className="text-[#58a6ff]" />
+          <h2 className="text-sm font-semibold text-[#e6edf3]">Invite SSO User</h2>
         </div>
-        <form onSubmit={handleAdd} className="flex flex-wrap gap-3 items-end">
+        <form onSubmit={handleInvite} className="flex flex-wrap gap-3 items-end">
+          <div className="space-y-1 flex-1 min-w-[180px]">
+            <label className="text-xs text-[#8b949e]">Work Email</label>
+            <input
+              type="email"
+              placeholder="colleague@company.com"
+              className="block w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-sm text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff]"
+              value={inviteForm.email}
+              onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
+            />
+          </div>
           <div className="space-y-1">
-            <label className="text-xs text-[#8b949e]">Platform</label>
+            <label className="text-xs text-[#8b949e]">Role</label>
             <select
-              value={form.platform}
-              onChange={e => setForm(f => ({ ...f, platform: e.target.value }))}
+              value={inviteForm.role}
+              onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}
               className="block bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-sm text-[#e6edf3] outline-none focus:border-[#58a6ff]"
             >
-              {PLATFORMS.map(p => <option key={p} value={p}>{PLATFORM_ICONS[p]} {p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
+              {ROLE_OPTS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs text-[#8b949e]">User ID</label>
-            <input
-              type="text"
-              placeholder="e.g. 8735878307"
-              className="block bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-sm text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff] w-40"
-              value={form.userId}
-              onChange={e => setForm(f => ({ ...f, userId: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs text-[#8b949e]">Display Name</label>
-            <input
-              type="text"
-              placeholder="e.g. Zeeshan Ali"
-              className="block bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-sm text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff] w-40"
-              value={form.displayName}
-              onChange={e => setForm(f => ({ ...f, displayName: e.target.value }))}
-            />
           </div>
           <button
             type="submit"
-            disabled={adding}
-            className="flex items-center gap-2 px-4 py-1.5 bg-[#238636] hover:bg-[#2ea043] disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            disabled={inviting || activeCount >= seatLimit}
+            className="flex items-center gap-2 px-4 py-1.5 bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 text-white text-sm rounded-lg transition-colors"
           >
             <UserPlus size={12} />
-            {adding ? 'Adding…' : 'Add User'}
+            {inviting ? 'Inviting…' : 'Send Invite'}
           </button>
         </form>
-        {error && <p className="mt-2 text-xs text-[#f85149]">{error}</p>}
-        {success && <p className="mt-2 text-xs text-[#3fb950]">{success}</p>}
+        {inviteError && <p className="mt-2 text-xs text-[#f85149]">{inviteError}</p>}
+        {inviteSuccess && <p className="mt-2 text-xs text-[#3fb950]">{inviteSuccess}</p>}
+        <p className="mt-3 text-[10px] text-[#6e7681]">
+          Invited users sign in via the Microsoft or Google SSO button using this exact email address.
+        </p>
       </Card>
 
-      {/* User list */}
+      {/* Active invites */}
       <Card padding={false}>
         <div className="px-4 py-3 border-b border-[#30363d] flex items-center gap-2">
-          <Shield size={14} className="text-[#58a6ff]" />
-          <h2 className="text-sm font-semibold text-[#e6edf3]">Whitelisted Users</h2>
-          <span className="ml-auto text-xs text-[#6e7681]">{users.length} users</span>
+          <UserPlus size={14} className="text-[#3fb950]" />
+          <h2 className="text-sm font-semibold text-[#e6edf3]">Active Users</h2>
+          <span className="ml-auto text-xs text-[#6e7681]">{activeInvites.length} active</span>
         </div>
         {loading ? (
           <p className="px-4 py-6 text-center text-sm text-[#6e7681]">Loading…</p>
-        ) : users.length === 0 ? (
-          <p className="px-4 py-6 text-center text-sm text-[#6e7681]">No users yet. Add one above.</p>
+        ) : activeInvites.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-[#6e7681]">No active invites. Invite someone above.</p>
         ) : (
           <div className="divide-y divide-[#21262d]">
-            {users.map(u => {
-              const key = `${u.platform}:${u.userId}`;
-              return (
-                <div key={key} className="px-4 py-3 flex items-center gap-4">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#58a6ff] to-[#bc8cff] flex items-center justify-center text-xs text-white font-bold shrink-0">
-                    {u.displayName.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-[#e6edf3]">{u.displayName}</div>
-                    <div className="text-xs font-mono text-[#6e7681]">{u.userId}</div>
-                  </div>
-                  <Badge label={`${PLATFORM_ICONS[u.platform] ?? ''} ${u.platform}`} variant="info" />
-                  <button
-                    onClick={() => handleDelete(u.platform, u.userId, u.displayName)}
-                    disabled={deleting === key}
-                    className="p-1.5 rounded text-[#6e7681] hover:text-[#f85149] hover:bg-[#f85149]/10 transition-colors disabled:opacity-40"
-                    title="Remove user"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+            {activeInvites.map(inv => (
+              <div key={inv.email} className="px-4 py-3 flex items-center gap-3">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#58a6ff] to-[#bc8cff] flex items-center justify-center text-[11px] text-white font-bold shrink-0">
+                  {inv.email.charAt(0).toUpperCase()}
                 </div>
-              );
-            })}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-[#e6edf3] truncate">{inv.email}</div>
+                  <div className="text-[10px] text-[#6e7681]">Invited {new Date(inv.created_at).toLocaleDateString()}</div>
+                </div>
+                <select
+                  value={inv.role}
+                  disabled={changingRole === inv.email}
+                  onChange={e => handleRoleChange(inv.email, e.target.value)}
+                  className="bg-[#21262d] border border-[#30363d] rounded px-2 py-px text-xs text-[#8b949e] outline-none focus:border-[#58a6ff] disabled:opacity-50"
+                >
+                  {ROLE_OPTS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+                <RoleBadge role={inv.role} />
+                <button
+                  onClick={() => handleRevoke(inv.email)}
+                  disabled={revoking === inv.email}
+                  className="p-1.5 rounded text-[#6e7681] hover:text-[#f85149] hover:bg-[#f85149]/10 transition-colors disabled:opacity-40"
+                  title="Revoke access"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </Card>
 
-      <div className="rounded-lg border border-[#30363d] bg-[#161b22] px-4 py-3 text-xs text-[#8b949e] space-y-1">
-        <div className="flex items-center gap-1.5 text-[#58a6ff] font-medium mb-1.5"><Shield size={11} /> How admin access works</div>
-        <div>1. Add a user's platform ID to this whitelist.</div>
-        <div>2. They send <code className="font-mono bg-[#0d1117] px-1 rounded">/admin</code> in the chat bot.</div>
-        <div>3. Bot sends a magic link (4h, single-use) — clicking it sets a secure session cookie.</div>
-        <div>4. Session lasts 8 hours, then they need a new link.</div>
-      </div>
+      {/* Revoked invites */}
+      {revokedInvites.length > 0 && (
+        <Card padding={false}>
+          <div className="px-4 py-3 border-b border-[#30363d] flex items-center gap-2">
+            <Trash2 size={13} className="text-[#6e7681]" />
+            <h2 className="text-sm font-semibold text-[#6e7681]">Revoked ({revokedInvites.length})</h2>
+          </div>
+          <div className="divide-y divide-[#21262d]">
+            {revokedInvites.map(inv => (
+              <div key={inv.email} className="px-4 py-2.5 flex items-center gap-3 opacity-50">
+                <div className="w-6 h-6 rounded-full bg-[#21262d] flex items-center justify-center text-[10px] text-[#6e7681] font-bold shrink-0">
+                  {inv.email.charAt(0).toUpperCase()}
+                </div>
+                <span className="text-xs text-[#6e7681] flex-1 truncate line-through">{inv.email}</span>
+                <RoleBadge role={inv.role} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* IP Allowlist */}
+      <Card>
+        <div className="flex items-center gap-2 mb-4">
+          <Globe size={14} className="text-[#bc8cff]" />
+          <h2 className="text-sm font-semibold text-[#e6edf3]">IP Allowlist</h2>
+          <span className="ml-1 text-[10px] text-[#6e7681]">(empty = open to all IPs)</span>
+        </div>
+        <form onSubmit={handleAddIp} className="flex flex-wrap gap-3 items-end mb-4">
+          <div className="space-y-1 flex-1 min-w-[160px]">
+            <label className="text-xs text-[#8b949e]">IP or CIDR</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="1.2.3.4 or 10.0.0.0/8"
+                className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-sm font-mono text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff]"
+                value={ipForm.cidr}
+                onChange={e => setIpForm(f => ({ ...f, cidr: e.target.value }))}
+              />
+              {myIp && (
+                <button
+                  type="button"
+                  onClick={() => setIpForm(f => ({ ...f, cidr: myIp, label: f.label || 'My IP' }))}
+                  title={`Add my IP (${myIp})`}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#e6edf3] hover:border-[#58a6ff] transition-colors whitespace-nowrap"
+                >
+                  <MapPin size={11} /> My IP
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="space-y-1 w-32">
+            <label className="text-xs text-[#8b949e]">Label</label>
+            <input
+              type="text"
+              placeholder="e.g. Office"
+              className="block w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-sm text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff]"
+              value={ipForm.label}
+              onChange={e => setIpForm(f => ({ ...f, label: e.target.value }))}
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={addingIp}
+            className="flex items-center gap-2 px-4 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-[#e6edf3] text-sm rounded-lg transition-colors border border-[#30363d]"
+          >
+            <Plus size={12} />
+            {addingIp ? 'Adding…' : 'Add'}
+          </button>
+        </form>
+        {ipError && <p className="mb-3 text-xs text-[#f85149]">{ipError}</p>}
+
+        {allowlist.length === 0 ? (
+          <div className="flex items-center gap-2 rounded-lg bg-[#d29922]/10 border border-[#d29922]/20 px-3 py-2.5 text-xs text-[#d29922]">
+            <Globe size={12} /> Allowlist is empty — all IPs can access the dashboard. Add VPN/office IPs to enforce access control.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {allowlist.map(entry => (
+              <div key={entry.id} className="flex items-center gap-3 bg-[#0d1117] rounded-lg px-3 py-2 border border-[#30363d]">
+                <MapPin size={12} className="text-[#bc8cff] shrink-0" />
+                <span className="font-mono text-sm text-[#e6edf3] flex-1">{entry.cidr}</span>
+                {entry.label && <span className="text-xs text-[#8b949e]">{entry.label}</span>}
+                <button
+                  onClick={() => handleDeleteIp(entry.id)}
+                  disabled={deletingIp === entry.id}
+                  className="p-1 rounded text-[#6e7681] hover:text-[#f85149] hover:bg-[#f85149]/10 transition-colors disabled:opacity-40"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

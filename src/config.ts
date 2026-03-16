@@ -176,6 +176,19 @@ export const config = {
       telegramId: process.env.ADMIN_SUPERADMIN_TELEGRAM_ID || process.env.TELEGRAM_ADMIN_ID || '',
       name:       process.env.ADMIN_SUPERADMIN_NAME || 'SuperAdmin',
     },
+    // Microsoft OIDC SSO (BLY-53) — Azure AD single-tenant
+    microsoft: {
+      tenantId:     process.env.MICROSOFT_TENANT_ID     || '',
+      clientId:     process.env.MICROSOFT_CLIENT_ID     || '',
+      clientSecret: process.env.MICROSOFT_CLIENT_SECRET || '',
+      enabled:      !!(process.env.MICROSOFT_TENANT_ID && process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET),
+    },
+    // Google OAuth2 SSO (BLY-54) — Google Workspace
+    google: {
+      clientId:     process.env.GOOGLE_CLIENT_ID     || '',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+      enabled:      !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    },
   },
 
   // Safety

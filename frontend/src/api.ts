@@ -99,6 +99,26 @@ export function streamLogs(
   return es;
 }
 
+// SSO Invites (BLY-50/58)
+export interface SsoInvite { id: number; email: string; role: string; status: string; invited_by: string; created_at: string; }
+export const getInvites = () => get<{ invites: SsoInvite[]; activeCount: number; seatLimit: number }>('/invites');
+export const createInvite = (email: string, role: string) => post<{ ok: boolean; invite: SsoInvite }>('/invites', { email, role });
+export const revokeInvite = (email: string) => del(`/invites/${encodeURIComponent(email)}`);
+export const changeInviteRole = (email: string, role: string) => {
+  return fetch(`${BASE}/invites/${encodeURIComponent(email)}/role`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  }).then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+};
+
+// IP Allowlist (BLY-55)
+export interface AllowlistEntry { id: number; cidr: string; label: string; added_by: string; created_at: string; }
+export const getAllowlist = () => get<{ entries: AllowlistEntry[] }>('/allowlist');
+export const getMyIp = () => get<{ ip: string }>('/allowlist/myip');
+export const addAllowlistEntry = (cidr: string, label: string) => post<{ ok: boolean; cidr: string }>('/allowlist', { cidr, label });
+export const deleteAllowlistEntry = (id: number) => del(`/allowlist/${id}`);
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });
