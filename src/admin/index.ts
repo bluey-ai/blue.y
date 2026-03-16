@@ -9,11 +9,15 @@ import { openDb, insertIncident } from './db';
 import { startConfigWatcher, stopConfigWatcher, isAdminUser } from './config-watcher';
 import { setKubeClient } from './routes/cluster';
 import { setStreamKubeClient } from './routes/stream';
+import { setLogsKubeClient } from './routes/logs';
+import { setDeploymentsKubeClient } from './routes/deployments';
 import incidentRoutes from './routes/incidents';
 import configRoutes from './routes/config';
 import clusterRoutes from './routes/cluster';
 import usersRoutes from './routes/users';
 import streamRoutes from './routes/stream';
+import logsRoutes from './routes/logs';
+import deploymentsRoutes from './routes/deployments';
 import { KubeClient } from '../clients/kube';
 import { config } from '../config';
 import { logger } from '../utils/logger';
@@ -69,10 +73,12 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
   const namespace = opts.namespace ?? (config.kube.namespaces[0] || 'prod');
   await startConfigWatcher(namespace);
 
-  // Wire kube client into cluster + stream routes
+  // Wire kube client into all routes that need it
   if (opts.kube) {
     setKubeClient(opts.kube);
     setStreamKubeClient(opts.kube);
+    setLogsKubeClient(opts.kube);
+    setDeploymentsKubeClient(opts.kube);
   }
 
   // ── Auth routes ─────────────────────────────────────────────────────────────
@@ -189,11 +195,13 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     next();
   });
 
-  router.use('/api/incidents', requireSession, incidentRoutes);
-  router.use('/api/config',    requireSession, configRoutes);
-  router.use('/api/cluster',   requireSession, clusterRoutes);
-  router.use('/api/users',     requireSession, usersRoutes);
-  router.use('/api/stream',    requireSession, streamRoutes);
+  router.use('/api/incidents',   requireSession, incidentRoutes);
+  router.use('/api/config',      requireSession, configRoutes);
+  router.use('/api/cluster',     requireSession, clusterRoutes);
+  router.use('/api/users',       requireSession, usersRoutes);
+  router.use('/api/stream',      requireSession, streamRoutes);
+  router.use('/api/logs',        requireSession, logsRoutes);
+  router.use('/api/deployments', requireSession, deploymentsRoutes);
 
   // API: current session info
   router.get('/api/me', requireSession, (req: Request, res: Response) => {

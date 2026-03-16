@@ -33,6 +33,36 @@ export interface NodeInfo {
   roles: string[];
   allocatable: { cpu: string; memory: string };
   conditions: { type: string; status: string; reason?: string }[];
+  instanceType: string;
+  capacityType: 'SPOT' | 'ON_DEMAND' | 'unknown';
+  zone: string;
+  nodeGroup: string;
+  uptime: string;
+  spotTerminating: boolean;
+}
+
+export interface DeploymentInfo {
+  name: string;
+  namespace: string;
+  replicas: number;
+  readyReplicas: number;
+  availableReplicas: number;
+  image: string;
+  age: string;
+  conditions: { type: string; status: string; reason?: string }[];
+}
+
+export interface LogLine {
+  ts: string;
+  text: string;
+}
+
+export interface LogAnalysis {
+  summary: string;
+  issues: string[];
+  severity: 'info' | 'warning' | 'critical';
+  rootCause?: string;
+  recommendation?: string;
 }
 
 export interface NamespaceHealth {

@@ -56,22 +56,37 @@ export default function Cluster() {
             <thead><tr className="border-b border-[#30363d]">
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Name</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Status</th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Roles</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Type</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Capacity</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Zone</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">CPU</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Memory</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Uptime</th>
             </tr></thead>
             <tbody className="divide-y divide-[#21262d]">
               {nodes.map(n => (
-                <tr key={n.name} className="hover:bg-[#161b22]">
-                  <td className="px-4 py-2.5 font-mono text-xs text-[#e6edf3]">{n.name}</td>
+                <tr key={n.name} className={clsx('hover:bg-[#161b22]', n.spotTerminating && 'bg-[#f85149]/5')}>
+                  <td className="px-4 py-2.5">
+                    <div className="font-mono text-xs text-[#e6edf3]">{n.name}</div>
+                    {n.spotTerminating && (
+                      <div className="text-[10px] text-[#f85149] font-semibold mt-0.5">⚡ SPOT RECLAIM IMMINENT</div>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5">
                     <Badge label={n.status} variant={n.status === 'Ready' ? 'success' : 'critical'} size="xs" />
                   </td>
-                  <td className="px-4 py-2.5 flex gap-1 flex-wrap">
-                    {n.roles.length > 0 ? n.roles.map(r => <Badge key={r} label={r} variant="info" size="xs" />) : <span className="text-[#6e7681] text-xs">worker</span>}
+                  <td className="px-4 py-2.5 font-mono text-xs text-[#8b949e]">{n.instanceType || '—'}</td>
+                  <td className="px-4 py-2.5">
+                    {n.capacityType === 'SPOT'
+                      ? <Badge label="SPOT" variant="warning" size="xs" />
+                      : n.capacityType === 'ON_DEMAND'
+                        ? <Badge label="ON-DEMAND" variant="info" size="xs" />
+                        : <span className="text-[#6e7681] text-xs">—</span>}
                   </td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-[#8b949e]">{n.zone || '—'}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-[#8b949e]">{n.allocatable.cpu}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-[#8b949e]">{n.allocatable.memory}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-[#8b949e]">{n.uptime || '—'}</td>
                 </tr>
               ))}
             </tbody>

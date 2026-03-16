@@ -5,18 +5,22 @@ import Incidents from './pages/Incidents';
 import Cluster from './pages/Cluster';
 import Users from './pages/Users';
 import Config from './pages/Config';
+import Logs from './pages/Logs';
+import Deployments from './pages/Deployments';
 
-export type Page = 'overview' | 'incidents' | 'cluster' | 'users' | 'config';
+export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'users' | 'config';
 
 export default function App() {
   const [page, setPage] = useState<Page>('overview');
 
   const content = {
-    overview:  <Overview />,
-    incidents: <Incidents />,
-    cluster:   <Cluster />,
-    users:     <Users />,
-    config:    <Config />,
+    overview:    <Overview />,
+    incidents:   <Incidents />,
+    cluster:     <Cluster />,
+    deployments: <Deployments />,
+    logs:        <Logs />,
+    users:       <Users />,
+    config:      <Config />,
   }[page];
 
   return (

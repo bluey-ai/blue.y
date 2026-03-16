@@ -22,6 +22,13 @@ export interface NodeInfo {
   roles: string[];
   allocatable: { cpu: string; memory: string };
   conditions: { type: string; status: string; reason?: string }[];
+  // Enhanced node metadata
+  instanceType: string;           // e.g. m5.2xlarge
+  capacityType: 'SPOT' | 'ON_DEMAND' | 'unknown';
+  zone: string;                   // e.g. ap-southeast-1a
+  nodeGroup: string;              // EKS node group name
+  uptime: string;                 // human-readable since boot
+  spotTerminating: boolean;       // true if EC2 termination notice detected
 }
 
 export interface HPAInfo {
@@ -130,24 +137,47 @@ export class KubeClient {
   async getNodes(): Promise<NodeInfo[]> {
     try {
       const res = await this.coreApi.listNode();
-      return (res.items || []).map((node) => ({
-        name: node.metadata?.name || 'unknown',
-        status: node.status?.conditions?.find((c) => c.type === 'Ready')?.status === 'True'
-          ? 'Ready'
-          : 'NotReady',
-        roles: Object.keys(node.metadata?.labels || {})
-          .filter((l) => l.startsWith('node-role.kubernetes.io/'))
-          .map((l) => l.replace('node-role.kubernetes.io/', '')),
-        allocatable: {
-          cpu: node.status?.allocatable?.cpu || '0',
-          memory: node.status?.allocatable?.memory || '0',
-        },
-        conditions: (node.status?.conditions || []).map((c) => ({
-          type: c.type,
-          status: c.status,
-          reason: c.reason,
-        })),
-      }));
+      return (res.items || []).map((node) => {
+        const labels = node.metadata?.labels || {};
+        const taints = node.spec?.taints || [];
+
+        // Detect spot termination notice taint
+        const spotTerminating = taints.some((t) =>
+          t.key === 'aws.amazon.com/spot-instance-termination-notice' ||
+          t.key === 'node.kubernetes.io/unreachable' && t.effect === 'NoExecute',
+        );
+
+        return {
+          name: node.metadata?.name || 'unknown',
+          status: node.status?.conditions?.find((c) => c.type === 'Ready')?.status === 'True'
+            ? 'Ready'
+            : 'NotReady',
+          roles: Object.keys(labels)
+            .filter((l) => l.startsWith('node-role.kubernetes.io/'))
+            .map((l) => l.replace('node-role.kubernetes.io/', '')),
+          allocatable: {
+            cpu: node.status?.allocatable?.cpu || '0',
+            memory: node.status?.allocatable?.memory || '0',
+          },
+          conditions: (node.status?.conditions || []).map((c) => ({
+            type: c.type,
+            status: c.status,
+            reason: c.reason,
+          })),
+          instanceType: labels['node.kubernetes.io/instance-type']
+            || labels['beta.kubernetes.io/instance-type'] || 'unknown',
+          capacityType: (labels['eks.amazonaws.com/capacityType'] === 'SPOT'
+            ? 'SPOT'
+            : labels['eks.amazonaws.com/capacityType'] === 'ON_DEMAND'
+              ? 'ON_DEMAND'
+              : 'unknown') as 'SPOT' | 'ON_DEMAND' | 'unknown',
+          zone: labels['topology.kubernetes.io/zone']
+            || labels['failure-domain.beta.kubernetes.io/zone'] || 'unknown',
+          nodeGroup: labels['eks.amazonaws.com/nodegroup'] || 'unknown',
+          uptime: this.getAge(node.metadata?.creationTimestamp),
+          spotTerminating,
+        };
+      });
     } catch (err) {
       logger.error('Failed to get nodes', err);
       return [];
@@ -268,16 +298,28 @@ export class KubeClient {
     }
   }
 
-  async getDeployments(namespace: string): Promise<{ name: string; ready: string; replicas: number; available: number; age: string }[]> {
+  async getDeployments(namespace: string): Promise<{
+    name: string; namespace: string; replicas: number; readyReplicas: number;
+    availableReplicas: number; image: string; age: string;
+    conditions: { type: string; status: string; reason?: string }[];
+  }[]> {
     try {
       const res = await this.appsApi.listNamespacedDeployment({ namespace });
-      return (res.items || []).map((d) => ({
-        name: d.metadata?.name || 'unknown',
-        ready: `${d.status?.readyReplicas || 0}/${d.status?.replicas || 0}`,
-        replicas: d.status?.replicas || 0,
-        available: d.status?.availableReplicas || 0,
-        age: this.getAge(d.metadata?.creationTimestamp),
-      }));
+      return (res.items || []).map((d) => {
+        const containers = d.spec?.template?.spec?.containers || [];
+        return {
+          name: d.metadata?.name || 'unknown',
+          namespace,
+          replicas: d.spec?.replicas ?? d.status?.replicas ?? 0,
+          readyReplicas: d.status?.readyReplicas || 0,
+          availableReplicas: d.status?.availableReplicas || 0,
+          image: containers[0]?.image || 'unknown',
+          age: this.getAge(d.metadata?.creationTimestamp),
+          conditions: (d.status?.conditions || []).map(c => ({
+            type: c.type, status: c.status, reason: c.reason,
+          })),
+        };
+      });
     } catch (err) {
       logger.error(`Failed to get deployments in ${namespace}`, err);
       return [];
@@ -765,6 +807,34 @@ export class KubeClient {
     } catch (err) {
       logger.error('Failed to get node group map', err);
       return new Map();
+    }
+  }
+
+  /**
+   * Stream pod logs as a writable stream (for admin SSE endpoint).
+   * Returns the IncomingMessage so the caller can call .destroy() on disconnect.
+   */
+  async streamPodLogs(
+    namespace: string,
+    podName: string,
+    container: string,
+    writableStream: import('stream').Writable,
+    opts: { tailLines?: number; follow?: boolean; timestamps?: boolean },
+  ): Promise<{ abort: () => void } | null> {
+    try {
+      const log = new k8s.Log(this.kc);
+      const handle = await log.log(
+        namespace,
+        podName,
+        container || '',
+        writableStream,
+        (err) => { if (err) logger.debug(`Log stream ended: ${err?.message}`); },
+        { follow: opts.follow ?? true, tailLines: opts.tailLines ?? 200, timestamps: opts.timestamps ?? false },
+      );
+      return handle as unknown as { abort: () => void };
+    } catch (err) {
+      logger.error(`Failed to stream logs ${namespace}/${podName}`, err);
+      return null;
     }
   }
 

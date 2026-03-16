@@ -504,8 +504,8 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     const deps = await kube.getDeployments(ns);
     let msg = `📦 <b>Deployments: ${ns}</b>\n\n`;
     deps.forEach((d) => {
-      const icon = d.ready === `${d.replicas}/${d.replicas}` ? '✅' : '❌';
-      msg += `${icon} <code>${d.name}</code> — ${d.ready} (${d.age})\n`;
+      const icon = d.readyReplicas >= d.replicas && d.replicas > 0 ? '✅' : '❌';
+      msg += `${icon} <code>${d.name}</code> — ${d.readyReplicas}/${d.replicas} (${d.age})\n`;
     });
     await telegram.send(msg);
     return;

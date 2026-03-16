@@ -1,4 +1,4 @@
-import type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, ConfigData, NamespaceHealth, StreamEvent } from './types';
+import type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, ConfigData, NamespaceHealth, StreamEvent, DeploymentInfo, LogAnalysis } from './types';
 
 const BASE = '/admin/api';
 
@@ -73,6 +73,32 @@ export const deleteUser = (platform: string, userId: string) => del(`/users/${en
 export const getConfig = () => get<ConfigData>('/config');
 export const saveConfig = (data: Record<string, string>) => put<{ ok: boolean; keys: number }>('/config', { data });
 
+// Deployments
+export const getDeployments = (namespace = 'prod') =>
+  get<{ deployments: DeploymentInfo[]; namespace: string }>(`/deployments?namespace=${encodeURIComponent(namespace)}`);
+export const restartDeployment = (namespace: string, deployment: string) =>
+  post<{ ok: boolean; message: string }>('/deployments/restart', { namespace, deployment });
+export const scaleDeployment = (namespace: string, deployment: string, replicas: number) =>
+  post<{ ok: boolean; message: string }>('/deployments/scale', { namespace, deployment, replicas });
+
+// Logs
+export const getLogPods = (namespace = 'prod') =>
+  get<{ pods: { name: string; containers: string[] }[]; namespace: string }>(`/logs/pods?namespace=${encodeURIComponent(namespace)}`);
+export const fetchLogs = (namespace: string, pod: string, lines = 200) =>
+  get<{ lines: string[]; pod: string; namespace: string }>(`/logs/fetch?namespace=${encodeURIComponent(namespace)}&pod=${encodeURIComponent(pod)}&lines=${lines}`);
+export const analyzeLogs = (pod: string, namespace: string, logs: string) =>
+  post<{ analysis: LogAnalysis }>('/logs/analyze', { pod, namespace, logs });
+export function streamLogs(
+  namespace: string, pod: string, container: string, tail: number,
+  onLine: (line: string) => void, onError?: (e: Event) => void,
+): EventSource {
+  const params = new URLSearchParams({ namespace, pod, container, tail: String(tail) });
+  const es = new EventSource(`/admin/api/logs/stream?${params}`, { withCredentials: true });
+  es.addEventListener('log', (e: MessageEvent) => onLine(e.data));
+  if (onError) es.addEventListener('error', onError);
+  return es;
+}
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });
@@ -83,4 +109,4 @@ export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Ev
   return es;
 }
 
-export type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, ConfigData, NamespaceHealth };
+export type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, ConfigData, NamespaceHealth, DeploymentInfo, LogAnalysis };
