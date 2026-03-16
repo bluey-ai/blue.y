@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Save, Plus, Trash2, RefreshCw, Settings, Info } from 'lucide-react';
-import { getConfig, saveConfig } from '../api';
+import { Save, Plus, Trash2, RefreshCw, Settings, Info, ShieldOff } from 'lucide-react';
+import { getConfig, saveConfig, ForbiddenError } from '../api';
 import Card from '../components/Card';
 import clsx from 'clsx';
 
@@ -13,13 +13,16 @@ export default function Config() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
 
   const load = async () => {
-    setLoading(true); setDirty(false); setMsg(null);
+    setLoading(true); setDirty(false); setMsg(null); setForbidden(false);
     try {
       const r = await getConfig();
       setNote(r.note);
       setRows(Object.entries(r.configMap).map(([key, value]) => ({ key, value })));
+    } catch (e: any) {
+      if (e instanceof ForbiddenError) setForbidden(true);
     } finally { setLoading(false); }
   };
 
@@ -85,7 +88,17 @@ export default function Config() {
         </div>
       )}
 
-      <Card padding={false}>
+      {forbidden && (
+        <div className="flex items-center gap-3 rounded-lg border border-[#f85149]/20 bg-[#f85149]/5 px-4 py-4 text-sm text-[#f85149]">
+          <ShieldOff size={16} className="shrink-0" />
+          <div>
+            <div className="font-semibold">SuperAdmin access required</div>
+            <div className="text-xs text-[#f85149]/70 mt-0.5">Configuration can only be edited by the SuperAdmin.</div>
+          </div>
+        </div>
+      )}
+
+      {!forbidden && <Card padding={false}>
         <div className="px-4 py-3 border-b border-[#30363d] flex items-center gap-2">
           <Settings size={14} className="text-[#58a6ff]" />
           <h2 className="text-sm font-semibold text-[#e6edf3]">ConfigMap Keys</h2>
@@ -131,11 +144,11 @@ export default function Config() {
             </div>
           </div>
         )}
-      </Card>
+      </Card>}
 
-      <div className="rounded-lg border border-[#d29922]/20 bg-[#d29922]/5 px-4 py-3 text-xs text-[#d29922]">
+      {!forbidden && <div className="rounded-lg border border-[#d29922]/20 bg-[#d29922]/5 px-4 py-3 text-xs text-[#d29922]">
         ⚠ Changes are applied to the live ConfigMap immediately. The bot hot-reloads config every 30s — no restart needed for most settings.
-      </div>
+      </div>}
     </div>
   );
 }

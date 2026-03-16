@@ -2,12 +2,14 @@ import type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeRespon
 
 const BASE = '/admin/api';
 
+export class ForbiddenError extends Error {
+  constructor() { super('Requires SuperAdmin access'); this.name = 'ForbiddenError'; }
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { credentials: 'include' });
-  if (res.status === 401 || res.status === 403) {
-    window.location.href = '/admin/login';
-    throw new Error('Unauthorized');
-  }
+  if (res.status === 401) { window.location.href = '/admin/login'; throw new Error('Unauthorized'); }
+  if (res.status === 403) throw new ForbiddenError();
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }

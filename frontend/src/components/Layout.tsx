@@ -12,15 +12,15 @@ interface Props {
   children: React.ReactNode;
 }
 
-const NAV: { id: Page; label: string; Icon: React.ElementType }[] = [
+const NAV: { id: Page; label: string; Icon: React.ElementType; minRole?: string }[] = [
   { id: 'overview',    label: 'Overview',     Icon: LayoutDashboard },
   { id: 'incidents',   label: 'Incidents',    Icon: AlertTriangle },
   { id: 'cluster',     label: 'Cluster',      Icon: Server },
   { id: 'deployments', label: 'Deployments',  Icon: Layers },
   { id: 'logs',        label: 'Log Explorer', Icon: Terminal },
-  { id: 'users',        label: 'Users',        Icon: Users },
-  { id: 'integrations', label: 'Integrations', Icon: Plug },
-  { id: 'config',       label: 'Config',       Icon: Settings },
+  { id: 'users',        label: 'Users',        Icon: Users,     minRole: 'superadmin' },
+  { id: 'integrations', label: 'Integrations', Icon: Plug,      minRole: 'superadmin' },
+  { id: 'config',       label: 'Config',       Icon: Settings,  minRole: 'superadmin' },
 ];
 
 const PLATFORM_COLOR: Record<string, string> = {
@@ -84,7 +84,7 @@ export default function Layout({ page, onNavigate, children }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 py-3 space-y-0.5 px-1.5 overflow-y-auto">
-        {NAV.map(({ id, label, Icon }) => (
+        {NAV.filter(({ minRole }) => !minRole || me?.role === minRole).map(({ id, label, Icon }) => (
           <button
             key={id}
             onClick={() => navigate(id)}
