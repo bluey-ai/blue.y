@@ -30,6 +30,7 @@ docs/CHANGELOG-premium.md
 
 # ── Bitbucket-specific files (internal tooling, no value on GitHub) ───────────
 .bitbucket/
+bitbucket-pipelines.yml
 Dockerfile.premium
 
 # ── Future premium modules (pre-declare to prevent accidental exposure) ───────
