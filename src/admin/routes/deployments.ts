@@ -1,7 +1,14 @@
 // @premium — BlueOnion internal only.
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { KubeClient } from '../../clients/kube';
 import { logger } from '../../utils/logger';
+
+const ROLE_RANK: Record<string, number> = { superadmin: 3, admin: 2, viewer: 1 };
+function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  const role: string = (req as any).adminUser?.role ?? 'viewer';
+  if ((ROLE_RANK[role] ?? 0) >= 2) { next(); return; }
+  res.status(403).json({ error: 'Requires admin role or higher' });
+}
 
 let kubeClient: KubeClient | null = null;
 
@@ -23,8 +30,8 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/deployments/restart — rolling restart
-router.post('/restart', async (req: Request, res: Response) => {
+// POST /api/deployments/restart — rolling restart (admin+)
+router.post('/restart', requireAdmin, async (req: Request, res: Response) => {
   if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }
   const { namespace, deployment } = req.body ?? {};
   if (!namespace || !deployment) {
@@ -44,8 +51,8 @@ router.post('/restart', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/deployments/scale
-router.post('/scale', async (req: Request, res: Response) => {
+// POST /api/deployments/scale (admin+)
+router.post('/scale', requireAdmin, async (req: Request, res: Response) => {
   if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }
   const { namespace, deployment, replicas } = req.body ?? {};
   if (!namespace || !deployment || replicas === undefined) {

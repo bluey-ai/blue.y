@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import path from 'path';
 import { generateMagicLink, validateMagicLink, generateSessionToken, validateSession } from './auth';
-import { openDb, insertIncident } from './db';
+import { openDb, insertIncident, bootstrapSuperAdmin, getAdminUser } from './db';
 import { startConfigWatcher, stopConfigWatcher, isAdminUser } from './config-watcher';
 import { setKubeClient } from './routes/cluster';
 import { setStreamKubeClient } from './routes/stream';
@@ -18,6 +18,9 @@ import usersRoutes from './routes/users';
 import streamRoutes from './routes/stream';
 import logsRoutes from './routes/logs';
 import deploymentsRoutes from './routes/deployments';
+import invitesRoutes from './routes/invites';
+import allowlistRoutes from './routes/allowlist';
+import { ipEnforcementMiddleware } from './middleware/ipEnforcement';
 import { KubeClient } from '../clients/kube';
 import { config } from '../config';
 import { logger } from '../utils/logger';
@@ -35,6 +38,21 @@ function requireSession(req: Request, res: Response, next: NextFunction): void {
   if (!session) { res.clearCookie('bluey_admin_session'); res.redirect('/admin/login'); return; }
   (req as any).adminUser = session;
   next();
+}
+
+// Role guard middleware factory (BLY-51)
+// Role hierarchy: superadmin > admin > viewer
+const ROLE_RANK: Record<string, number> = { superadmin: 3, admin: 2, viewer: 1 };
+
+function requireRole(minRole: 'viewer' | 'admin' | 'superadmin') {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const role: string = (req as any).adminUser?.role ?? 'viewer';
+    if ((ROLE_RANK[role] ?? 0) >= (ROLE_RANK[minRole] ?? 99)) {
+      next();
+    } else {
+      res.status(403).json({ error: `Requires ${minRole} role or higher` });
+    }
+  };
 }
 
 const authRateLimit = rateLimit({
@@ -66,8 +84,9 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     crossOriginEmbedderPolicy: false,  // relaxed for SSE stream compatibility
   }));
 
-  // Initialise SQLite
+  // Initialise SQLite + bootstrap SuperAdmin on first install (BLY-49)
   openDb();
+  bootstrapSuperAdmin();
 
   // Start ConfigMap watcher for admin whitelist
   const namespace = opts.namespace ?? (config.kube.namespaces[0] || 'prod');
@@ -80,6 +99,10 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     setLogsKubeClient(opts.kube);
     setDeploymentsKubeClient(opts.kube);
   }
+
+  // IP enforcement (BLY-52) — runs BEFORE session check on all /admin routes
+  // If allowlist is non-empty and request IP not in any CIDR → generic 401 (no VPN hint)
+  router.use(ipEnforcementMiddleware);
 
   // ── Auth routes ─────────────────────────────────────────────────────────────
 
@@ -127,14 +150,18 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
       return;
     }
 
-    const sessionToken = generateSessionToken(payload.sub, payload.platform, payload.name);
+    // Look up role from admin_users (BLY-49); default to 'viewer' if not found
+    const adminRow = getAdminUser(payload.sub, payload.platform);
+    const role = adminRow?.role ?? 'viewer';
+
+    const sessionToken = generateSessionToken(payload.sub, payload.platform, payload.name, role);
     res.cookie('bluey_admin_session', sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: config.admin.sessionTtlHours * 60 * 60 * 1000,
     });
-    logger.info(`[admin] Session started for ${payload.platform}:${payload.sub} (${payload.name})`);
+    logger.info(`[admin] Session started for ${payload.platform}:${payload.sub} (${payload.name}) role=${role}`);
     res.redirect('/admin/');
   });
 
@@ -195,13 +222,20 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     next();
   });
 
-  router.use('/api/incidents',   requireSession, incidentRoutes);
-  router.use('/api/config',      requireSession, configRoutes);
-  router.use('/api/cluster',     requireSession, clusterRoutes);
-  router.use('/api/users',       requireSession, usersRoutes);
-  router.use('/api/stream',      requireSession, streamRoutes);
-  router.use('/api/logs',        requireSession, logsRoutes);
-  router.use('/api/deployments', requireSession, deploymentsRoutes);
+  // viewer+  — read-only data
+  router.use('/api/incidents',   requireSession, requireRole('viewer'), incidentRoutes);
+  router.use('/api/cluster',     requireSession, requireRole('viewer'), clusterRoutes);
+  router.use('/api/stream',      requireSession, requireRole('viewer'), streamRoutes);
+  router.use('/api/logs',        requireSession, requireRole('viewer'), logsRoutes);
+
+  // admin+   — operational actions (restart/scale handled per-route inside deployments)
+  router.use('/api/deployments', requireSession, requireRole('viewer'), deploymentsRoutes);
+
+  // superadmin only — system config and user management
+  router.use('/api/config',      requireSession, requireRole('superadmin'), configRoutes);
+  router.use('/api/users',       requireSession, requireRole('superadmin'), usersRoutes);
+  router.use('/api/invites',     requireSession, requireRole('superadmin'), invitesRoutes);
+  router.use('/api/allowlist',   requireSession, requireRole('superadmin'), allowlistRoutes);
 
   // API: current session info
   router.get('/api/me', requireSession, (req: Request, res: Response) => {

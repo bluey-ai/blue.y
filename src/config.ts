@@ -171,6 +171,11 @@ export const config = {
     host:            process.env.ADMIN_HOST || '',          // e.g. https://admin.example.com
     sessionTtlHours: parseInt(process.env.ADMIN_SESSION_TTL_HOURS || '8', 10),
     dbPath:          process.env.ADMIN_DB_PATH || '/data/blue-y-incidents.sqlite',
+    // Bootstrap SuperAdmin (BLY-49): auto-create on first install via values.yaml env vars
+    superAdmin: {
+      telegramId: process.env.ADMIN_SUPERADMIN_TELEGRAM_ID || process.env.TELEGRAM_ADMIN_ID || '',
+      name:       process.env.ADMIN_SUPERADMIN_NAME || 'SuperAdmin',
+    },
   },
 
   // Safety

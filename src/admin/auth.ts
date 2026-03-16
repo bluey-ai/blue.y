@@ -51,20 +51,20 @@ export function validateMagicLink(token: string): MagicLinkPayload | null {
   }
 }
 
-export function generateSessionToken(userId: string, platform: string, name: string): string {
+export function generateSessionToken(userId: string, platform: string, name: string, role: string): string {
   return jwt.sign(
-    { sub: userId, platform, name, type: 'session' },
+    { sub: userId, platform, name, role, type: 'session' },
     config.admin.jwtSecret,
     { expiresIn: `${config.admin.sessionTtlHours}h` },
   );
 }
 
-export function validateSession(token: string): { sub: string; name: string; platform: string } | null {
+export function validateSession(token: string): { sub: string; name: string; platform: string; role: string } | null {
   try {
     const payload = jwt.verify(token, config.admin.jwtSecret) as Record<string, string>;
     if (payload.type !== 'session') return null;
     if (!payload.sub || !payload.name || !payload.platform) return null;
-    return { sub: payload.sub, name: payload.name, platform: payload.platform };
+    return { sub: payload.sub, name: payload.name, platform: payload.platform, role: payload.role ?? 'viewer' };
   } catch {
     return null;
   }
