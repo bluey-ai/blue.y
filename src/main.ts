@@ -1237,8 +1237,10 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     await telegram.send(
       `🔵 <b>BLUE.Y Admin Dashboard</b>\n\n` +
       `Hi <b>${adminUser.displayName}</b>, your magic link is ready:\n\n` +
-      `<a href="${link}">Open Admin Dashboard →</a>\n\n` +
-      `⏱ Expires in <b>4 hours</b> • Single use • Do not share`,
+      `<a href="${link}">🔓 Open Admin Dashboard →</a>\n\n` +
+      `⏱ Expires in <b>4 hours</b> • Single use\n\n` +
+      `⚠️ <b>Security notice:</b> This link grants full cluster control (restart pods, scale deployments, edit config). ` +
+      `Do not share it or open it on untrusted devices. If compromised, your session expires automatically in 4 hours.`,
       fromId || chatId,
     );
     return;
