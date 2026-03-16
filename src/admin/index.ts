@@ -10,7 +10,7 @@ import { startConfigWatcher, stopConfigWatcher, isAdminUser } from './config-wat
 import { setKubeClient } from './routes/cluster';
 import { setStreamKubeClient } from './routes/stream';
 import { setLogsKubeClient } from './routes/logs';
-import { setDeploymentsKubeClient } from './routes/deployments';
+import { setDeploymentsKubeClient, setDeploymentsTelegramSend } from './routes/deployments';
 import incidentRoutes from './routes/incidents';
 import configRoutes from './routes/config';
 import clusterRoutes from './routes/cluster';
@@ -22,6 +22,7 @@ import invitesRoutes from './routes/invites';
 import allowlistRoutes from './routes/allowlist';
 import ssoRoutes from './routes/sso';
 import integrationsRoutes from './routes/integrations';
+import licenseRoutes from './routes/license';
 import { ipEnforcementMiddleware } from './middleware/ipEnforcement';
 import { KubeClient } from '../clients/kube';
 import { config } from '../config';
@@ -30,6 +31,8 @@ import { logger } from '../utils/logger';
 export interface AdminModuleOptions {
   kube?: KubeClient;
   namespace?: string;
+  // BLY-62: telegram send function for approval notifications
+  telegramSend?: (msg: string, chatId?: string, opts?: Record<string, unknown>) => Promise<unknown>;
 }
 
 // Session guard middleware
@@ -100,6 +103,10 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     setStreamKubeClient(opts.kube);
     setLogsKubeClient(opts.kube);
     setDeploymentsKubeClient(opts.kube);
+  }
+  // Wire Telegram sender for approval notifications (BLY-62)
+  if (opts.telegramSend) {
+    setDeploymentsTelegramSend(opts.telegramSend);
   }
 
   // IP enforcement (BLY-52) — runs BEFORE session check on all /admin routes
@@ -305,6 +312,9 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
 
   // integrations — GET: all roles (secrets masked for non-superadmin), PUT: superadmin only (enforced inside route)
   router.use('/api/integrations', requireSession, requireRole('viewer'), integrationsRoutes);
+
+  // license — GET: all roles (show plan/seats), POST /verify: superadmin only
+  router.use('/api/license',      requireSession, requireRole('viewer'), licenseRoutes);
 
   // API: current session info
   router.get('/api/me', requireSession, (req: Request, res: Response) => {

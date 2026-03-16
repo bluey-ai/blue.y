@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader } from 'lucide-react';
-import { getDeployments, restartDeployment, scaleDeployment } from '../api';
+import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock } from 'lucide-react';
+import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision } from '../api';
 import type { DeploymentInfo } from '../types';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
@@ -8,7 +8,7 @@ import clsx from 'clsx';
 
 const NAMESPACES = ['prod', 'dev', 'monitoring', 'doris', 'wordpress'];
 
-type ActionPhase = 'idle' | 'requesting' | 'polling' | 'done' | 'error';
+type ActionPhase = 'idle' | 'requesting' | 'awaiting_approval' | 'polling' | 'done' | 'error';
 
 interface RowAction {
   phase: ActionPhase;
@@ -24,6 +24,7 @@ export default function Deployments() {
   const [actions, setActions] = useState<Record<string, RowAction>>({});
   const [scaleTargets, setScaleTargets] = useState<Record<string, number>>({});
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const sseCancelRef = useRef<Record<string, () => void>>({});
 
   const load = useCallback(async (namespace: string, silent = false) => {
     if (!silent) setLoading(true);
@@ -47,10 +48,14 @@ export default function Deployments() {
 
   useEffect(() => { load(ns); }, [ns, load]);
 
-  // Clean up all poll timers on unmount / ns change
+  // Clean up all poll timers and SSE listeners on unmount / ns change
   useEffect(() => {
     const timers = pollTimers.current;
-    return () => { Object.values(timers).forEach(clearInterval); };
+    const cancels = sseCancelRef.current;
+    return () => {
+      Object.values(timers).forEach(clearInterval);
+      Object.values(cancels).forEach(fn => fn());
+    };
   }, [ns]);
 
   const setAction = (name: string, action: RowAction) => {
@@ -65,6 +70,13 @@ export default function Deployments() {
     if (pollTimers.current[name]) {
       clearInterval(pollTimers.current[name]);
       delete pollTimers.current[name];
+    }
+  };
+
+  const cancelSse = (name: string) => {
+    if (sseCancelRef.current[name]) {
+      sseCancelRef.current[name]();
+      delete sseCancelRef.current[name];
     }
   };
 
@@ -107,13 +119,44 @@ export default function Deployments() {
     }, 3000);
   };
 
+  const handleApprovalResponse = (
+    name: string,
+    approvalId: string,
+    onApproved: () => void,
+  ) => {
+    cancelSse(name);
+    setAction(name, { phase: 'awaiting_approval', message: 'Awaiting SuperAdmin approval…' });
+    const cancel = waitForApprovalDecision(approvalId, (status) => {
+      cancelSse(name);
+      if (status === 'approved') {
+        setAction(name, { phase: 'polling', message: 'Approved — executing…' });
+        onApproved();
+      } else if (status === 'rejected') {
+        setAction(name, { phase: 'error', message: 'Rejected by SuperAdmin.' });
+        clearAction(name, 5000);
+      } else {
+        setAction(name, { phase: 'error', message: 'Approval request expired (10 min).' });
+        clearAction(name, 5000);
+      }
+    });
+    sseCancelRef.current[name] = cancel;
+  };
+
   const doRestart = async (d: DeploymentInfo) => {
     stopPoll(d.name);
+    cancelSse(d.name);
     setAction(d.name, { phase: 'requesting', message: 'Sending restart…' });
     try {
-      await restartDeployment(ns, d.name);
-      setAction(d.name, { phase: 'polling', message: 'Rolling restart triggered…', ready: d.readyReplicas, desired: d.replicas });
-      startPolling(d.name, d.replicas, 'restart');
+      const result = await restartDeployment(ns, d.name);
+      if (result.requiresApproval && result.approvalId) {
+        handleApprovalResponse(d.name, result.approvalId, () => {
+          setAction(d.name, { phase: 'polling', message: 'Rolling restart triggered…', ready: d.readyReplicas, desired: d.replicas });
+          startPolling(d.name, d.replicas, 'restart');
+        });
+      } else {
+        setAction(d.name, { phase: 'polling', message: 'Rolling restart triggered…', ready: d.readyReplicas, desired: d.replicas });
+        startPolling(d.name, d.replicas, 'restart');
+      }
     } catch (e: any) {
       setAction(d.name, { phase: 'error', message: e.message });
       clearAction(d.name);
@@ -124,14 +167,23 @@ export default function Deployments() {
     const target = scaleTargets[d.name] ?? d.replicas;
     if (target === d.replicas) return;
     stopPoll(d.name);
+    cancelSse(d.name);
     setAction(d.name, { phase: 'requesting', message: `Scaling to ${target}…` });
     try {
-      await scaleDeployment(ns, d.name, target);
-      setAction(d.name, { phase: 'polling', message: `Waiting for ${target} pod${target !== 1 ? 's' : ''}…`, ready: d.readyReplicas, desired: target });
-      // Optimistically update replicas shown
-      setDeployments(prev => prev.map(x => x.name === d.name ? { ...x, replicas: target } : x));
-      setScaleTargets(s => ({ ...s, [d.name]: target }));
-      startPolling(d.name, target, 'scale');
+      const result = await scaleDeployment(ns, d.name, target);
+      if (result.requiresApproval && result.approvalId) {
+        handleApprovalResponse(d.name, result.approvalId, () => {
+          setAction(d.name, { phase: 'polling', message: `Waiting for ${target} pod${target !== 1 ? 's' : ''}…`, ready: d.readyReplicas, desired: target });
+          setDeployments(prev => prev.map(x => x.name === d.name ? { ...x, replicas: target } : x));
+          setScaleTargets(s => ({ ...s, [d.name]: target }));
+          startPolling(d.name, target, 'scale');
+        });
+      } else {
+        setAction(d.name, { phase: 'polling', message: `Waiting for ${target} pod${target !== 1 ? 's' : ''}…`, ready: d.readyReplicas, desired: target });
+        setDeployments(prev => prev.map(x => x.name === d.name ? { ...x, replicas: target } : x));
+        setScaleTargets(s => ({ ...s, [d.name]: target }));
+        startPolling(d.name, target, 'scale');
+      }
     } catch (e: any) {
       setAction(d.name, { phase: 'error', message: e.message });
       clearAction(d.name);
@@ -203,6 +255,7 @@ export default function Deployments() {
                 return (
                   <tr key={d.name} className={clsx(
                     'hover:bg-[#161b22] transition-colors',
+                    act?.phase === 'awaiting_approval' && 'bg-[#bc8cff]/5',
                     act?.phase === 'polling' && 'bg-[#58a6ff]/5',
                     act?.phase === 'done' && 'bg-[#3fb950]/5',
                     act?.phase === 'error' && 'bg-[#f85149]/5',
@@ -214,12 +267,14 @@ export default function Deployments() {
                       {act && act.phase !== 'idle' && (
                         <div className="mt-1.5 flex items-center gap-1.5">
                           {act.phase === 'requesting' && <Loader size={10} className="text-[#58a6ff] animate-spin shrink-0" />}
+                          {act.phase === 'awaiting_approval' && <Clock size={10} className="text-[#bc8cff] animate-pulse shrink-0" />}
                           {act.phase === 'polling' && <Loader size={10} className="text-[#d29922] animate-spin shrink-0" />}
                           {act.phase === 'done' && <CheckCircle size={10} className="text-[#3fb950] shrink-0" />}
                           {act.phase === 'error' && <XCircle size={10} className="text-[#f85149] shrink-0" />}
                           <span className={clsx('text-[10px] font-mono',
                             act.phase === 'done' ? 'text-[#3fb950]' :
                             act.phase === 'error' ? 'text-[#f85149]' :
+                            act.phase === 'awaiting_approval' ? 'text-[#bc8cff]' :
                             act.phase === 'polling' ? 'text-[#d29922]' : 'text-[#8b949e]'
                           )}>{act.message}</span>
                         </div>
@@ -280,7 +335,7 @@ export default function Deployments() {
                         {target !== d.replicas && (
                           <button
                             onClick={() => doScale(d)}
-                            disabled={!!act && act.phase === 'requesting' || act?.phase === 'polling'}
+                            disabled={act?.phase === 'requesting' || act?.phase === 'awaiting_approval' || act?.phase === 'polling'}
                             className="ml-1 px-2 py-0.5 rounded text-[10px] bg-[#d29922]/20 text-[#d29922] hover:bg-[#d29922]/30 transition-colors font-semibold disabled:opacity-40"
                           >
                             Apply
@@ -293,19 +348,26 @@ export default function Deployments() {
                     <td className="px-4 py-3">
                       <button
                         onClick={() => doRestart(d)}
-                        disabled={act?.phase === 'requesting' || act?.phase === 'polling'}
+                        disabled={act?.phase === 'requesting' || act?.phase === 'awaiting_approval' || act?.phase === 'polling'}
                         className={clsx(
                           'flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors border disabled:opacity-40 disabled:cursor-not-allowed',
-                          act?.phase === 'polling'
+                          act?.phase === 'awaiting_approval'
+                            ? 'bg-[#bc8cff]/10 text-[#bc8cff] border-[#bc8cff]/20'
+                            : act?.phase === 'polling'
                             ? 'bg-[#d29922]/10 text-[#d29922] border-[#d29922]/20'
                             : act?.phase === 'done'
                               ? 'bg-[#3fb950]/10 text-[#3fb950] border-[#3fb950]/20'
                               : 'bg-[#58a6ff]/10 text-[#58a6ff] hover:bg-[#58a6ff]/20 border-[#58a6ff]/20',
                         )}
                       >
-                        <RotateCcw size={11} className={clsx(act?.phase === 'polling' && 'animate-spin')} />
+                        {act?.phase === 'awaiting_approval'
+                          ? <Clock size={11} className="animate-pulse" />
+                          : <RotateCcw size={11} className={clsx(act?.phase === 'polling' && 'animate-spin')} />
+                        }
                         <span className="hidden sm:inline">
-                          {act?.phase === 'polling' ? 'Restarting' : act?.phase === 'done' ? 'Done' : 'Restart'}
+                          {act?.phase === 'awaiting_approval' ? 'Pending' :
+                           act?.phase === 'polling' ? 'Restarting' :
+                           act?.phase === 'done' ? 'Done' : 'Restart'}
                         </span>
                       </button>
                     </td>

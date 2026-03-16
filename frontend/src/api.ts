@@ -74,12 +74,38 @@ export const getConfig = () => get<ConfigData>('/config');
 export const saveConfig = (data: Record<string, string>) => put<{ ok: boolean; keys: number }>('/config', { data });
 
 // Deployments
+export interface DeploymentActionResult {
+  ok: boolean;
+  message: string;
+  requiresApproval?: boolean;
+  approvalId?: string;
+}
+
 export const getDeployments = (namespace = 'prod') =>
   get<{ deployments: DeploymentInfo[]; namespace: string }>(`/deployments?namespace=${encodeURIComponent(namespace)}`);
 export const restartDeployment = (namespace: string, deployment: string) =>
-  post<{ ok: boolean; message: string }>('/deployments/restart', { namespace, deployment });
+  post<DeploymentActionResult>('/deployments/restart', { namespace, deployment });
 export const scaleDeployment = (namespace: string, deployment: string, replicas: number) =>
-  post<{ ok: boolean; message: string }>('/deployments/scale', { namespace, deployment, replicas });
+  post<DeploymentActionResult>('/deployments/scale', { namespace, deployment, replicas });
+
+/** Subscribe to an approval SSE stream. Returns a cleanup function. */
+export function waitForApprovalDecision(
+  approvalId: string,
+  onDecision: (status: 'approved' | 'rejected' | 'expired') => void,
+): () => void {
+  const es = new EventSource(`${BASE}/deployments/approval/${encodeURIComponent(approvalId)}/wait`, { withCredentials: true });
+  es.addEventListener('decision', (ev: MessageEvent) => {
+    try {
+      const data = JSON.parse(ev.data);
+      onDecision(data.status);
+    } catch {
+      // ignore parse errors
+    }
+    es.close();
+  });
+  es.onerror = () => { onDecision('expired'); es.close(); };
+  return () => es.close();
+}
 
 // Logs
 export const getLogPods = (namespace = 'prod') =>

@@ -1,21 +1,22 @@
-// @premium — BlueOnion internal only. (BLY-50)
+// @premium — BlueOnion internal only. (BLY-50/61)
 import { Router, Request, Response } from 'express';
 import {
   listSsoInvites, getSsoInvite, createSsoInvite, revokeSsoInvite,
   changeSsoInviteRole, countActiveInvites,
 } from '../db';
 import type { AdminRole } from '../db';
+import { getAuthorisedSeats } from '../license';
 
 const router = Router();
 
-const SEAT_LIMIT = parseInt(process.env.ADMIN_SEAT_LIMIT || '10', 10);
 const VALID_ROLES: AdminRole[] = ['admin', 'viewer']; // superadmin cannot be invited via SSO
 
 // GET /api/invites — list all SSO invites
 router.get('/', (_req: Request, res: Response) => {
   const invites = listSsoInvites();
   const activeCount = invites.filter(i => i.status === 'active').length;
-  res.json({ invites, activeCount, seatLimit: SEAT_LIMIT });
+  const seatLimit = getAuthorisedSeats();
+  res.json({ invites, activeCount, seatLimit });
 });
 
 // POST /api/invites — create a new invite
@@ -31,13 +32,14 @@ router.post('/', (req: Request, res: Response) => {
     return;
   }
 
-  // Check seat limit
+  // Check seat limit against active license (BLY-61)
+  const seatLimit = getAuthorisedSeats();
   const activeCount = countActiveInvites();
-  if (activeCount >= SEAT_LIMIT) {
+  if (activeCount >= seatLimit) {
     res.status(402).json({
-      error: `Seat limit reached (${SEAT_LIMIT} active). Upgrade your license to invite more users.`,
+      error: `Seat limit reached (${seatLimit} active). Upgrade your license to invite more users ($2.99/user/month).`,
       code: 'SEAT_LIMIT_REACHED',
-      seatLimit: SEAT_LIMIT,
+      seatLimit,
       activeCount,
     });
     return;

@@ -13,7 +13,7 @@ export class TelegramClient {
     this.chatId = config.telegram.chatId;
   }
 
-  async send(message: string, chatId?: string): Promise<boolean> {
+  async send(message: string, chatId?: string, opts?: Record<string, unknown>): Promise<boolean> {
     const targetChat = chatId || this.chatId;
 
     if (!this.botToken || !targetChat) {
@@ -35,6 +35,7 @@ export class TelegramClient {
           text: truncated,
           parse_mode: 'HTML',
           disable_web_page_preview: true,
+          ...opts,
         },
         { timeout: 10000 },
       );

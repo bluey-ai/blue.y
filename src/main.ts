@@ -3050,6 +3050,68 @@ async function startPolling(): Promise<void> {
 
       for (const update of res.data.result || []) {
         lastUpdateId = update.update_id;
+
+        // BLY-62: Handle inline keyboard callbacks for action approvals
+        if (update.callback_query) {
+          const cb = update.callback_query;
+          const data: string = cb.data ?? '';
+          const fromUserId = String(cb.from?.id ?? '');
+          if (data.startsWith('approval:') && adminModule) {
+            const [, decision, approvalId] = data.split(':');
+            // Only the SuperAdmin can approve/reject
+            if (adminModule.isSuperAdmin(fromUserId) && (decision === 'approve' || decision === 'reject')) {
+              const { resolveApproval, getApproval } = require('./admin/approvals');
+              const approval = getApproval(approvalId);
+              if (approval) {
+                const resolved = resolveApproval(approvalId, decision === 'approve' ? 'approved' : 'rejected');
+                if (resolved) {
+                  const emoji = decision === 'approve' ? '✅' : '❌';
+                  // Execute the action if approved
+                  if (decision === 'approve' && kube) {
+                    try {
+                      if (resolved.action === 'restart') {
+                        await kube.restartDeployment(resolved.namespace, resolved.deployment);
+                      } else if (resolved.action === 'scale' && resolved.replicas !== undefined) {
+                        await kube.scaleDeployment(resolved.namespace, resolved.deployment, resolved.replicas);
+                      }
+                      logger.info(`[approvals] Executed ${resolved.action} ${resolved.namespace}/${resolved.deployment} after approval`);
+                    } catch (e: any) {
+                      logger.error(`[approvals] Execution failed after approval: ${e?.message}`);
+                    }
+                  }
+                  // Answer the callback query (clears the loading spinner in Telegram)
+                  await axios.post(`${API}/answerCallbackQuery`, {
+                    callback_query_id: cb.id,
+                    text: decision === 'approve' ? '✅ Approved and executed' : '❌ Rejected',
+                  });
+                  // Edit the original message to show the decision
+                  if (cb.message?.message_id && cb.message?.chat?.id) {
+                    await axios.post(`${API}/editMessageText`, {
+                      chat_id: cb.message.chat.id,
+                      message_id: cb.message.message_id,
+                      text: `${emoji} <b>${decision === 'approve' ? 'APPROVED' : 'REJECTED'}</b>\n\n` +
+                            `Action: ${resolved.action} ${resolved.namespace}/${resolved.deployment}\n` +
+                            `Requested by: ${resolved.requestedBy}`,
+                      parse_mode: 'HTML',
+                    }).catch(() => { /* ignore if message too old */ });
+                  }
+                }
+              } else {
+                await axios.post(`${API}/answerCallbackQuery`, {
+                  callback_query_id: cb.id,
+                  text: '⚠️ Approval not found or already resolved.',
+                });
+              }
+            } else {
+              await axios.post(`${API}/answerCallbackQuery`, {
+                callback_query_id: cb.id,
+                text: '⛔ Only the SuperAdmin can approve or reject actions.',
+              });
+            }
+          }
+          continue;
+        }
+
         const msg = update.message;
         if (!msg?.text) continue;
 
@@ -3579,7 +3641,13 @@ const server = app.listen(config.port, async () => {
       // Admin ConfigMaps (blue-y-admin-users, blue-y-config) live in the pod's own namespace,
       // NOT necessarily in WATCH_NAMESPACES[0] which may be a different namespace entirely.
       const adminNamespace = process.env.POD_NAMESPACE ?? process.env.MY_POD_NAMESPACE ?? config.kube.namespaces[0];
-      adminModule.createAdminApp({ kube, namespace: adminNamespace })
+      adminModule.createAdminApp({
+        kube,
+        namespace: adminNamespace,
+        // BLY-62: pass Telegram send so approval requests reach SuperAdmin
+        telegramSend: (msg: string, chatId?: string, opts?: Record<string, unknown>) =>
+          telegram.send(msg, chatId, opts),
+      })
         .then((adminApp: any) => {
           app.use('/admin', adminApp);
           logger.info(`[admin] Dashboard mounted at /admin — ${config.admin.host}/admin`);
