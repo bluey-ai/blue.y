@@ -37,7 +37,7 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
   openDb();
 
   // Start ConfigMap watcher for admin whitelist
-  const namespace = opts.namespace ?? config.kube.watchNamespaces.split(',')[0].trim() || 'prod';
+  const namespace = opts.namespace ?? (config.kube.namespaces[0] || 'prod');
   await startConfigWatcher(namespace);
 
   // Wire kube client into cluster routes
