@@ -1,0 +1,115 @@
+name: Deploy to Kubernetes
+
+# Triggered automatically on new version tags (e.g. v1.4.1)
+# or manually from the GitHub Actions tab.
+#
+# ── REQUIRED GITHUB SECRETS ─────────────────────────────────────────────────
+#  AWS_ACCOUNT_ID       Your AWS account ID (e.g. 123456789012)
+#  AWS_REGION           AWS region            (e.g. ap-southeast-1)
+#  EKS_CLUSTER_NAME     Your EKS cluster name (e.g. my-cluster)
+#  K8S_NAMESPACE        Kubernetes namespace   (e.g. prod)
+#  AWS_ROLE_ARN         IAM role for GitHub OIDC (recommended)
+#                       OR set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
+#
+# ── SETUP GUIDE ─────────────────────────────────────────────────────────────
+#  Full instructions: https://github.com/bluey-ai/blue.y/blob/main/docs/deploy.md
+# ────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options: [production, staging]
+
+permissions:
+  id-token: write   # required for OIDC auth
+  contents: read
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC — recommended)
+        if: vars.USE_OIDC != 'false'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Configure AWS credentials (Access Keys — fallback)
+        if: vars.USE_OIDC == 'false'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          ECR="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/blue-y"
+          VERSION=$(grep '"version"' package.json | head -1 | awk -F'"' '{print $4}')
+          echo "ecr=${ECR}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "short_sha=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Build & push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.ecr }}:latest
+            ${{ steps.meta.outputs.ecr }}:v${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.ecr }}:${{ github.sha }}
+          build-args: |
+            BUILD_VERSION=${{ steps.meta.outputs.version }}
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.run_started_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ secrets.AWS_REGION }} \
+            --name ${{ secrets.EKS_CLUSTER_NAME }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          ECR="${{ steps.meta.outputs.ecr }}"
+          NAMESPACE="${{ secrets.K8S_NAMESPACE }}"
+          ACCOUNT_ID="${{ secrets.AWS_ACCOUNT_ID }}"
+
+          sed \
+            -e "s|<namespace>|${NAMESPACE}|g" \
+            -e "s|<tag>|production|g" \
+            -e "s|<HASH>|${GITHUB_SHA}|g" \
+            -e "s|<ECR>|${ECR}|g" \
+            -e "s|<ACCOUNT_ID>|${ACCOUNT_ID}|g" \
+            deploy/deployment_production.yaml > deployment.yaml
+
+          kubectl apply -f deployment.yaml
+          kubectl rollout status deployment/blue-y-production -n "${NAMESPACE}" --timeout=120s
+
+          echo "✅ BLUE.Y v${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.short_sha }}) deployed to ${NAMESPACE}"
