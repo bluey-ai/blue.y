@@ -168,6 +168,10 @@ spec:
                   optional: true
             - name: SCHEDULE_DAILY_REPORT
               value: "0 9 * * *"
+            - name: PRODUCTION_URLS
+              value: "<PRODUCTION_URLS>"
+            - name: PING_SERVICE_MAP
+              value: "<PING_SERVICE_MAP>"
           ports:
             - containerPort: 8000
           readinessProbe:

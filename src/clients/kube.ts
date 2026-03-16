@@ -39,6 +39,7 @@ export interface HPAInfo {
 export class KubeClient {
   private coreApi: k8s.CoreV1Api;
   private appsApi: k8s.AppsV1Api;
+  private networkingApi: k8s.NetworkingV1Api;
   private kc: k8s.KubeConfig;
 
   constructor() {
@@ -52,6 +53,7 @@ export class KubeClient {
 
     this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api);
     this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api);
+    this.networkingApi = this.kc.makeApiClient(k8s.NetworkingV1Api);
   }
 
   async getPods(namespace: string): Promise<PodInfo[]> {
@@ -485,6 +487,42 @@ export class KubeClient {
       if (match) return { deployment: match.name, namespace: ns };
     }
     return null;
+  }
+
+  /**
+   * Auto-discover production URLs from Ingress resources across all user namespaces.
+   * Used as a fallback when PRODUCTION_URLS is not configured.
+   * Returns one entry per unique host (path is ignored — we test the root).
+   */
+  async getIngressUrls(): Promise<{ name: string; url: string; expect: number }[]> {
+    try {
+      const namespaces = await this.getUserNamespaces();
+      const seen = new Set<string>();
+      const results: { name: string; url: string; expect: number }[] = [];
+
+      for (const ns of namespaces) {
+        try {
+          const res = await this.networkingApi.listNamespacedIngress({ namespace: ns });
+          for (const ingress of res.items || []) {
+            const ingressName = ingress.metadata?.name || 'unknown';
+            for (const rule of ingress.spec?.rules || []) {
+              const host = rule.host;
+              if (!host || seen.has(host)) continue;
+              seen.add(host);
+              results.push({
+                name: `${ingressName} (${ns})`,
+                url: `https://${host}`,
+                expect: 200,
+              });
+            }
+          }
+        } catch { /* namespace may not have networking access */ }
+      }
+      return results;
+    } catch (err) {
+      logger.warn(`Failed to auto-discover ingress URLs: ${err}`);
+      return [];
+    }
   }
 
   // Namespaces that are internal to Kubernetes — excluded from /status, shown by /system-status

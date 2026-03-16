@@ -52,11 +52,12 @@ const BAD_HEADERS = [
 ];
 
 export class QAClient {
-  // Run smoke tests on all production URLs
-  async smokeTest(): Promise<SmokeTestResult[]> {
+  // Run smoke tests — uses provided URLs or falls back to PRODUCTION_URLS config
+  async smokeTest(urls?: { name: string; url: string; expect?: number }[]): Promise<SmokeTestResult[]> {
     const results: SmokeTestResult[] = [];
+    const endpoints = urls ?? config.productionUrls;
 
-    const promises = config.productionUrls.map(async (endpoint: { name: string; url: string; expect?: number }) => {
+    const promises = endpoints.map(async (endpoint: { name: string; url: string; expect?: number }) => {
       const start = Date.now();
       try {
         const response = await axios.get(endpoint.url, {

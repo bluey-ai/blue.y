@@ -793,8 +793,16 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
 
   // --- QA Smoke Test ---
   if (cmd === '/smoketest' || cmd === '/smoke' || cmd.match(/^(run\s+)?smoke\s*test/i)) {
-    await telegram.send('🧪 Running smoke tests on all production URLs...');
-    const results = await qaClient.smokeTest();
+    // Use configured URLs; if none set, auto-discover from cluster Ingress resources
+    let smokeUrls = config.productionUrls;
+    let autoDiscovered = false;
+    if (smokeUrls.length === 0) {
+      smokeUrls = await kube.getIngressUrls();
+      autoDiscovered = smokeUrls.length > 0;
+    }
+    const urlNote = autoDiscovered ? ` (auto-discovered ${smokeUrls.length} URLs from Ingress)` : ` (${smokeUrls.length} URLs)`;
+    await telegram.send(`🧪 Running smoke tests on all production URLs...${urlNote}`);
+    const results = await qaClient.smokeTest(smokeUrls.length > 0 ? smokeUrls : undefined);
     await telegram.send(qaClient.formatSmokeTestTelegram(results));
 
     // If any service is down, trigger AI analysis
