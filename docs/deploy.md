@@ -1,130 +1,177 @@
-# Deploying BLUE.Y to Your Kubernetes Cluster
+# BLUE.Y — Setup Guide
 
-This guide gets you from zero to a running BLUE.Y pod in under 15 minutes.
-
-## Prerequisites
-
-- AWS account with EKS cluster running
-- ECR repository named `blue-y` in your account
-- `kubectl` configured and pointing at your cluster
-- GitHub repository forked from `bluey-ai/blue.y`
+Get BLUE.Y running on your Kubernetes cluster in 15 minutes.
 
 ---
 
-## Step 1 — Create the K8s Secret
-
-BLUE.Y reads all sensitive config from a single Kubernetes secret. Run this once:
-
-```bash
-kubectl create secret generic blue-y-secrets \
-  --namespace prod \
-  --from-literal=deepseek-api-key=YOUR_DEEPSEEK_API_KEY \
-  --from-literal=telegram-bot-token=YOUR_TELEGRAM_BOT_TOKEN \
-  --from-literal=telegram-chat-id=YOUR_TELEGRAM_CHAT_ID \
-  --from-literal=jira-email=you@yourcompany.com \
-  --from-literal=jira-api-token=YOUR_JIRA_API_TOKEN
-```
-
-> Only `deepseek-api-key` and `telegram-bot-token` + `telegram-chat-id` are required to get started.
-> Everything else is optional.
-
----
-
-## Step 2 — Set GitHub Secrets
-
-In your GitHub repo → **Settings → Secrets and variables → Actions**, add:
-
-| Secret | Value |
-|--------|-------|
-| `AWS_ACCOUNT_ID` | Your AWS account ID (e.g. `123456789012`) |
-| `AWS_REGION` | Your AWS region (e.g. `ap-southeast-1`) |
-| `EKS_CLUSTER_NAME` | Your EKS cluster name (e.g. `my-cluster`) |
-| `K8S_NAMESPACE` | Kubernetes namespace (e.g. `prod`) |
-| `AWS_ROLE_ARN` | IAM role ARN for GitHub OIDC (see Step 3) |
-
----
-
-## Step 3 — IAM Role for GitHub Actions (OIDC)
-
-Create an IAM role that GitHub Actions can assume. This is more secure than access keys.
-
-```bash
-# Create the trust policy
-cat > trust-policy.json << 'EOF'
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Principal": {
-      "Federated": "arn:aws:iam::YOUR_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
-    },
-    "Action": "sts:AssumeRoleWithWebIdentity",
-    "Condition": {
-      "StringLike": {
-        "token.actions.githubusercontent.com:sub": "repo:YOUR_GITHUB_ORG/blue.y:*"
-      }
-    }
-  }]
-}
-EOF
-
-# Create the role
-aws iam create-role \
-  --role-name BlueYGitHubDeploy \
-  --assume-role-policy-document file://trust-policy.json
-
-# Attach required policies
-aws iam attach-role-policy \
-  --role-name BlueYGitHubDeploy \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
-
-aws iam attach-role-policy \
-  --role-name BlueYGitHubDeploy \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
-```
-
-Set `AWS_ROLE_ARN` secret to `arn:aws:iam::YOUR_ACCOUNT_ID:role/BlueYGitHubDeploy`.
-
-> **Prefer access keys?** Set `vars.USE_OIDC = false` (repo variable, not secret), then add
-> `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` secrets instead.
-
----
-
-## Step 4 — Deploy
-
-Push a version tag to trigger the pipeline:
-
-```bash
-git tag v1.4.1
-git push origin v1.4.1
-```
-
-Or trigger manually: **GitHub → Actions → Deploy to Kubernetes → Run workflow**.
-
-Watch the rollout:
-
-```bash
-kubectl rollout status deployment/blue-y-production -n prod
-kubectl logs -f deployment/blue-y-production -n prod
-```
-
----
-
-## Verify
-
-Send `/help` to your Telegram bot. You should see the BLUE.Y command menu.
-
----
-
-## Helm (Alternative)
-
-Prefer Helm? See [Helm chart setup](../helm/blue-y/README.md) or install directly:
+## Quickstart (Helm — recommended)
 
 ```bash
 helm repo add bluey https://bluey-ai.github.io/blue.y
+helm repo update
+
 helm install blue-y bluey/blue-y \
   --namespace prod --create-namespace \
   --set telegram.botToken=YOUR_TOKEN \
   --set telegram.chatId=YOUR_CHAT_ID \
-  --set ai.apiKey=YOUR_DEEPSEEK_KEY
+  --set ai.apiKey=YOUR_DEEPSEEK_KEY \
+  --set kube.clusterName=my-cluster \
+  --set kube.awsRegion=ap-southeast-1
 ```
+
+That's it. Send `/help` to your Telegram bot.
+
+---
+
+## Step-by-step: Getting Your Keys
+
+### 1. Telegram Bot Token + Chat ID
+
+**Bot Token:**
+1. Open Telegram → search `@BotFather`
+2. Send `/newbot`
+3. Choose a name (e.g. `My Cluster Bot`) and username (e.g. `mycluster_bot`)
+4. BotFather replies with your token: `123456789:ABCdef...` → this is your `telegram.botToken`
+
+**Chat ID:**
+1. Create a Telegram group and add your bot to it
+2. Send any message in the group
+3. Open this URL in your browser (replace TOKEN):
+   `https://api.telegram.org/botTOKEN/getUpdates`
+4. Look for `"chat":{"id":` — the number (may be negative) is your `telegram.chatId`
+
+> **Tip:** Use a dedicated group for cluster alerts, not a personal chat.
+
+---
+
+### 2. DeepSeek API Key (AI engine)
+
+1. Go to [platform.deepseek.com](https://platform.deepseek.com)
+2. Sign up / log in
+3. Go to **API Keys** → **Create new key**
+4. Copy the key → this is your `ai.apiKey`
+
+> DeepSeek is ~30× cheaper than GPT-4 and performs equally well for ops tasks.
+> Cost: ~$0.001 per incident diagnosis.
+
+---
+
+### 3. Jira API Token (optional — for `/jira` command)
+
+1. Go to [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+2. Click **Create API token** → give it a label (e.g. `blue-y`)
+3. Copy the token → this is your `jira.apiToken`
+4. Your `jira.email` is the Atlassian account email you logged in with
+5. Your `jira.baseUrl` is `https://YOUR-ORG.atlassian.net`
+
+---
+
+### 4. Slack Bot + App Token (optional — for Slack alerts)
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**
+2. Under **OAuth & Permissions** → add Bot Token Scopes:
+   `chat:write`, `channels:read`, `groups:read`
+3. Click **Install to Workspace** → copy the **Bot User OAuth Token** (`xoxb-...`) → `slack.botToken`
+4. Under **Socket Mode** → enable it → generate an **App-Level Token** with scope `connections:write` (`xapp-...`) → `slack.appToken`
+5. Invite the bot to your channel: `/invite @your-bot-name`
+6. Copy the channel ID from the channel URL → `slack.channelId`
+
+---
+
+### 5. AWS IRSA Role (optional — for Bedrock AI, WAF, SES)
+
+If you want BLUE.Y to use AWS services (Bedrock for AI, WAF monitoring, SES email):
+
+```bash
+# Create IAM role with trust policy for your service account
+eksctl create iamserviceaccount \
+  --name blue-y \
+  --namespace prod \
+  --cluster YOUR_CLUSTER \
+  --attach-policy-arn arn:aws:iam::aws:policy/AmazonBedrockFullAccess \
+  --approve
+
+# Get the role ARN
+aws iam get-role --role-name eksctl-blue-y-sa --query 'Role.Arn' --output text
+```
+
+Set the ARN as `serviceAccount.irsaRoleArn` in your values.
+
+---
+
+## Full values.yaml example
+
+Save this as `my-values.yaml` and run `helm install blue-y bluey/blue-y -f my-values.yaml`:
+
+```yaml
+telegram:
+  botToken: "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ"
+  chatId: "-1001234567890"
+
+ai:
+  apiKey: "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+  systemContext: "Cluster: prod. Main apps: backend (prod ns), frontend (prod ns)."
+
+kube:
+  clusterName: "my-eks-cluster"
+  awsRegion: "us-east-1"
+  watchNamespaces: "prod,staging,monitoring"
+
+# Optional: Jira
+jira:
+  baseUrl: "https://mycompany.atlassian.net"
+  projectKey: "OPS"
+  email: "devops@mycompany.com"
+  apiToken: "ATATT3xFfGF0..."
+
+# Optional: Slack
+slack:
+  botToken: "xoxb-..."
+  appToken: "xapp-..."
+  channelId: "C0XXXXXXXXX"
+```
+
+---
+
+## Verify it's working
+
+```bash
+# Check the pod is running
+kubectl get pods -n prod -l app=blue-y
+
+# Watch logs
+kubectl logs -f deployment/blue-y-production -n prod
+
+# Send a test command on Telegram
+/status
+```
+
+---
+
+## Upgrade
+
+```bash
+helm repo update
+helm upgrade blue-y bluey/blue-y --reuse-values
+```
+
+---
+
+## Uninstall
+
+```bash
+helm uninstall blue-y -n prod
+```
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Bot not responding | Check `telegram.botToken` and `telegram.chatId` are correct |
+| `ImagePullBackOff` | The image tag may not exist yet — use `tag: latest` |
+| AI diagnosis not working | Verify `ai.apiKey` is valid at platform.deepseek.com |
+| Pod crashing | Run `kubectl logs deployment/blue-y-production -n prod` |
+
+More help: [github.com/bluey-ai/blue.y/issues](https://github.com/bluey-ai/blue.y/issues)
