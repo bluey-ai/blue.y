@@ -77,4 +77,4 @@ Every PR **must** add an entry to `docs/CHANGELOG.md` before merging:
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/bluey-ai/blue.y/discussions) or email **hello@bluey.ai**.
+Open a [GitHub Discussion](https://github.com/bluey-ai/blue.y/discussions) or email **hello@blueonion.today**.
