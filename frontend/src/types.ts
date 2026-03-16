@@ -102,6 +102,16 @@ export interface MeResponse {
   platform: string;
   name: string;
   role: 'superadmin' | 'admin' | 'viewer';
+  version?: string;
+}
+
+export interface LicenseInfo {
+  plan: string;
+  seats: number;
+  usedSeats: number;
+  expires: string | null;
+  customer: string | null;
+  hasCustomKey: boolean;
 }
 
 export interface ConfigData {

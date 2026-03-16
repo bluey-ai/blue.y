@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { LayoutDashboard, AlertTriangle, Server, Layers, Terminal, Users, Settings, LogOut, Wifi, WifiOff, Menu, X, Plug, Mail } from 'lucide-react';
 import type { Page } from '../App';
 import Logo from './Logo';
-import { getMe } from '../api';
-import type { MeResponse } from '../api';
+import { getMe, getLicense } from '../api';
+import type { MeResponse, LicenseInfo } from '../api';
 import clsx from 'clsx';
 
 interface Props {
@@ -33,8 +33,16 @@ const PLATFORM_COLOR: Record<string, string> = {
   google:    'text-[#ea4335]',
 };
 
+const ROLE_LABEL: Record<string, string> = { superadmin: 'Super Admin', admin: 'Admin', viewer: 'Viewer' };
+const ROLE_COLOR: Record<string, string> = {
+  superadmin: 'text-[#bc8cff] bg-[#bc8cff]/10 border-[#bc8cff]/20',
+  admin:      'text-[#58a6ff] bg-[#58a6ff]/10 border-[#58a6ff]/20',
+  viewer:     'text-[#8b949e] bg-[#8b949e]/10 border-[#8b949e]/20',
+};
+
 export default function Layout({ page, onNavigate, children }: Props) {
   const [me, setMe] = useState<MeResponse | null>(null);
+  const [license, setLicense] = useState<LicenseInfo | null>(null);
   const [online, setOnline] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   // Mobile: sidebar hidden by default, shown as overlay
@@ -42,6 +50,7 @@ export default function Layout({ page, onNavigate, children }: Props) {
 
   useEffect(() => {
     getMe().then(setMe).catch(() => {});
+    getLicense().then(setLicense).catch(() => {});
   }, []);
 
   const handleLogout = async () => {
@@ -71,7 +80,31 @@ export default function Layout({ page, onNavigate, children }: Props) {
         {(!collapsed || mobileOpen) && (
           <div className="flex-1 min-w-0">
             <div className="text-gradient font-bold text-sm leading-tight">BLUE.Y</div>
-            <div className="text-[#6e7681] text-[10px] uppercase tracking-widest">Admin</div>
+            {me && (
+              <span className={clsx('inline-flex items-center text-[9px] font-semibold px-1.5 py-0.5 rounded border mt-0.5', ROLE_COLOR[me.role] ?? ROLE_COLOR.viewer)}>
+                {ROLE_LABEL[me.role] ?? me.role}
+              </span>
+            )}
+            {!me && <div className="text-[#6e7681] text-[10px] uppercase tracking-widest">Admin</div>}
+            {me?.version && (
+              <div className="text-[#6e7681] text-[9px] font-mono mt-0.5">v{me.version}</div>
+            )}
+            {license && (
+              <div className="mt-1 space-y-0.5">
+                <div className="flex items-center gap-1 text-[9px] text-[#6e7681]">
+                  <span className={clsx('font-semibold', license.usedSeats >= license.seats ? 'text-[#f85149]' : 'text-[#e6edf3]')}>{license.usedSeats}</span>
+                  <span>/</span>
+                  <span>{license.seats} seats</span>
+                  <span className="ml-auto text-[#6e7681] capitalize">{license.plan}</span>
+                </div>
+                <div className="h-1 bg-[#21262d] rounded-full overflow-hidden">
+                  <div
+                    className={clsx('h-full rounded-full transition-all', license.usedSeats >= license.seats ? 'bg-[#f85149]' : license.usedSeats / license.seats > 0.8 ? 'bg-[#d29922]' : 'bg-[#3fb950]')}
+                    style={{ width: `${Math.min(100, Math.round((license.usedSeats / license.seats) * 100))}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
         {/* Mobile close button */}

@@ -347,9 +347,10 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
   // license — GET: all roles (show plan/seats), POST /verify: superadmin only
   router.use('/api/license',      requireSession, requireRole('viewer'), licenseRoutes);
 
-  // API: current session info
+  // API: current session info + build version
   router.get('/api/me', requireSession, (req: Request, res: Response) => {
-    res.json((req as any).adminUser);
+    const buildVersion = process.env.BUILD_VERSION || process.env.npm_package_version || '1.8.0';
+    res.json({ ...(req as any).adminUser, version: buildVersion });
   });
 
   logger.info('[admin] Admin module initialised — routes mounted at /admin');

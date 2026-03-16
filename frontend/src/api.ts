@@ -1,4 +1,4 @@
-import type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, ConfigData, NamespaceHealth, StreamEvent, DeploymentInfo, LogAnalysis, PodDetail } from './types';
+import type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, LicenseInfo, ConfigData, NamespaceHealth, StreamEvent, DeploymentInfo, LogAnalysis, PodDetail } from './types';
 
 const BASE = '/admin/api';
 
@@ -46,6 +46,7 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 
 // Auth
 export const getMe = () => get<MeResponse>('/me');
+export const getLicense = () => get<LicenseInfo>('/license');
 
 // Incidents
 export interface IncidentFilters { limit?: number; severity?: string; namespace?: string; monitor?: string; search?: string; }

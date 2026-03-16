@@ -1,6 +1,7 @@
 // @premium — BlueOnion internal only. (BLY-61)
 import { Router, Request, Response } from 'express';
 import { getActiveLicense, verifyLicenseKey } from '../license';
+import { countJoinedInvites } from '../db';
 import { logger } from '../../utils/logger';
 
 const router = Router();
@@ -9,10 +10,11 @@ const router = Router();
 router.get('/', (_req: Request, res: Response) => {
   const lic = getActiveLicense();
   res.json({
-    plan:      lic.plan,
-    seats:     lic.seats,
-    expires:   lic.expires || null,
-    customer:  lic.customer ?? null,
+    plan:         lic.plan,
+    seats:        lic.seats,
+    usedSeats:    countJoinedInvites(),
+    expires:      lic.expires || null,
+    customer:     lic.customer ?? null,
     hasCustomKey: !!process.env.ADMIN_LICENSE_KEY,
   });
 });
