@@ -21,7 +21,7 @@ router.get('/status', async (_req: Request, res: Response) => {
     ]);
     res.json({ summary, nodes, namespaces });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e?.message ?? String(e) });
   }
 });
 
@@ -33,7 +33,7 @@ router.get('/pods', async (req: Request, res: Response) => {
     const pods = await kubeClient.getPods(namespace);
     res.json({ pods, namespace });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e?.message ?? String(e) });
   }
 });
 
@@ -44,7 +44,7 @@ router.get('/nodes', async (_req: Request, res: Response) => {
     const nodes = await kubeClient.getNodes();
     res.json({ nodes });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e?.message ?? String(e) });
   }
 });
 

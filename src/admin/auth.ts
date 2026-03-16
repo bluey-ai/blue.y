@@ -63,6 +63,7 @@ export function validateSession(token: string): { sub: string; name: string; pla
   try {
     const payload = jwt.verify(token, config.admin.jwtSecret) as Record<string, string>;
     if (payload.type !== 'session') return null;
+    if (!payload.sub || !payload.name || !payload.platform) return null;
     return { sub: payload.sub, name: payload.name, platform: payload.platform };
   } catch {
     return null;
