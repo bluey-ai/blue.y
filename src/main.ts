@@ -3558,7 +3558,11 @@ const server = app.listen(config.port, async () => {
     } else if (!config.admin.host) {
       logger.warn('[admin] ADMIN_ENABLED=true but ADMIN_HOST is not set — admin disabled');
     } else {
-      adminModule.createAdminApp({ kube, namespace: config.kube.namespaces[0] })
+      // Use POD_NAMESPACE if set (downward API), else MY_POD_NAMESPACE, else first watch namespace.
+      // Admin ConfigMaps (blue-y-admin-users, blue-y-config) live in the pod's own namespace,
+      // NOT necessarily in WATCH_NAMESPACES[0] which may be a different namespace entirely.
+      const adminNamespace = process.env.POD_NAMESPACE ?? process.env.MY_POD_NAMESPACE ?? config.kube.namespaces[0];
+      adminModule.createAdminApp({ kube, namespace: adminNamespace })
         .then((adminApp: any) => {
           app.use('/admin', adminApp);
           logger.info(`[admin] Dashboard mounted at /admin — ${config.admin.host}/admin`);
