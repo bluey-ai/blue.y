@@ -1,9 +1,10 @@
 // @premium — BlueOnion internal only. (BLY-59)
-// Integrations config — Telegram, Slack, Teams, WhatsApp.
+// Integrations config — Telegram, Slack, Teams, WhatsApp, Email/SES.
 // Read: all roles (secrets masked for non-superadmin).
 // Write: superadmin only (handled via requireRole in index.ts).
 import { Router, Request, Response } from 'express';
 import * as k8s from '@kubernetes/client-node';
+import { SESClient, GetSendQuotaCommand } from '@aws-sdk/client-ses';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
 
@@ -78,6 +79,16 @@ const INTEGRATIONS = [
       { key: 'whatsapp.account_sid', label: 'Account SID',  type: 'text'     },
       { key: 'whatsapp.auth_token',  label: 'Auth Token',   type: 'password' },
       { key: 'whatsapp.from',        label: 'From Number',  type: 'text'     },
+    ],
+  },
+  {
+    id: 'email',
+    label: 'Email (AWS SES)',
+    icon: 'email',
+    fields: [
+      { key: 'email.from',       label: 'FROM Address',    type: 'text' },
+      { key: 'email.to',         label: 'Alert Recipient', type: 'text' },
+      { key: 'email.ses_region', label: 'SES Region',      type: 'text' },
     ],
   },
 ];
@@ -253,6 +264,22 @@ async function testIntegration(id: string, cfg: Record<string, string>): Promise
       return { ok: true, status: 'connected', message: `Account: ${json.friendly_name ?? sid}` };
     }
     return { ok: false, status: 'failed', message: `HTTP ${r.status} — check credentials` };
+  }
+
+  if (id === 'email') {
+    const from = cfg['email.from'];
+    const to   = cfg['email.to'];
+    if (!from || !to) return { ok: false, status: 'not_configured', message: 'FROM address and Alert Recipient not set' };
+    const region = cfg['email.ses_region'] || 'ap-southeast-1';
+    try {
+      const ses = new SESClient({ region });
+      const quota = await ses.send(new GetSendQuotaCommand({}));
+      const sent  = Math.round(quota.SentLast24Hours ?? 0);
+      const max   = quota.Max24HourSend ?? 0;
+      return { ok: true, status: 'connected', message: `SES reachable (${region}) — ${sent}/${max} emails sent today` };
+    } catch (e: any) {
+      return { ok: false, status: 'failed', message: e?.message ?? 'SES connection failed — check IAM/IRSA permissions' };
+    }
   }
 
   return { ok: false, status: 'failed', message: 'Unknown integration' };

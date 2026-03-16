@@ -13,10 +13,11 @@ const PLATFORM_COLOR: Record<string, string> = {
   slack:     'text-[#4a154b] bg-[#4a154b]/10 border-[#4a154b]/20',
   microsoft: 'text-[#6264a7] bg-[#6264a7]/10 border-[#6264a7]/20',
   whatsapp:  'text-[#25d366] bg-[#25d366]/10 border-[#25d366]/20',
+  email:     'text-[#ff9900] bg-[#ff9900]/10 border-[#ff9900]/20',
 };
 
 const PLATFORM_LABEL: Record<string, string> = {
-  telegram: 'TG', slack: 'SL', microsoft: 'MS', whatsapp: 'WA',
+  telegram: 'TG', slack: 'SL', microsoft: 'MS', whatsapp: 'WA', email: 'SES',
 };
 
 const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; url: string }[] }> = {
@@ -59,6 +60,21 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
       '4. For production: request a Twilio WhatsApp Business number and submit for approval',
     ],
     links: [{ label: 'Twilio Console', url: 'https://console.twilio.com' }],
+  },
+  email: {
+    steps: [
+      '1. Go to AWS Console → SES → Verified identities → verify your sending domain or address',
+      '2. Set FROM Address to a verified address (e.g. noreply@yourdomain.com)',
+      '3. Set Alert Recipient to where incident emails should be delivered',
+      '4. SES Region: the AWS region your SES is configured in (default: ap-southeast-1)',
+      '5. The bot uses its EKS pod IAM role (IRSA) for SES auth — no API key needed',
+      '6. If in SES sandbox mode, the recipient address must also be verified in SES',
+      '7. To exit sandbox: AWS Console → SES → Account dashboard → Request production access',
+    ],
+    links: [
+      { label: 'SES Console', url: 'https://console.aws.amazon.com/ses/home' },
+      { label: 'Verified identities', url: 'https://console.aws.amazon.com/ses/home#/verified-identities' },
+    ],
   },
 };
 
