@@ -260,13 +260,14 @@ metadata:
   name: blue-y-admin-ingress
   annotations:
     kubernetes.io/ingress.class: alb
-    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/group.name: prod-unified-lb
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-southeast-1:716156543026:certificate/12551248-0d1f-4046-9b82-67a197b2f067,arn:aws:acm:ap-southeast-1:716156543026:certificate/373d33f7-0a20-4519-acea-3832ff46baa3,arn:aws:acm:ap-southeast-1:716156543026:certificate/04ee5a85-91d2-405a-b82c-6648e1a97e37"
 spec:
+  ingressClassName: alb
   rules:
     - host: blue-y.blueonion.today
       http:
