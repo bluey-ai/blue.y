@@ -28,6 +28,10 @@ docs/premium/
 # ── Premium changelog ─────────────────────────────────────────────────────────
 docs/CHANGELOG-premium.md
 
+# ── Bitbucket-specific files (internal tooling, no value on GitHub) ───────────
+.bitbucket/
+Dockerfile.premium
+
 # ── Future premium modules (pre-declare to prevent accidental exposure) ───────
 # src/license/           # Phase 2 license key validation (BLY-future)
 # src/multi-tenant/      # Multi-tenant support (BLY-future)

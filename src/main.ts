@@ -34,6 +34,16 @@ import { NotifierRouter } from './clients/notifiers/router';
 import { NotificationRouter } from './notification-router';
 import { startSlackBot } from './slack-bot';
 
+// Premium admin module — loaded dynamically so community builds (without src/admin/) work unchanged.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let adminModule: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  adminModule = require('./admin');
+} catch {
+  // Community build — admin module not present. Expected, not an error.
+}
+
 const app = express();
 app.use(express.json());
 
@@ -1182,6 +1192,37 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     }
 
     await telegram.send(msg);
+    return;
+  }
+
+  // --- Admin dashboard magic link (premium) ---
+  if (cmd === '/admin') {
+    if (!adminModule || !config.admin.enabled) {
+      await notifier.send(
+        '🔵 <b>Admin Dashboard</b> is a premium feature.\n' +
+        'Contact <a href="mailto:hello@bluey.ai">hello@bluey.ai</a> for access.',
+        chatId,
+      );
+      return;
+    }
+    const platformUserId = String(fromId || chatId);
+    const adminUser = adminModule.isAdminUser('telegram', platformUserId);
+    if (!adminUser) {
+      await notifier.send(
+        '⛔ Your Telegram ID is not in the admin whitelist.\n' +
+        'Ask your cluster admin to add you to the <code>blue-y-admin-users</code> ConfigMap.',
+        chatId,
+      );
+      return;
+    }
+    const link = adminModule.generateMagicLink(platformUserId, 'telegram', adminUser.displayName);
+    await telegram.sendDirect(
+      fromId || chatId,
+      `🔵 <b>BLUE.Y Admin Dashboard</b>\n\n` +
+      `Hi <b>${adminUser.displayName}</b>, your magic link is ready:\n\n` +
+      `<a href="${link}">Open Admin Dashboard →</a>\n\n` +
+      `⏱ Expires in <b>4 hours</b> • Single use • Do not share`,
+    );
     return;
   }
 
@@ -3485,6 +3526,22 @@ const server = app.listen(config.port, async () => {
       logger.info('WAF security module initialized');
     } else {
       logger.warn('WAF security module failed to initialize — security monitoring will have limited capability');
+    }
+  }
+
+  // Mount premium admin dashboard if enabled
+  if (adminModule && config.admin.enabled) {
+    if (!config.admin.jwtSecret) {
+      logger.warn('[admin] ADMIN_ENABLED=true but ADMIN_JWT_SECRET is not set — admin disabled');
+    } else if (!config.admin.host) {
+      logger.warn('[admin] ADMIN_ENABLED=true but ADMIN_HOST is not set — admin disabled');
+    } else {
+      adminModule.createAdminApp({ kube, namespace: config.kube.watchNamespaces.split(',')[0].trim() })
+        .then((adminApp: any) => {
+          app.use('/admin', adminApp);
+          logger.info(`[admin] Dashboard mounted at /admin — ${config.admin.host}/admin`);
+        })
+        .catch((err: Error) => logger.error('[admin] Failed to initialise admin module', err));
     }
   }
 
