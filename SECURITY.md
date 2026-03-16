@@ -47,3 +47,15 @@ We follow responsible disclosure. Once a fix is released, we will:
 - Restrict BLUE.Y's RBAC to the minimum required permissions
 - Run BLUE.Y as a non-root user (already enforced in the official Docker image)
 - Keep BLUE.Y updated — subscribe to releases for security patches
+
+## Prompt Injection Mitigation
+
+BLUE.Y processes pod logs, Kubernetes events, and pod descriptions from your cluster and sends them to an AI API for analysis. This creates a prompt injection risk: an attacker who can write to pod logs could craft content intended to manipulate the AI.
+
+BLUE.Y mitigates this with two layers of defense:
+
+1. **Input sanitization** (`src/utils/sanitize.ts`): All cluster-sourced data (logs, events, describe output) is sanitized before reaching the AI API. Suspicious lines matching known injection patterns are redacted.
+
+2. **Hardened system prompt**: The AI receives an explicit, absolute security constraint instructing it to never follow instructions found within log or event content.
+
+For a full security analysis, see [docs/security-architecture.md](docs/security-architecture.md).

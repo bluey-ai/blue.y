@@ -7,8 +7,8 @@ description: >
   Integrates with Jira, Grafana, Loki, AWS (Bedrock, WAF, SES, RDS, Glue).
 
 type: application
-version: 1.4.1
-appVersion: "1.4.0"
+version: 1.6.0
+appVersion: "1.6.0"
 
 home: https://github.com/bluey-ai/blue.y
 sources:
@@ -38,11 +38,21 @@ annotations:
     fingerprint: ""
     url: ""
   artifacthub.io/changes: |
+    - kind: security
+      description: "Prompt injection mitigation: sanitizeForAI() applied to all cluster data before AI API calls"
+    - kind: security
+      description: Hardened system prompt with absolute anti-injection security constraint
+    - kind: security
+      description: "Container securityContext: readOnlyRootFilesystem, runAsNonRoot, drop all capabilities"
     - kind: added
-      description: Graceful SIGTERM/SIGINT shutdown handler
+      description: cosign keyless image signing (Sigstore) on every GHCR release
     - kind: added
-      description: docker-compose.yml for local development
+      description: SBOM generation (SPDX JSON) via anchore/sbom-action in CI
     - kind: added
-      description: SVG vector logo (assets/blue-y.svg)
+      description: Docker Scout vulnerability scanning in CI
     - kind: added
-      description: Bitbucket PR template
+      description: gitleaks secret scanning in CI
+    - kind: added
+      description: Dependabot for npm, Docker, and GitHub Actions updates
+    - kind: added
+      description: docs/security-architecture.md — full threat model

@@ -2,6 +2,65 @@
 
 ---
 
+## [1.6.0] — 2026-03-16 — Security Hardening (BLY-35)
+**Branch:** `feat/bly-35-security-hardening`
+
+### Added
+- `src/utils/sanitize.ts` — `sanitizeForAI()`: 13-pattern regex injection scanner applied to all
+  cluster data (logs, events, pod descriptions) before it reaches the AI API. Suspicious lines are
+  redacted, input is truncated at 4,000 chars, and HTML angle brackets are escaped.
+  `sanitizeLabel()`: strips non-safe characters from user-supplied labels/names.
+- `docs/security-architecture.md` — full threat model covering 7 attack surfaces: supply chain,
+  prompt injection, RBAC, container hardening, secret zero, network exposure, and AI API security.
+- `.github/dependabot.yml` — automated weekly PRs for npm packages, Docker base image, and GitHub
+  Actions versions.
+- **gitleaks** secret scanning job in `.github/workflows/ci.yml` — blocks PRs that accidentally
+  commit API keys, tokens, or credentials.
+- **Docker Scout** vulnerability scan in CI — warns on critical/high CVEs in every Docker build.
+- **cosign keyless image signing** (Sigstore) — every GHCR release tag is signed; users can verify
+  authenticity with `cosign verify`.
+- **SBOM generation** (`anchore/sbom-action`) — SPDX JSON Software Bill of Materials attached as
+  release artifact for every version tag.
+- Container `securityContext` in Helm deployment: `readOnlyRootFilesystem: true`, `runAsNonRoot: true`,
+  `runAsUser: 1000`, `allowPrivilegeEscalation: false`, `capabilities: drop: [ALL]`. `/tmp` is
+  provided as an in-memory `emptyDir` volume.
+
+### Changed
+- `src/clients/bedrock.ts` — `SYSTEM_PROMPT_CORE` hardened with absolute security constraint
+  instructing the AI to never act on instructions found in analyzed cluster data. `buildPrompt()`
+  now applies `sanitizeForAI()` to `request.message` and all string values in `request.context`
+  before constructing the AI prompt.
+- `.github/workflows/ci.yml` — added secret-scan, Docker Scout, cosign, and SBOM steps to the
+  existing build + publish pipeline.
+- `SECURITY.md` — new "Prompt Injection Mitigation" section documenting the two-layer defence.
+
+---
+
+## [1.5.0] — 2026-03-16 — SMTP email support (BLY-22)
+**Branch:** `feat/bly-22-smtp-multi-cloud`
+
+### Added
+- SMTP transport support via `nodemailer` — BLUE.Y can now send incident emails on GKE, AKS,
+  bare-metal, or any cloud where AWS SES is unavailable.
+- Auto-detection: if `SMTP_HOST` env var is set, SMTP is used; otherwise falls back to AWS SES
+  (fully backwards-compatible — existing EKS+SES deployments require no changes).
+- New Helm `email.smtp.*` values: `host`, `port`, `secure`, `user`, `pass`.
+  SMTP credentials stored in K8s Secret (`smtp-user`, `smtp-pass` keys, both optional).
+- `.env.example` updated with Option A (SMTP) / Option B (SES) sections.
+- `src/config.ts` — `config.email.smtp` block.
+
+### Changed
+- `helm/blue-y/values.yaml` — `emailFrom` renamed to `email.from` (nested under `email:`).
+  **Migration**: replace `emailFrom: "..."` with `email.from: "..."` in your override file.
+- `helm/blue-y/templates/deployment.yaml` — `EMAIL_FROM` now reads from `email.from`;
+  `SMTP_*` env vars injected conditionally when `email.smtp.host` is set.
+- `helm/blue-y/templates/secret.yaml` — `smtp-user` and `smtp-pass` keys added.
+
+### Dependencies
+- Added `nodemailer: ^8.0.2` (runtime), `@types/nodemailer: ^7.0.11` (dev).
+
+---
+
 ## [1.4.0] — 2026-03-15 — Community Quality Standards (BLY-17)
 **Branch:** `feat/bly-17-fresh`
 
