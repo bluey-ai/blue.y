@@ -7,8 +7,8 @@ description: >
   Integrates with Jira, Grafana, Loki, AWS (Bedrock, WAF, SES, RDS, Glue).
 
 type: application
-version: 1.7.0
-appVersion: "1.7.0"
+version: 1.7.1
+appVersion: "1.7.1"
 
 home: https://github.com/bluey-ai/blue.y
 sources:

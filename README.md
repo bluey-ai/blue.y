@@ -378,6 +378,34 @@ Restart and scale actions use `kubectl patch` (not `kubectl exec`). `kubectl del
 
 ---
 
+## Community vs Premium
+
+BLUE.Y is open-source and free forever. A premium edition exists for teams that need an admin dashboard.
+
+| Feature | Community | Premium |
+|---------|:---------:|:-------:|
+| Pod / Node / Cert / HPA / Load / Security monitors | ✅ | ✅ |
+| Telegram, Slack, WhatsApp, MS Teams | ✅ | ✅ |
+| AI auto-diagnosis (DeepSeek / any OpenAI endpoint) | ✅ | ✅ |
+| Jira, Grafana, Loki, AWS WAF, SES, SMTP | ✅ | ✅ |
+| Helm chart (ArtifactHub) | ✅ | ✅ |
+| `/restart`, `/scale`, `/diagnose`, all chat commands | ✅ | ✅ |
+| Docker image | `ghcr.io/bluey-ai/blue.y` (public) | Private ECR |
+| **Admin web dashboard** (cluster topology, real-time monitoring) | ❌ | ✅ |
+| **ChatOps magic-link auth** (`/admin` → magic link → click → dashboard) | ❌ | ✅ |
+| **Dynamic IP access mode** (no VPN required) | ❌ | ✅ |
+| **Incident log UI** (searchable SQLite timeline) | ❌ | ✅ |
+| **Config editor** (hot-reload without pod restart) | ❌ | ✅ |
+| **Premium Helm chart** (private, includes ingress + admin config) | ❌ | ✅ |
+
+### How licensing works
+
+**Community**: the admin code does not exist in the community image — there is no feature flag to flip, nothing to crack. You get the full monitoring and chat experience forever, free.
+
+**Premium**: contact [hello@bluey.ai](mailto:hello@bluey.ai) to receive ECR pull credentials + the premium Helm chart.
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming, version bumping, and PR checklist.
