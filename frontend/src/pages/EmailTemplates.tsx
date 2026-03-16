@@ -31,6 +31,9 @@ function interpolate(text: string, highlight = false): string {
 function buildInvitePreview(fields: Record<string, string>, orgName: string): string {
   const welcomeMsg = fields['email.template.invite.welcome_msg'] || '';
   const footerMsg  = fields['email.template.invite.footer_msg'] || '';
+  const bodyText     = fields['email.template.invite.body_text']    || '{{inviter_name}} has invited you to the {{org_name}} BLUE.Y Admin Dashboard.';
+  const ctaLabel     = fields['email.template.invite.cta_label']    || 'Sign in to Dashboard';
+  const instructions = fields['email.template.invite.instructions'] || 'Sign in with your Microsoft or Google account using this email address.<br>Your access is active immediately.';
   const roleLabel  = 'Admin'; // sample
 
   const welcomeBlock = welcomeMsg
@@ -49,9 +52,11 @@ function buildInvitePreview(fields: Record<string, string>, orgName: string): st
     <td style="background:#0d1117;padding:24px 32px;text-align:center;">
       <table cellpadding="0" cellspacing="0" style="margin:0 auto;">
         <tr>
-          <td style="background:#58a6ff;width:28px;height:28px;border-radius:7px;text-align:center;vertical-align:middle;font-size:13px;font-weight:700;color:#0d1117;">B</td>
-          <td style="padding-left:9px;vertical-align:middle;">
-            <span style="font-size:17px;font-weight:700;color:#e6edf3;">BLUE.Y</span>
+          <td style="vertical-align:middle;">
+            <img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Cpolygon%20points%3D%22476%2C256%20366%2C65.5%20146%2C65.5%2036%2C256%20146%2C446.5%20366%2C446.5%22%20fill%3D%22%230D1B4B%22%2F%3E%3Cpolygon%20points%3D%22298%2C112%20224%2C112%20194%2C272%20256%2C272%20218%2C402%20300%2C264%20242%2C264%22%20fill%3D%22white%22%2F%3E%3Cpath%20d%3D%22M%20183%2C364%20Q%20256%2C306%20329%2C364%22%20stroke%3D%22white%22%20stroke-width%3D%2216%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22378%22%20r%3D%2223%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E" alt="BLUE.Y" width="36" height="36" style="display:block;" />
+          </td>
+          <td style="padding-left:10px;vertical-align:middle;">
+            <span style="font-size:18px;font-weight:700;color:#e6edf3;letter-spacing:-0.3px;">BLUE.Y</span>
           </td>
         </tr>
       </table>
@@ -61,10 +66,7 @@ function buildInvitePreview(fields: Record<string, string>, orgName: string): st
   <tr>
     <td style="padding:28px 32px 22px;">
       <h1 style="margin:0 0 5px;font-size:20px;font-weight:700;color:#24292f;">Hi ${SAMPLE.invitee_name},</h1>
-      <p style="margin:0 0 18px;color:#57606a;font-size:14px;line-height:1.6;">
-        <strong style="color:#24292f;">${SAMPLE.inviter_name}</strong> has invited you to the
-        <strong style="color:#24292f;">${orgName}</strong> BLUE.Y Admin Dashboard.
-      </p>
+      <p style="margin:0 0 18px;color:#57606a;font-size:14px;line-height:1.6;">${interpolate(bodyText, true)}</p>
       ${welcomeBlock}
       <p style="margin:0 0 6px;font-size:12px;color:#57606a;">Your role:</p>
       <p style="margin:0 0 22px;">
@@ -74,15 +76,12 @@ function buildInvitePreview(fields: Record<string, string>, orgName: string): st
         <tr>
           <td style="border-radius:8px;background:#1f6feb;">
             <a href="${SAMPLE.dashboard_url}" style="display:inline-block;padding:11px 24px;font-size:13px;font-weight:600;color:#ffffff;text-decoration:none;">
-              Sign in to Dashboard &#8594;
+              ${interpolate(ctaLabel, true)} &#8594;
             </a>
           </td>
         </tr>
       </table>
-      <p style="margin:0;color:#8b949e;font-size:12px;line-height:1.5;">
-        Sign in with your Microsoft or Google account using this email address.<br>
-        Your access is active immediately.
-      </p>
+      <p style="margin:0;color:#8b949e;font-size:12px;line-height:1.5;">${interpolate(instructions.replace(/\n/g, '<br>'), true)}</p>
     </td>
   </tr>
   <tr>

@@ -44,6 +44,9 @@ const TEMPLATE_DEFS: Record<string, TemplateDef> = {
     fields: [
       { key: 'email.template.invite.subject',     label: 'Subject',         type: 'text',     default: "You've been invited to {{org_name}} BLUE.Y Dashboard",  hint: 'Email subject line. Supports {{org_name}}.' },
       { key: 'email.template.invite.from_name',   label: 'From Name',       type: 'text',     default: 'BLUE.Y Admin', hint: 'Sender display name (combined with FROM address from Email integration).' },
+      { key: 'email.template.invite.body_text',    label: 'Invitation Text',    type: 'textarea', default: '{{inviter_name}} has invited you to the {{org_name}} BLUE.Y Admin Dashboard.', hint: 'Main invitation paragraph. Supports all variables.' },
+      { key: 'email.template.invite.cta_label',    label: 'Button Label',       type: 'text',     default: 'Sign in to Dashboard', hint: 'Text on the sign-in button.' },
+      { key: 'email.template.invite.instructions', label: 'Instructions Text',  type: 'textarea', default: 'Sign in with your Microsoft or Google account using this email address.\nYour access is active immediately — no waiting required.', hint: 'Text shown below the button.' },
       { key: 'email.template.invite.welcome_msg', label: 'Welcome Message', type: 'textarea', default: '', hint: 'Optional paragraph below the invitation. Leave blank to omit.' },
       { key: 'email.template.invite.footer_msg',  label: 'Footer Message',  type: 'textarea', default: '', hint: 'Optional line in the email footer. Leave blank to omit.' },
     ],
@@ -210,6 +213,9 @@ router.post('/:id/test', async (req: Request, res: Response) => {
       const fromName   = merged['email.template.invite.from_name'] || 'BLUE.Y Admin';
       const welcomeMsg = merged['email.template.invite.welcome_msg'] || '';
       const footerMsg  = merged['email.template.invite.footer_msg'] || '';
+      const bodyText     = merged['email.template.invite.body_text']    || def.fields.find(f => f.key.endsWith('.body_text'))!.default;
+      const ctaLabel     = merged['email.template.invite.cta_label']    || def.fields.find(f => f.key.endsWith('.cta_label'))!.default;
+      const instructions = merged['email.template.invite.instructions'] || def.fields.find(f => f.key.endsWith('.instructions'))!.default;
       const rawSubject = merged['email.template.invite.subject'] || def.fields.find(f => f.key.endsWith('.subject'))!.default;
       const subject    = rawSubject.replace(/\{\{org_name\}\}/g, orgName) + ' [TEST]';
       const dashboardUrl = (config.admin.host || '') + '/admin/';
@@ -223,6 +229,9 @@ router.post('/:id/test', async (req: Request, res: Response) => {
         orgName,
         welcomeMsg,
         footerMsg,
+        bodyText,
+        ctaLabel,
+        instructions,
       });
       const sent = await emailClient.send(to, fromName, subject, html);
       if (sent) {

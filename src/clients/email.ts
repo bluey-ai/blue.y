@@ -85,6 +85,9 @@ export class EmailClient {
     orgName: string;
     welcomeMsg: string;
     footerMsg: string;
+    bodyText?: string;
+    ctaLabel?: string;
+    instructions?: string;
   }): string {
     const roleStyle = vars.role === 'superadmin'
       ? 'background:#fbefff;color:#8250df;border:1px solid #d8b9f8;'
@@ -96,6 +99,15 @@ export class EmailClient {
       ? `<p style="margin:0 0 20px;color:#57606a;font-size:15px;line-height:1.6;">${escHtml(vars.welcomeMsg)}</p>`
       : '';
     const footerLine = vars.footerMsg ? `${escHtml(vars.footerMsg)}<br>` : '';
+    const resolvedBody = (vars.bodyText || '{{inviter_name}} has invited you to the {{org_name}} BLUE.Y Admin Dashboard.')
+      .replace(/\{\{inviter_name\}\}/g, escHtml(vars.inviterName))
+      .replace(/\{\{invitee_name\}\}/g, escHtml(vars.inviteeName))
+      .replace(/\{\{org_name\}\}/g, escHtml(vars.orgName))
+      .replace(/\{\{role\}\}/g, escHtml(roleLabel))
+      .replace(/\{\{dashboard_url\}\}/g, vars.dashboardUrl);
+    const resolvedCta = escHtml(vars.ctaLabel || 'Sign in to Dashboard');
+    const resolvedInstructions = (vars.instructions || 'Sign in with your Microsoft or Google account using this email address.\nYour access is active immediately — no waiting required.')
+      .replace(/\n/g, '<br>');
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -122,10 +134,7 @@ export class EmailClient {
   <tr>
     <td style="padding:36px 40px 28px;">
       <h1 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#24292f;">Hi ${escHtml(vars.inviteeName)},</h1>
-      <p style="margin:0 0 20px;color:#57606a;font-size:15px;line-height:1.6;">
-        <strong style="color:#24292f;">${escHtml(vars.inviterName)}</strong> has invited you to the
-        <strong style="color:#24292f;">${escHtml(vars.orgName)}</strong> BLUE.Y Admin Dashboard.
-      </p>
+      <p style="margin:0 0 20px;color:#57606a;font-size:15px;line-height:1.6;">${resolvedBody}</p>
       ${welcomeBlock}
       <p style="margin:0 0 8px;font-size:13px;color:#57606a;">Your role:</p>
       <p style="margin:0 0 28px;">
@@ -135,15 +144,12 @@ export class EmailClient {
         <tr>
           <td style="border-radius:8px;background:#1f6feb;">
             <a href="${vars.dashboardUrl}" style="display:inline-block;padding:13px 28px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;font-family:sans-serif;">
-              Sign in to Dashboard &#8594;
+              ${resolvedCta} &#8594;
             </a>
           </td>
         </tr>
       </table>
-      <p style="margin:0;color:#8b949e;font-size:13px;line-height:1.6;">
-        Sign in with your Microsoft or Google account using this email address.<br>
-        Your access is active immediately &mdash; no waiting required.
-      </p>
+      <p style="margin:0;color:#8b949e;font-size:13px;line-height:1.6;">${resolvedInstructions}</p>
     </td>
   </tr>
   <tr>

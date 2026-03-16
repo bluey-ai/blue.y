@@ -86,13 +86,16 @@ router.post('/', async (req: Request, res: Response) => {
       const fromName   = cfg['email.template.invite.from_name'] || 'BLUE.Y Admin';
       const welcomeMsg = cfg['email.template.invite.welcome_msg'] || '';
       const footerMsg  = cfg['email.template.invite.footer_msg'] || '';
+      const bodyText     = cfg['email.template.invite.body_text']    || '{{inviter_name}} has invited you to the {{org_name}} BLUE.Y Admin Dashboard.';
+      const ctaLabel     = cfg['email.template.invite.cta_label']    || 'Sign in to Dashboard';
+      const instructions = cfg['email.template.invite.instructions'] || '';
       const rawSubject = cfg['email.template.invite.subject'] || "You've been invited to {{org_name}} BLUE.Y Dashboard";
       const subject    = rawSubject.replace(/\{\{org_name\}\}/g, orgName);
       const dashboardUrl = (config.admin.host || '') + '/admin/';
       const inviteeName  = email.split('@')[0]; // best guess from email local part
       const inviterName  = adminUser?.name || 'Your administrator';
 
-      const html = emailClient.buildInviteHtml({ inviteeName, inviterName, role, dashboardUrl, orgName, welcomeMsg, footerMsg });
+      const html = emailClient.buildInviteHtml({ inviteeName, inviterName, role, dashboardUrl, orgName, welcomeMsg, footerMsg, bodyText, ctaLabel, instructions });
       const sent = await emailClient.send(email, fromName, subject, html);
       if (!sent) emailWarning = 'Invite created but email delivery failed — check SES/SMTP config.';
     } catch (err: any) {
@@ -119,13 +122,16 @@ router.post('/:email/resend', async (req: Request, res: Response) => {
     const fromName     = cfg['email.template.invite.from_name'] || 'BLUE.Y Admin';
     const welcomeMsg   = cfg['email.template.invite.welcome_msg'] || '';
     const footerMsg    = cfg['email.template.invite.footer_msg']  || '';
+    const bodyText     = cfg['email.template.invite.body_text']    || '{{inviter_name}} has invited you to the {{org_name}} BLUE.Y Admin Dashboard.';
+    const ctaLabel     = cfg['email.template.invite.cta_label']    || 'Sign in to Dashboard';
+    const instructions = cfg['email.template.invite.instructions'] || '';
     const rawSubject   = cfg['email.template.invite.subject']   || "You've been invited to {{org_name}} BLUE.Y Dashboard";
     const subject      = rawSubject.replace(/\{\{org_name\}\}/g, orgName);
     const dashboardUrl = (config.admin.host || '') + '/admin/';
     const inviteeName  = email.split('@')[0];
     const inviterName  = adminUser?.name || 'Your administrator';
 
-    const html = emailClient.buildInviteHtml({ inviteeName, inviterName, role: invite.role, dashboardUrl, orgName, welcomeMsg, footerMsg });
+    const html = emailClient.buildInviteHtml({ inviteeName, inviterName, role: invite.role, dashboardUrl, orgName, welcomeMsg, footerMsg, bodyText, ctaLabel, instructions });
     const sent = await emailClient.send(email, fromName, subject, html);
     if (sent) {
       logger.info(`[invites] Resent invite email to ${email}`);

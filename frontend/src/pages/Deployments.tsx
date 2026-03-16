@@ -44,6 +44,7 @@ export default function Deployments() {
   const [selectedPodName, setSelectedPodName] = useState<string | null>(null);
   const [podDetailMap, setPodDetailMap] = useState<Record<string, PodDetail | null>>({});
   const [loadingPodDetail, setLoadingPodDetail] = useState<string | null>(null);
+  const detailPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async (namespace: string, silent = false) => {
     if (!silent) setLoading(true);
@@ -76,6 +77,19 @@ export default function Deployments() {
       Object.values(cancels).forEach(fn => fn());
     };
   }, [ns]);
+
+  // Live pod detail polling — 1s refresh when a detail panel is open
+  useEffect(() => {
+    if (detailPollRef.current) { clearInterval(detailPollRef.current); detailPollRef.current = null; }
+    if (!selectedPodName) return;
+    detailPollRef.current = setInterval(async () => {
+      try {
+        const r = await getPodDetail(ns, selectedPodName);
+        setPodDetailMap(prev => ({ ...prev, [selectedPodName]: r.detail }));
+      } catch { /* keep stale data on transient error */ }
+    }, 1000);
+    return () => { if (detailPollRef.current) { clearInterval(detailPollRef.current); detailPollRef.current = null; } };
+  }, [selectedPodName, ns]);
 
   const setAction = (name: string, action: RowAction) => {
     setActions(s => ({ ...s, [name]: action }));
@@ -555,15 +569,15 @@ export default function Deployments() {
                                   className={clsx(
                                     'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border transition-colors',
                                     selectedPodName === pod.name
-                                      ? 'bg-[#bc8cff]/20 text-[#bc8cff] border-[#bc8cff]/30'
-                                      : 'bg-[#21262d] text-[#6e7681] hover:text-[#8b949e] border-transparent',
+                                      ? 'bg-[#bc8cff]/20 text-[#bc8cff] border-[#bc8cff]/30 hover:bg-[#bc8cff]/30'
+                                      : 'bg-[#bc8cff]/10 text-[#bc8cff] border-[#bc8cff]/20 hover:bg-[#bc8cff]/20',
                                   )}
                                   title="View pod/node detail"
                                 >
                                   {loadingPodDetail === pod.name
                                     ? <Loader size={9} className="animate-spin" />
                                     : <Info size={9} />
-                                  }
+                                  } Detail
                                 </button>
                               </div>
                               );
@@ -776,7 +790,7 @@ function ResourceBar({ label, used, limit, request, unit }: {
             <div className="absolute inset-y-0 bg-[#58a6ff]/15 rounded-full" style={{ width: `${reqPct}%` }} />
           )}
           <div
-            className="absolute inset-y-0 rounded-full transition-all duration-300"
+            className="absolute inset-y-0 rounded-full transition-all duration-500"
             style={{ width: `${Math.max(usedPct ?? reqPct, 1)}%`, background: barColor }}
           />
         </div>
@@ -802,6 +816,10 @@ function PodDetailPanel({ detail, onClose }: { detail: PodDetail; onClose: () =>
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#21262d] bg-[#161b22]">
         <Info size={11} className="text-[#bc8cff] shrink-0" />
         <span className="font-mono text-[#e6edf3] font-medium">{pod.name}</span>
+        <span className="flex items-center gap-1 text-[9px] text-[#3fb950]/70">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#3fb950] animate-pulse inline-block" />
+          live
+        </span>
         <span className={clsx('text-[10px]', pod.phase === 'Running' ? 'text-[#3fb950]' : 'text-[#f85149]')}>{pod.phase}</span>
         {pod.ip && <span className="text-[#6e7681] font-mono">{pod.ip}</span>}
         <span className="text-[#6e7681]">{pod.age}</span>
