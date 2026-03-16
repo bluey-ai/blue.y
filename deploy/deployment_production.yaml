@@ -194,6 +194,12 @@ spec:
                   key: admin-jwt-secret
             - name: ADMIN_DB_PATH
               value: "/data/blue-y-incidents.sqlite"
+            - name: ADMIN_SUPERADMIN_TELEGRAM_ID
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: telegram-admin-id
+                  optional: true
           ports:
             - containerPort: 8000
           readinessProbe:
