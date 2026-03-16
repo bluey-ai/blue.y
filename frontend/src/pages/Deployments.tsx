@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText } from 'lucide-react';
-import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods } from '../api';
+import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X } from 'lucide-react';
+import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment } from '../api';
+import type { DeploymentRevision } from '../api';
 import type { DeploymentInfo, PodInfo } from '../types';
 import PodTerminal from '../components/PodTerminal';
 import PodLogsViewer from '../components/PodLogsViewer';
@@ -34,6 +35,11 @@ export default function Deployments() {
   const [terminal, setTerminal] = useState<{ namespace: string; pod: string; container: string } | null>(null);
   const [logsModal, setLogsModal] = useState<{ namespace: string; pod: string; container: string; containers: string[] } | null>(null);
   const [containerMenu, setContainerMenu] = useState<string | null>(null); // pod name whose shell menu is open
+  // Rollback (BLY-68)
+  const [rollbackModal, setRollbackModal] = useState<{ deployment: DeploymentInfo } | null>(null);
+  const [rollbackHistory, setRollbackHistory] = useState<DeploymentRevision[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [confirmRevision, setConfirmRevision] = useState<DeploymentRevision | null>(null);
 
   const load = useCallback(async (namespace: string, silent = false) => {
     if (!silent) setLoading(true);
@@ -203,6 +209,40 @@ export default function Deployments() {
     setScaleTargets(s => ({ ...s, [name]: Math.max(0, Math.min(20, (s[name] ?? current) + delta)) }));
   };
 
+  const openRollbackModal = async (d: DeploymentInfo) => {
+    setRollbackModal({ deployment: d });
+    setConfirmRevision(null);
+    setLoadingHistory(true);
+    try {
+      const r = await getDeploymentHistory(ns, d.name);
+      setRollbackHistory(r.history);
+    } catch { setRollbackHistory([]); }
+    finally { setLoadingHistory(false); }
+  };
+
+  const doRollback = async (d: DeploymentInfo, rev: DeploymentRevision) => {
+    setConfirmRevision(null);
+    setRollbackModal(null);
+    stopPoll(d.name);
+    cancelSse(d.name);
+    setAction(d.name, { phase: 'requesting', message: `Rolling back to revision ${rev.revision}…` });
+    try {
+      const result = await rollbackDeployment(ns, d.name, rev.revision);
+      if (result.requiresApproval && result.approvalId) {
+        handleApprovalResponse(d.name, result.approvalId, () => {
+          setAction(d.name, { phase: 'polling', message: `Rollback to r${rev.revision} executing…`, ready: d.readyReplicas, desired: d.replicas });
+          startPolling(d.name, d.replicas, 'restart');
+        });
+      } else {
+        setAction(d.name, { phase: 'polling', message: `Rolled back to r${rev.revision}…`, ready: d.readyReplicas, desired: d.replicas });
+        startPolling(d.name, d.replicas, 'restart');
+      }
+    } catch (e: any) {
+      setAction(d.name, { phase: 'error', message: e.message });
+      clearAction(d.name);
+    }
+  };
+
   const togglePods = async (depName: string) => {
     if (expandedDep === depName) { setExpandedDep(null); return; }
     setExpandedDep(depName);
@@ -256,12 +296,12 @@ export default function Deployments() {
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e] hidden md:table-cell">Image</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e] hidden md:table-cell">Age</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Scale</th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Actions</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]" colSpan={2}>Actions</th>
             </tr></thead>
             <tbody className="divide-y divide-[#21262d]">
-              {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-[#6e7681] text-sm">Loading…</td></tr>}
+              {loading && <tr><td colSpan={8} className="px-4 py-8 text-center text-[#6e7681] text-sm">Loading…</td></tr>}
               {!loading && deployments.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-[#6e7681] text-sm">
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-[#6e7681] text-sm">
                   No deployments found in <code className="font-mono">{ns}</code>.
                 </td></tr>
               )}
@@ -409,12 +449,25 @@ export default function Deployments() {
                       </button>
                     </td>
 
+                    {/* Rollback (BLY-68) */}
+                    <td className="px-2 py-3">
+                      <button
+                        onClick={() => openRollbackModal(d)}
+                        disabled={act?.phase === 'requesting' || act?.phase === 'awaiting_approval' || act?.phase === 'polling'}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors border bg-[#21262d] text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#30363d] border-transparent disabled:opacity-30 disabled:cursor-not-allowed"
+                        title="View revision history & rollback"
+                      >
+                        <History size={11} />
+                        <span className="hidden sm:inline">Rollback</span>
+                      </button>
+                    </td>
+
                   </tr>
 
                   {/* Expanded pods row */}
                   {expandedDep === d.name && (
                     <tr className="bg-[#0d1117]">
-                      <td colSpan={7} className="px-6 py-3 border-b border-[#21262d]">
+                      <td colSpan={8} className="px-6 py-3 border-b border-[#21262d]">
                         {loadingPods === d.name ? (
                           <p className="text-xs text-[#6e7681]">Loading pods…</p>
                         ) : (podsMap[d.name] ?? []).length === 0 ? (
@@ -511,6 +564,117 @@ export default function Deployments() {
           containers={logsModal.containers}
           onClose={() => setLogsModal(null)}
         />
+      )}
+
+      {/* Rollback modal (BLY-68) */}
+      {rollbackModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="w-full max-w-2xl mx-4 bg-[#161b22] rounded-xl border border-[#30363d] shadow-2xl flex flex-col overflow-hidden max-h-[80vh]">
+            {/* Header */}
+            <div className="flex items-center gap-2.5 px-5 py-3.5 bg-[#0d1117] border-b border-[#30363d] shrink-0">
+              <History size={14} className="text-[#bc8cff]" />
+              <span className="text-sm font-semibold text-[#e6edf3]">Revision History</span>
+              <span className="font-mono text-xs text-[#8b949e]">— <span className="text-[#58a6ff]">{rollbackModal.deployment.name}</span></span>
+              <button onClick={() => { setRollbackModal(null); setConfirmRevision(null); }}
+                className="ml-auto p-1.5 rounded text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Confirmation bar */}
+            {confirmRevision && (
+              <div className="px-5 py-3 bg-[#d29922]/10 border-b border-[#d29922]/30 flex items-center gap-3 shrink-0">
+                <span className="text-xs text-[#d29922] font-medium flex-1">
+                  Roll back <code className="font-mono">{rollbackModal.deployment.name}</code> to revision {confirmRevision.revision}?
+                  <span className="ml-2 text-[#8b949e] font-mono">{confirmRevision.image.split('/').pop()}</span>
+                </span>
+                <button onClick={() => doRollback(rollbackModal.deployment, confirmRevision)}
+                  className="px-3 py-1 rounded text-xs font-semibold bg-[#d29922] text-[#0d1117] hover:bg-[#d29922]/90 transition-colors">
+                  Confirm Rollback
+                </button>
+                <button onClick={() => setConfirmRevision(null)}
+                  className="px-3 py-1 rounded text-xs text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors">
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {/* History table */}
+            <div className="overflow-y-auto flex-1">
+              {loadingHistory ? (
+                <div className="flex items-center justify-center py-12 gap-2 text-[#6e7681] text-sm">
+                  <Loader size={14} className="animate-spin" /> Loading history…
+                </div>
+              ) : rollbackHistory.length === 0 ? (
+                <div className="py-12 text-center text-[#6e7681] text-sm">No revision history found.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#30363d]">
+                      <th className="px-5 py-2.5 text-left text-xs font-medium text-[#8b949e]">Revision</th>
+                      <th className="px-5 py-2.5 text-left text-xs font-medium text-[#8b949e]">Image</th>
+                      <th className="px-5 py-2.5 text-left text-xs font-medium text-[#8b949e]">Age</th>
+                      <th className="px-5 py-2.5 text-left text-xs font-medium text-[#8b949e]">Replicas</th>
+                      <th className="px-5 py-2.5 text-left text-xs font-medium text-[#8b949e]"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#21262d]">
+                    {rollbackHistory.map(rev => (
+                      <tr key={rev.revision} className={clsx(
+                        'transition-colors',
+                        rev.isCurrent ? 'bg-[#3fb950]/5' : 'hover:bg-[#161b22]',
+                        confirmRevision?.revision === rev.revision && 'bg-[#d29922]/5',
+                      )}>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-[#e6edf3]">r{rev.revision}</span>
+                            {rev.isCurrent && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#3fb950]/20 text-[#3fb950] border border-[#3fb950]/30">
+                                current
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3">
+                          <div className="font-mono text-[11px] text-[#8b949e] max-w-[260px] truncate" title={rev.image}>
+                            {rev.image.split('/').pop()?.split(':').join(' : ') ?? rev.image}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3 font-mono text-xs text-[#6e7681]">{rev.age}</td>
+                        <td className="px-5 py-3 font-mono text-xs text-[#8b949e]">
+                          {rev.readyReplicas}/{rev.replicas}
+                        </td>
+                        <td className="px-5 py-3">
+                          {!rev.isCurrent && (
+                            <button
+                              onClick={() => setConfirmRevision(rev)}
+                              className={clsx(
+                                'flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors border',
+                                confirmRevision?.revision === rev.revision
+                                  ? 'bg-[#d29922]/20 text-[#d29922] border-[#d29922]/30'
+                                  : 'bg-[#21262d] text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#30363d] border-transparent',
+                              )}
+                            >
+                              <RotateCcw size={10} /> Roll back
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer note */}
+            <div className="px-5 py-2.5 border-t border-[#30363d] bg-[#0d1117] shrink-0">
+              <p className="text-[11px] text-[#6e7681]">
+                History from Kubernetes ReplicaSets (up to <code className="font-mono">revisionHistoryLimit</code>, default 10).
+                Rollback triggers a rolling update to the selected image.
+              </p>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

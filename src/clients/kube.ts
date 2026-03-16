@@ -340,6 +340,71 @@ export class KubeClient {
     }
   }
 
+  // BLY-68: Deployment rollback — list ReplicaSet revision history
+  async getDeploymentHistory(namespace: string, deploymentName: string): Promise<{
+    revision: number; image: string; images: string[];
+    createdAt: string; age: string; replicas: number; readyReplicas: number; isCurrent: boolean;
+  }[]> {
+    try {
+      const [dep, rsList] = await Promise.all([
+        this.appsApi.readNamespacedDeployment({ name: deploymentName, namespace }),
+        this.appsApi.listNamespacedReplicaSet({ namespace }),
+      ]);
+      const currentRevision = parseInt(
+        dep.metadata?.annotations?.['deployment.kubernetes.io/revision'] ?? '0', 10,
+      );
+      return (rsList.items || [])
+        .filter(rs => (rs.metadata?.ownerReferences || []).some(
+          ref => ref.kind === 'Deployment' && ref.name === deploymentName,
+        ))
+        .map(rs => {
+          const rev = parseInt(
+            rs.metadata?.annotations?.['deployment.kubernetes.io/revision'] ?? '0', 10,
+          );
+          const containers = rs.spec?.template?.spec?.containers || [];
+          const images = containers.map(c => c.image || 'unknown');
+          return {
+            revision: rev,
+            image: images[0] || 'unknown',
+            images,
+            createdAt: rs.metadata?.creationTimestamp?.toISOString() ?? '',
+            age: this.getAge(rs.metadata?.creationTimestamp),
+            replicas: rs.spec?.replicas ?? 0,
+            readyReplicas: rs.status?.readyReplicas ?? 0,
+            isCurrent: rev === currentRevision,
+          };
+        })
+        .filter(r => r.revision > 0)
+        .sort((a, b) => b.revision - a.revision);
+    } catch (err) {
+      logger.error(`Failed to get deployment history for ${namespace}/${deploymentName}`, err);
+      return [];
+    }
+  }
+
+  // BLY-68: Roll back to a specific ReplicaSet revision
+  async rollbackDeployment(namespace: string, deploymentName: string, revision: number): Promise<boolean> {
+    try {
+      const rsList = await this.appsApi.listNamespacedReplicaSet({ namespace });
+      const target = (rsList.items || []).find(rs =>
+        (rs.metadata?.ownerReferences || []).some(
+          ref => ref.kind === 'Deployment' && ref.name === deploymentName,
+        ) &&
+        parseInt(rs.metadata?.annotations?.['deployment.kubernetes.io/revision'] ?? '0', 10) === revision,
+      );
+      if (!target) throw new Error(`Revision ${revision} not found for deployment ${deploymentName}`);
+      await this.appsApi.patchNamespacedDeployment(
+        { name: deploymentName, namespace, body: { spec: { template: target.spec?.template } } },
+        STRATEGIC_MERGE_PATCH,
+      );
+      logger.info(`Rolled back ${namespace}/${deploymentName} to revision ${revision}`);
+      return true;
+    } catch (err) {
+      logger.error(`Failed to rollback ${namespace}/${deploymentName} to revision ${revision}`, err);
+      return false;
+    }
+  }
+
   async getDeploymentDetail(namespace: string, deploymentName: string): Promise<{
     name: string;
     replicas: number;

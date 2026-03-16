@@ -27,6 +27,19 @@ export function setDeploymentsTelegramSend(fn: typeof telegramSend): void {
 
 const router = Router();
 
+// GET /api/deployments/:namespace/:name/history — revision history from ReplicaSets (BLY-68)
+router.get('/:namespace/:name/history', requireAdmin, async (req: Request, res: Response) => {
+  if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }
+  const namespace = req.params.namespace as string;
+  const name      = req.params.name as string;
+  try {
+    const history = await kubeClient.getDeploymentHistory(namespace, name);
+    res.json({ history, namespace, deployment: name });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? String(e) });
+  }
+});
+
 // GET /api/deployments/:namespace/:name/pods — list pods for a specific deployment (admin+)
 router.get('/:namespace/:name/pods', requireAdmin, async (req: Request, res: Response) => {
   if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }
@@ -144,6 +157,50 @@ router.post('/scale', requireAdmin, async (req: Request, res: Response) => {
     requiresApproval: true,
     approvalId: approval.id,
     message: `Scale request sent to SuperAdmin for approval.`,
+  });
+});
+
+// POST /api/deployments/rollback — rollback to a specific revision (BLY-68)
+// Body: { namespace, deployment, revision }
+router.post('/rollback', requireAdmin, async (req: Request, res: Response) => {
+  if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }
+  const { namespace, deployment, revision } = req.body ?? {};
+  if (!namespace || !deployment || revision === undefined) {
+    res.status(400).json({ error: 'namespace, deployment, and revision are required' });
+    return;
+  }
+  const rev = parseInt(String(revision), 10);
+  if (isNaN(rev) || rev < 1) {
+    res.status(400).json({ error: 'revision must be a positive integer' });
+    return;
+  }
+
+  const role: string = (req as any).adminUser?.role ?? 'viewer';
+  const requestedBy: string = (req as any).adminUser?.name ?? 'Admin';
+
+  if (role === 'superadmin') {
+    try {
+      const ok = await kubeClient.rollbackDeployment(namespace, deployment, rev);
+      if (ok) {
+        logger.info(`[admin] Rolled back ${namespace}/${deployment} to revision ${rev} by SuperAdmin ${requestedBy}`);
+        res.json({ ok: true, message: `Rolled back ${deployment} to revision ${rev}` });
+      } else {
+        res.status(500).json({ error: 'Rollback failed — revision may not exist' });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? String(e) });
+    }
+    return;
+  }
+
+  // Admin: create approval request
+  const approval = createApproval('rollback', namespace, deployment, requestedBy, undefined, rev);
+  await sendApprovalToTelegram(approval);
+  res.status(202).json({
+    ok: false,
+    requiresApproval: true,
+    approvalId: approval.id,
+    message: `Rollback request sent to SuperAdmin for approval.`,
   });
 });
 

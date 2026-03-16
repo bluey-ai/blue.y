@@ -52,6 +52,18 @@ export interface DeploymentInfo {
   conditions: { type: string; status: string; reason?: string }[];
 }
 
+// BLY-68: revision history entry from ReplicaSet
+export interface DeploymentRevision {
+  revision: number;
+  image: string;
+  images: string[];
+  createdAt: string;
+  age: string;
+  replicas: number;
+  readyReplicas: number;
+  isCurrent: boolean;
+}
+
 export interface LogLine {
   ts: string;
   text: string;

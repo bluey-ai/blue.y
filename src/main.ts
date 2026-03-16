@@ -3073,6 +3073,8 @@ async function startPolling(): Promise<void> {
                         await kube.restartDeployment(resolved.namespace, resolved.deployment);
                       } else if (resolved.action === 'scale' && resolved.replicas !== undefined) {
                         await kube.scaleDeployment(resolved.namespace, resolved.deployment, resolved.replicas);
+                      } else if (resolved.action === 'rollback' && resolved.targetRevision !== undefined) {
+                        await kube.rollbackDeployment(resolved.namespace, resolved.deployment, resolved.targetRevision);
                       }
                       logger.info(`[approvals] Executed ${resolved.action} ${resolved.namespace}/${resolved.deployment} after approval`);
                     } catch (e: any) {

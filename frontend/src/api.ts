@@ -160,6 +160,18 @@ export const testIntegration = (id: string) =>
 export const getDeploymentPods = (namespace: string, deployment: string) =>
   get<{ pods: PodInfo[]; namespace: string; deployment: string }>(`/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(deployment)}/pods`);
 
+// Deployment rollback — BLY-68
+export interface DeploymentRevision {
+  revision: number; image: string; images: string[];
+  createdAt: string; age: string; replicas: number; readyReplicas: number; isCurrent: boolean;
+}
+export const getDeploymentHistory = (namespace: string, deployment: string) =>
+  get<{ history: DeploymentRevision[]; namespace: string; deployment: string }>(
+    `/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(deployment)}/history`,
+  );
+export const rollbackDeployment = (namespace: string, deployment: string, revision: number) =>
+  post<DeploymentActionResult>('/deployments/rollback', { namespace, deployment, revision });
+
 // Email Templates (BLY-67)
 export interface EmailTemplateField {
   key: string; label: string; type: 'text' | 'textarea'; default: string;

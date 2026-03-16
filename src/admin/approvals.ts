@@ -7,19 +7,20 @@ import crypto from 'crypto';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
-export type ApprovalAction = 'restart' | 'scale';
+export type ApprovalAction = 'restart' | 'scale' | 'rollback';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
 
 export interface PendingApproval {
-  id:          string;    // short hex token used in callback_data
-  action:      ApprovalAction;
-  namespace:   string;
-  deployment:  string;
-  replicas?:   number;    // for scale
-  requestedBy: string;    // display name of the Admin who requested
-  requestedAt: number;    // unix ms
-  status:      ApprovalStatus;
-  telegramMsgId?: number; // message_id of the Telegram approval message (for editing on resolve)
+  id:              string;    // short hex token used in callback_data
+  action:          ApprovalAction;
+  namespace:       string;
+  deployment:      string;
+  replicas?:       number;    // for scale
+  targetRevision?: number;    // for rollback (BLY-68)
+  requestedBy:     string;    // display name of the Admin who requested
+  requestedAt:     number;    // unix ms
+  status:          ApprovalStatus;
+  telegramMsgId?:  number;    // message_id of the Telegram approval message (for editing on resolve)
 }
 
 // In-memory store — survives only the current process lifetime.
@@ -58,10 +59,11 @@ export function createApproval(
   deployment: string,
   requestedBy: string,
   replicas?: number,
+  targetRevision?: number,
 ): PendingApproval {
   const id = crypto.randomBytes(6).toString('hex'); // 12-char hex
   const approval: PendingApproval = {
-    id, action, namespace, deployment, replicas,
+    id, action, namespace, deployment, replicas, targetRevision,
     requestedBy, requestedAt: Date.now(), status: 'pending',
   };
   pendingApprovals.set(id, approval);
@@ -102,6 +104,8 @@ export function approvalCallbackData(id: string, decision: 'approve' | 'reject')
 export function formatApprovalMessage(approval: PendingApproval): string {
   const actionLabel = approval.action === 'restart'
     ? '🔄 Rolling Restart'
+    : approval.action === 'rollback'
+    ? `⏪ Rollback → revision ${approval.targetRevision}`
     : `⚖️ Scale → ${approval.replicas} replica${approval.replicas !== 1 ? 's' : ''}`;
 
   return (
