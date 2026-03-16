@@ -132,8 +132,17 @@ pingServiceMap: ""
 # '{"ops":"ops@company.com","dev":"dev@company.com"}'
 teamEmails: ""
 
-# -- Email sender (AWS SES)
-emailFrom: "noreply@example.com"
+# -- Email — SMTP or AWS SES
+# Option A (recommended for GKE/AKS/bare metal): set smtp.host to use SMTP.
+# Option B (EKS with IRSA): leave smtp.host empty — falls back to AWS SES.
+email:
+  from: "noreply@example.com"
+  smtp:
+    host: ""        # e.g. smtp.gmail.com — leave empty to use AWS SES
+    port: 587
+    secure: false   # set true for port 465 (SSL)
+    user: ""        # SMTP username / email
+    pass: ""        # SMTP password or app password
 
 # -- Scheduling
 schedule:

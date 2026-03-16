@@ -36,7 +36,7 @@
 
 ---
 
-## [1.5.0] — 2026-03-16 — SMTP email support (BLY-22)
+## [1.7.0] — 2026-03-16 — SMTP email support (BLY-22)
 **Branch:** `feat/bly-22-smtp-multi-cloud`
 
 ### Added

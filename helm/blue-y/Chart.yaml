@@ -7,8 +7,8 @@ description: >
   Integrates with Jira, Grafana, Loki, AWS (Bedrock, WAF, SES, RDS, Glue).
 
 type: application
-version: 1.6.0
-appVersion: "1.6.0"
+version: 1.7.0
+appVersion: "1.7.0"
 
 home: https://github.com/bluey-ai/blue.y
 sources:
@@ -45,14 +45,8 @@ annotations:
     - kind: security
       description: "Container securityContext: readOnlyRootFilesystem, runAsNonRoot, drop all capabilities"
     - kind: added
-      description: cosign keyless image signing (Sigstore) on every GHCR release
+      description: SMTP email support — works on GKE, AKS, bare metal (no AWS SES required)
     - kind: added
-      description: SBOM generation (SPDX JSON) via anchore/sbom-action in CI
-    - kind: added
-      description: Docker Scout vulnerability scanning in CI
-    - kind: added
-      description: gitleaks secret scanning in CI
-    - kind: added
-      description: Dependabot for npm, Docker, and GitHub Actions updates
-    - kind: added
-      description: docs/security-architecture.md — full threat model
+      description: Auto-detects transport — SMTP when SMTP_HOST is set, SES otherwise
+    - kind: changed
+      description: email.from replaces emailFrom in values.yaml (smtp block added)
