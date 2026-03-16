@@ -36,13 +36,30 @@ export default function Config() {
 
   const applyTemplate = () => {
     setRows([
-      { key: 'LOG_LEVEL',                  value: 'info' },
-      { key: 'WATCH_NAMESPACES',           value: 'prod,monitoring' },
-      { key: 'INCIDENT_COOLDOWN_MINUTES',  value: '15' },
-      { key: 'MAX_ACTIONS_PER_HOUR',       value: '5' },
-      { key: 'DAILY_REPORT_ENABLED',       value: 'true' },
-      { key: 'AI_ROUTINE_MODEL',           value: 'deepseek-chat' },
-      { key: 'AI_INCIDENT_MODEL',          value: 'deepseek-reasoner' },
+      // General
+      { key: 'LOG_LEVEL',                       value: 'info' },
+      { key: 'WATCH_NAMESPACES',                value: 'prod,monitoring' },
+      // AI models
+      { key: 'AI_ROUTINE_MODEL',                value: 'deepseek-chat' },
+      { key: 'AI_INCIDENT_MODEL',               value: 'deepseek-reasoner' },
+      // Monitoring intervals
+      { key: 'POD_CHECK_INTERVAL_MINUTES',      value: '2' },
+      { key: 'NODE_CHECK_INTERVAL_MINUTES',     value: '5' },
+      { key: 'HPA_CHECK_INTERVAL_MINUTES',      value: '5' },
+      { key: 'CERT_CHECK_INTERVAL_HOURS',       value: '6' },
+      { key: 'PING_INTERVAL_SECONDS',           value: '60' },
+      // Alert thresholds
+      { key: 'ALERT_CPU_THRESHOLD_PERCENT',     value: '85' },
+      { key: 'ALERT_MEMORY_THRESHOLD_PERCENT',  value: '90' },
+      { key: 'CERT_EXPIRY_WARN_DAYS',           value: '14' },
+      // Incident handling
+      { key: 'INCIDENT_COOLDOWN_MINUTES',       value: '15' },
+      { key: 'MAX_ACTIONS_PER_HOUR',            value: '5' },
+      { key: 'JIRA_AUTO_CREATE',                value: 'true' },
+      // Reports & alerts
+      { key: 'DAILY_REPORT_ENABLED',            value: 'true' },
+      { key: 'EMAIL_ALERTS_ENABLED',            value: 'false' },
+      { key: 'SLEEP_HOURS',                     value: '22-06' },
     ]);
     setDirty(true);
   };
