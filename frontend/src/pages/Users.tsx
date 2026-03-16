@@ -305,7 +305,7 @@ export default function Users() {
               )}
             </div>
           </div>
-          <div className="space-y-1 w-32">
+          <div className="space-y-1 w-32 pb-5">
             <label className="text-xs text-[#8b949e]">Label</label>
             <input
               type="text"
@@ -315,14 +315,16 @@ export default function Users() {
               onChange={e => setIpForm(f => ({ ...f, label: e.target.value }))}
             />
           </div>
-          <button
-            type="submit"
-            disabled={addingIp}
-            className="flex items-center gap-2 px-4 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-[#e6edf3] text-sm rounded-lg transition-colors border border-[#30363d]"
-          >
-            <Plus size={12} />
-            {addingIp ? 'Adding…' : 'Add'}
-          </button>
+          <div className="pb-5">
+            <button
+              type="submit"
+              disabled={addingIp}
+              className="flex items-center gap-2 px-4 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-[#e6edf3] text-sm rounded-lg transition-colors border border-[#30363d]"
+            >
+              <Plus size={12} />
+              {addingIp ? 'Adding…' : 'Add'}
+            </button>
+          </div>
         </form>
         {ipError && <p className="mb-3 text-xs text-[#f85149]">{ipError}</p>}
 

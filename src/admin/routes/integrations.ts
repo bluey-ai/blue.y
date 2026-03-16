@@ -19,6 +19,15 @@ function getCoreApi(): k8s.CoreV1Api {
 function getNamespace(): string {
   return config.kube.namespaces[0] || 'prod';
 }
+function isK8sNotFound(e: any): boolean {
+  if (e?.response?.statusCode === 404) return true;
+  try {
+    const body = typeof e?.body === 'string' ? JSON.parse(e.body) : e?.body;
+    if (body?.reason === 'NotFound') return true;
+  } catch {}
+  return String(e?.message ?? '').includes('HTTP-Code: 404');
+}
+
 function isSensitive(key: string): boolean {
   const lower = key.toLowerCase();
   return SENSITIVE_SUFFIX.some(s => lower.endsWith(s));
@@ -82,7 +91,7 @@ router.get('/', async (req: Request, res: Response) => {
     const cm = await coreApi.readNamespacedConfigMap({ name: CONFIG_MAP_NAME, namespace });
     configData = cm.data ?? {};
   } catch (e: any) {
-    if (e?.response?.statusCode !== 404) {
+    if (!isK8sNotFound(e)) {
       res.status(500).json({ error: e?.message ?? String(e) }); return;
     }
   }
@@ -151,7 +160,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         body: { metadata: { name: CONFIG_MAP_NAME, namespace }, data: currentData },
       });
     } catch (e: any) {
-      if (e?.response?.statusCode === 404) {
+      if (isK8sNotFound(e)) {
         await coreApi.createNamespacedConfigMap({
           namespace,
           body: { metadata: { name: CONFIG_MAP_NAME, namespace }, data: currentData },
