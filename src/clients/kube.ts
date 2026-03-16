@@ -487,19 +487,30 @@ export class KubeClient {
     return null;
   }
 
-  async getClusterSummary(): Promise<string> {
-    const lines: string[] = ['<b>Cluster Summary</b>\n'];
+  // Namespaces that are internal to Kubernetes — excluded from /status, shown by /system-status
+  static readonly SYSTEM_NAMESPACES = new Set([
+    'kube-system', 'kube-public', 'kube-node-lease',
+  ]);
 
-    // Nodes
-    const nodes = await this.getNodes();
-    lines.push(`🖥️ <b>Nodes:</b> ${nodes.length} (${nodes.filter((n) => n.status === 'Ready').length} ready)`);
+  async getUserNamespaces(): Promise<string[]> {
+    try {
+      const res = await this.coreApi.listNamespace();
+      return (res.items || [])
+        .map((ns) => ns.metadata?.name || '')
+        .filter((name) => name && !KubeClient.SYSTEM_NAMESPACES.has(name))
+        .sort();
+    } catch (err) {
+      logger.warn(`Failed to list namespaces dynamically, falling back to config: ${err}`);
+      return config.kube.namespaces;
+    }
+  }
 
-    // Pods per namespace — separate service pods from job pods
-    for (const ns of config.kube.namespaces) {
+  private async buildNsSummaryLines(namespaces: string[]): Promise<string[]> {
+    const lines: string[] = [];
+    for (const ns of namespaces) {
       const pods = await this.getPods(ns);
       const servicePods = pods.filter((p) => !p.isJobPod);
       const jobPods = pods.filter((p) => p.isJobPod);
-
       const running = servicePods.filter((p) => p.status === 'Running' && p.ready).length;
       const unhealthy = servicePods.filter((p) =>
         (p.status !== 'Running' && p.status !== 'Succeeded') ||
@@ -508,19 +519,44 @@ export class KubeClient {
       );
       const icon = unhealthy.length > 0 ? '❌' : '✅';
       let line = `${icon} <b>${ns}:</b> ${running}/${servicePods.length} healthy`;
-      if (unhealthy.length > 0) {
-        line += ` (${unhealthy.length} issues)`;
-      }
+      if (unhealthy.length > 0) line += ` (${unhealthy.length} issues)`;
       if (jobPods.length > 0) {
-        const completedJobs = jobPods.filter((p) => p.status === 'Succeeded').length;
         const failedJobs = jobPods.filter((p) => p.status === 'Failed').length;
+        const completedJobs = jobPods.filter((p) => p.status === 'Succeeded').length;
         line += ` + ${jobPods.length} jobs`;
         if (failedJobs > 0) line += ` (${failedJobs} failed)`;
         else if (completedJobs > 0) line += ` (${completedJobs} done)`;
       }
       lines.push(line);
     }
+    return lines;
+  }
 
+  async getClusterSummary(): Promise<string> {
+    const lines: string[] = ['<b>Cluster Summary</b>\n'];
+    const nodes = await this.getNodes();
+    lines.push(`🖥️ <b>Nodes:</b> ${nodes.length} (${nodes.filter((n) => n.status === 'Ready').length} ready)`);
+    const namespaces = await this.getUserNamespaces();
+    const nsLines = await this.buildNsSummaryLines(namespaces);
+    lines.push(...nsLines);
+    return lines.join('\n');
+  }
+
+  async getSystemSummary(): Promise<string> {
+    const lines: string[] = ['<b>System Namespace Status</b>\n'];
+    const systemNs = [...KubeClient.SYSTEM_NAMESPACES];
+    const nsLines = await this.buildNsSummaryLines(systemNs);
+    lines.push(...nsLines);
+    // List notable pods by name so the operator can see ALB controller, coredns, etc.
+    for (const ns of systemNs) {
+      const pods = await this.getPods(ns);
+      if (pods.length === 0) continue;
+      lines.push(`\n<b>${ns} pods:</b>`);
+      for (const pod of pods) {
+        const icon = pod.status === 'Running' && pod.ready ? '✅' : '⚠️';
+        lines.push(`  ${icon} ${pod.name} — ${pod.status} (restarts: ${pod.restarts})`);
+      }
+    }
     return lines.join('\n');
   }
 

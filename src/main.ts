@@ -394,6 +394,13 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     return;
   }
 
+  if (cmd === '/system-status' || cmd === 'system-status' || cmd === '/system_status' || cmd === 'system_status') {
+    const summary = await kube.getSystemSummary();
+    lastBotResponse = summary;
+    await telegram.send(lastBotResponse);
+    return;
+  }
+
   if (cmd === '/check' || cmd === 'check') {
     await telegram.send('🔍 Running all checks...');
     const results = await scheduler.runAllChecks();
@@ -2899,7 +2906,8 @@ async function startPolling(): Promise<void> {
   try {
     await axios.post(`${API}/setMyCommands`, {
       commands: [
-        { command: 'status', description: 'Cluster health overview' },
+        { command: 'status', description: 'Cluster health (all namespaces)' },
+        { command: 'system_status', description: 'System namespaces (kube-system: ALB, CoreDNS...)' },
         { command: 'check', description: 'Run all monitors now' },
         { command: 'nodes', description: 'Node resources' },
         { command: 'resources', description: 'Pod CPU/memory usage' },

@@ -88,7 +88,7 @@ spec:
             - name: AI_INCIDENT_MODEL
               value: "deepseek-reasoner"
             - name: WATCH_NAMESPACES
-              value: "default,monitoring"
+              value: "<WATCH_NAMESPACES>"
             - name: KUBE_IN_CLUSTER
               value: "true"
             - name: TELEGRAM_BOT_TOKEN
