@@ -33,8 +33,8 @@ definitions:
 
       echo "Deploying BLUE.Y v${BUILD_VERSION} (${SHORT_COMMIT}) to $ENV..."
 
-      # 4. BUILD & PUSH IMAGE
-      docker build -f Dockerfile \
+      # 4. BUILD & PUSH IMAGE (premium — includes admin module, better-sqlite3)
+      docker build -f Dockerfile.premium \
         --no-cache \
         --build-arg BUILD_VERSION=${BUILD_VERSION} \
         --build-arg BUILD_COMMIT=${BITBUCKET_COMMIT} \
