@@ -39,6 +39,7 @@ definitions:
         --build-arg BUILD_VERSION=${BUILD_VERSION} \
         --build-arg BUILD_COMMIT=${BITBUCKET_COMMIT} \
         --build-arg BUILD_DATE=${BUILD_DATE} \
+        --build-arg BUILD_EDITION=premium \
         -t ${ECR}:${TAG}-${BITBUCKET_COMMIT} \
         -t ${ECR}:${TAG}-v${BUILD_VERSION} \
         -t ${ECR}:${TAG}-latest .

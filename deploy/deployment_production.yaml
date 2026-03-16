@@ -172,6 +172,18 @@ spec:
               value: "<PRODUCTION_URLS>"
             - name: PING_SERVICE_MAP
               value: "<PING_SERVICE_MAP>"
+            # --- Admin dashboard (premium) ---
+            - name: ADMIN_ENABLED
+              value: "true"
+            - name: ADMIN_HOST
+              value: "https://blue-y.blueonion.today"
+            - name: ADMIN_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: blue-y-secrets
+                  key: admin-jwt-secret
+            - name: ADMIN_DB_PATH
+              value: "/data/blue-y-incidents.sqlite"
           ports:
             - containerPort: 8000
           readinessProbe:
@@ -195,6 +207,13 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          volumeMounts:
+            - name: blue-y-data
+              mountPath: /data
+      volumes:
+        - name: blue-y-data
+          persistentVolumeClaim:
+            claimName: blue-y-data-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -210,3 +229,42 @@ spec:
     - port: 80
       targetPort: 8000
       protocol: TCP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: <namespace>
+  name: blue-y-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: <namespace>
+  name: blue-y-admin-ingress
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: prod-unified-lb
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-southeast-1:716156543026:certificate/12551248-0d1f-4046-9b82-67a197b2f067,arn:aws:acm:ap-southeast-1:716156543026:certificate/373d33f7-0a20-4519-acea-3832ff46baa3,arn:aws:acm:ap-southeast-1:716156543026:certificate/04ee5a85-91d2-405a-b82c-6648e1a97e37"
+spec:
+  rules:
+    - host: blue-y.blueonion.today
+      http:
+        paths:
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: blue-y-<tag>
+                port:
+                  number: 80
