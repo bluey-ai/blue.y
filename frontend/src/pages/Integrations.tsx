@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, CheckCircle, XCircle, Edit2, Save, X } from 'lucide-react';
+import { RefreshCw, CheckCircle, XCircle, Edit2, Save, X, HelpCircle, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 import { getIntegrations, saveIntegration } from '../api';
 import type { Integration } from '../api';
 import Card from '../components/Card';
@@ -16,6 +16,49 @@ const PLATFORM_LABEL: Record<string, string> = {
   telegram: 'TG', slack: 'SL', microsoft: 'MS', whatsapp: 'WA',
 };
 
+const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; url: string }[] }> = {
+  telegram: {
+    steps: [
+      '1. Open Telegram and search for @BotFather',
+      '2. Send /newbot — follow prompts to name your bot',
+      '3. Copy the Bot Token (looks like 123456789:ABC-xxx)',
+      '4. Add the bot to your monitoring group/channel',
+      '5. Get your Chat ID: send a message to the group, then visit https://api.telegram.org/bot<TOKEN>/getUpdates',
+      '6. Admin ID: your personal Telegram numeric user ID (use @userinfobot to find it)',
+    ],
+    links: [{ label: 'BotFather', url: 'https://t.me/BotFather' }, { label: 'userinfobot', url: 'https://t.me/userinfobot' }],
+  },
+  slack: {
+    steps: [
+      '1. Go to api.slack.com/apps → Create New App → From scratch',
+      '2. Enable Socket Mode under Settings → get the App-Level Token (xapp-...)',
+      '3. Go to OAuth & Permissions → add bot scopes: chat:write, channels:read, groups:read',
+      '4. Install the app to your workspace → copy the Bot Token (xoxb-...)',
+      '5. Add the bot to your alert channel → copy the Channel ID (right-click channel → View channel details)',
+    ],
+    links: [{ label: 'Slack API Apps', url: 'https://api.slack.com/apps' }],
+  },
+  microsoft: {
+    steps: [
+      '1. Go to Azure Portal → App registrations → New registration',
+      '2. Set Redirect URI to: https://blue-y.blueonion.today/admin/auth/microsoft/callback',
+      '3. Copy the Application (client) ID and Directory (tenant) ID',
+      '4. Under Certificates & secrets → New client secret → copy the value immediately',
+      '5. Under API permissions → add Microsoft Graph: User.Read (for SSO login)',
+    ],
+    links: [{ label: 'Azure App Registrations', url: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps' }],
+  },
+  whatsapp: {
+    steps: [
+      '1. Sign up at twilio.com → go to Console → Messaging → Try it out → Send a WhatsApp message',
+      '2. Copy your Account SID and Auth Token from the Console dashboard',
+      '3. The From Number is your Twilio WhatsApp sandbox number (e.g. +14155238886)',
+      '4. For production: request a Twilio WhatsApp Business number and submit for approval',
+    ],
+    links: [{ label: 'Twilio Console', url: 'https://console.twilio.com' }],
+  },
+};
+
 export default function Integrations() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [readOnly, setReadOnly] = useState(true);
@@ -24,6 +67,7 @@ export default function Integrations() {
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ id: string; type: 'ok' | 'err'; text: string } | null>(null);
+  const [showGuide, setShowGuide] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -144,6 +188,41 @@ export default function Integrations() {
                     </div>
                   ))}
                 </div>
+
+                {/* Setup guide */}
+                {SETUP_GUIDES[intg.id] && (
+                  <div className="mt-3 border-t border-[#21262d] pt-3">
+                    <button
+                      onClick={() => setShowGuide(showGuide === intg.id ? null : intg.id)}
+                      className="flex items-center gap-1.5 text-[10px] text-[#6e7681] hover:text-[#8b949e] transition-colors"
+                    >
+                      <HelpCircle size={11} />
+                      How to get these credentials
+                      {showGuide === intg.id ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                    </button>
+                    {showGuide === intg.id && (
+                      <div className="mt-2 space-y-1.5">
+                        {SETUP_GUIDES[intg.id].steps.map((step, i) => (
+                          <p key={i} className="text-[10px] text-[#8b949e] leading-relaxed">{step}</p>
+                        ))}
+                        <div className="flex items-center gap-3 mt-2 pt-2 border-t border-[#21262d]">
+                          {SETUP_GUIDES[intg.id].links.map(l => (
+                            <a
+                              key={l.url}
+                              href={l.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-[10px] text-[#58a6ff] hover:underline"
+                            >
+                              <ExternalLink size={9} />
+                              {l.label}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {msg?.id === intg.id && (
                   <p className={clsx('mt-3 text-xs', msg.type === 'ok' ? 'text-[#3fb950]' : 'text-[#f85149]')}>

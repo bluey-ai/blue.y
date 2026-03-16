@@ -27,8 +27,24 @@ export function setDeploymentsTelegramSend(fn: typeof telegramSend): void {
 
 const router = Router();
 
+// GET /api/deployments/:namespace/:name/pods — list pods for a specific deployment (admin+)
+router.get('/:namespace/:name/pods', requireAdmin, async (req: Request, res: Response) => {
+  if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }
+  const namespace = req.params.namespace as string;
+  const name      = req.params.name as string;
+  try {
+    const allPods = await kubeClient.getPods(namespace);
+    // Match pods owned by this deployment (name prefix match on ReplicaSet-managed pods)
+    const pods = allPods.filter(p => p.name.startsWith(name + '-') && !p.isJobPod);
+    res.json({ pods, namespace, deployment: name });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? String(e) });
+  }
+});
+
 // GET /api/deployments?namespace=X
 router.get('/', async (req: Request, res: Response) => {
+
   if (!kubeClient) { res.status(503).json({ error: 'Kube client not available' }); return; }
   const namespace = (req.query.namespace as string) || 'prod';
   try {

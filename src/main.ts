@@ -3651,6 +3651,10 @@ const server = app.listen(config.port, async () => {
         .then((adminApp: any) => {
           app.use('/admin', adminApp);
           logger.info(`[admin] Dashboard mounted at /admin — ${config.admin.host}/admin`);
+          // BLY-63: WebSocket pod exec — attach to HTTP server after Express app is mounted
+          const { setupExecWebSocket } = require('./admin/exec-ws');
+          setupExecWebSocket(server);
+          logger.info('[admin] Pod exec WebSocket ready at /admin/ws/exec');
         })
         .catch((err: Error) => logger.error('[admin] Failed to initialise admin module', err));
     }

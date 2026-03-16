@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Save, Plus, Trash2, RefreshCw, Settings, Info, ShieldOff } from 'lucide-react';
+import { Save, Plus, Trash2, RefreshCw, Settings, Info, ShieldOff, Wand2 } from 'lucide-react';
 import { getConfig, saveConfig, ForbiddenError } from '../api';
 import Card from '../components/Card';
 import clsx from 'clsx';
@@ -33,6 +33,19 @@ export default function Config() {
     setDirty(true);
   };
   const addRow = () => { setRows(prev => [...prev, { key: '', value: '' }]); setDirty(true); };
+
+  const applyTemplate = () => {
+    setRows([
+      { key: 'LOG_LEVEL',                  value: 'info' },
+      { key: 'WATCH_NAMESPACES',           value: 'prod,monitoring' },
+      { key: 'INCIDENT_COOLDOWN_MINUTES',  value: '15' },
+      { key: 'MAX_ACTIONS_PER_HOUR',       value: '5' },
+      { key: 'DAILY_REPORT_ENABLED',       value: 'true' },
+      { key: 'AI_ROUTINE_MODEL',           value: 'deepseek-chat' },
+      { key: 'AI_INCIDENT_MODEL',          value: 'deepseek-reasoner' },
+    ]);
+    setDirty(true);
+  };
   const removeRow = (i: number) => { setRows(prev => prev.filter((_, idx) => idx !== i)); setDirty(true); };
 
   const handleSave = async () => {
@@ -107,6 +120,22 @@ export default function Config() {
 
         {loading ? (
           <p className="px-4 py-6 text-center text-sm text-[#6e7681]">Loading…</p>
+        ) : rows.length === 0 ? (
+          <div className="px-6 py-10 flex flex-col items-center gap-4 text-center">
+            <Settings size={28} className="text-[#30363d]" />
+            <div>
+              <p className="text-sm font-medium text-[#8b949e]">No configuration keys yet</p>
+              <p className="text-xs text-[#6e7681] mt-1">The <code className="font-mono">blue-y-config</code> ConfigMap doesn't exist or is empty.</p>
+            </div>
+            <button
+              onClick={applyTemplate}
+              className="flex items-center gap-2 px-4 py-2 bg-[#1f6feb] hover:bg-[#388bfd] text-white text-sm rounded-lg transition-colors"
+            >
+              <Wand2 size={13} />
+              Initialize with template
+            </button>
+            <p className="text-[10px] text-[#6e7681]">Pre-fills common settings — edit values and click Save.</p>
+          </div>
         ) : (
           <div className="divide-y divide-[#21262d]">
             {rows.map((row, i) => (

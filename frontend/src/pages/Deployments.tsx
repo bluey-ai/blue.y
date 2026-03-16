@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock } from 'lucide-react';
-import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision } from '../api';
-import type { DeploymentInfo } from '../types';
+import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon } from 'lucide-react';
+import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods } from '../api';
+import type { DeploymentInfo, PodInfo } from '../types';
+import PodTerminal from '../components/PodTerminal';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import clsx from 'clsx';
@@ -25,6 +26,11 @@ export default function Deployments() {
   const [scaleTargets, setScaleTargets] = useState<Record<string, number>>({});
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const sseCancelRef = useRef<Record<string, () => void>>({});
+  // Pod expansion + terminal (BLY-63)
+  const [expandedDep, setExpandedDep] = useState<string | null>(null);
+  const [podsMap, setPodsMap] = useState<Record<string, PodInfo[]>>({});
+  const [loadingPods, setLoadingPods] = useState<string | null>(null);
+  const [terminal, setTerminal] = useState<{ namespace: string; pod: string; container: string } | null>(null);
 
   const load = useCallback(async (namespace: string, silent = false) => {
     if (!silent) setLoading(true);
@@ -194,6 +200,18 @@ export default function Deployments() {
     setScaleTargets(s => ({ ...s, [name]: Math.max(0, Math.min(20, (s[name] ?? current) + delta)) }));
   };
 
+  const togglePods = async (depName: string) => {
+    if (expandedDep === depName) { setExpandedDep(null); return; }
+    setExpandedDep(depName);
+    if (podsMap[depName]) return; // already loaded
+    setLoadingPods(depName);
+    try {
+      const r = await getDeploymentPods(ns, depName);
+      setPodsMap(prev => ({ ...prev, [depName]: r.pods }));
+    } catch { /* ignore */ }
+    finally { setLoadingPods(null); }
+  };
+
   return (
     <div className="p-4 md:p-6 space-y-5 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -236,6 +254,7 @@ export default function Deployments() {
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e] hidden md:table-cell">Age</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Scale</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Actions</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Pods</th>
             </tr></thead>
             <tbody className="divide-y divide-[#21262d]">
               {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-[#6e7681] text-sm">Loading…</td></tr>}
@@ -251,8 +270,8 @@ export default function Deployments() {
                 const degraded = d.readyReplicas < d.replicas;
                 const zero = d.replicas === 0;
                 const isActive = act && act.phase !== 'idle';
-
                 return (
+                  <>
                   <tr key={d.name} className={clsx(
                     'hover:bg-[#161b22] transition-colors',
                     act?.phase === 'awaiting_approval' && 'bg-[#bc8cff]/5',
@@ -371,13 +390,76 @@ export default function Deployments() {
                         </span>
                       </button>
                     </td>
+
+                    {/* Pod expand toggle */}
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => togglePods(d.name)}
+                        className={clsx(
+                          'flex items-center gap-1 px-2 py-1.5 rounded text-xs border transition-colors',
+                          expandedDep === d.name
+                            ? 'bg-[#bc8cff]/10 text-[#bc8cff] border-[#bc8cff]/20'
+                            : 'bg-[#21262d] text-[#8b949e] hover:text-[#e6edf3] border-[#30363d]',
+                        )}
+                        title="Show pods"
+                      >
+                        {loadingPods === d.name
+                          ? <Loader size={10} className="animate-spin" />
+                          : expandedDep === d.name
+                          ? <ChevronDown size={10} />
+                          : <ChevronRight size={10} />
+                        }
+                        <span className="hidden sm:inline">Pods</span>
+                      </button>
+                    </td>
                   </tr>
-                );
+
+                  {/* Expanded pods row */}
+                  {expandedDep === d.name && (
+                    <tr className="bg-[#0d1117]">
+                      <td colSpan={8} className="px-6 py-3 border-b border-[#21262d]">
+                        {loadingPods === d.name ? (
+                          <p className="text-xs text-[#6e7681]">Loading pods…</p>
+                        ) : (podsMap[d.name] ?? []).length === 0 ? (
+                          <p className="text-xs text-[#6e7681]">No running pods found for this deployment.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {(podsMap[d.name] ?? []).map(pod => (
+                              <div key={pod.name} className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2">
+                                <div className={clsx('w-1.5 h-1.5 rounded-full shrink-0', pod.status === 'Running' ? 'bg-[#3fb950]' : 'bg-[#f85149]')} />
+                                <span className="font-mono text-[10px] text-[#8b949e] max-w-[220px] truncate" title={pod.name}>{pod.name}</span>
+                                <span className="text-[10px] text-[#6e7681]">{pod.status}</span>
+                                <button
+                                  onClick={() => setTerminal({ namespace: ns, pod: pod.name, container: pod.containers[0]?.name ?? '' })}
+                                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-[#58a6ff]/10 text-[#58a6ff] hover:bg-[#58a6ff]/20 border border-[#58a6ff]/20 transition-colors ml-1"
+                                  title="Open terminal"
+                                >
+                                  <TerminalIcon size={9} />
+                                  <span>Shell</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </>);
               })}
             </tbody>
           </table>
         </div>
       </Card>
+
+      {/* Pod terminal modal (BLY-63) */}
+      {terminal && (
+        <PodTerminal
+          namespace={terminal.namespace}
+          pod={terminal.pod}
+          container={terminal.container}
+          onClose={() => setTerminal(null)}
+        />
+      )}
     </div>
   );
 }

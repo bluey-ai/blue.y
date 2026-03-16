@@ -154,6 +154,10 @@ export const getIntegrations = () => get<{ integrations: Integration[]; readOnly
 export const saveIntegration = (id: string, fields: Record<string, string>) =>
   put<{ ok: boolean; integration: string }>(`/integrations/${encodeURIComponent(id)}`, { fields });
 
+// Pod terminal — BLY-63
+export const getDeploymentPods = (namespace: string, deployment: string) =>
+  get<{ pods: PodInfo[]; namespace: string; deployment: string }>(`/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(deployment)}/pods`);
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });

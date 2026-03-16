@@ -22,6 +22,9 @@
     "@kubernetes/client-node": "^1.0.0",
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.15.0",
+    "@types/ws": "^8.18.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "axios": "^1.7.0",
     "botbuilder": "^4.23.3",
     "cookie-parser": "^1.4.7",
@@ -35,7 +38,8 @@
     "mysql2": "^3.19.1",
     "nodemailer": "^8.0.2",
     "openid-client": "^6.8.2",
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.8",
