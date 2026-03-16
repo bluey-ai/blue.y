@@ -15,10 +15,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "pods/log", "nodes", "services", "secrets", "events", "namespaces"]
     verbs: ["get", "list", "watch"]
-  # Pod exec — web terminal (BLY-63)
+  # Pod exec — web terminal (BLY-63): GET = WebSocket upgrade, POST = kubectl exec → need both
   - apiGroups: [""]
     resources: ["pods/exec"]
-    verbs: ["create"]
+    verbs: ["get", "create"]
   # ConfigMaps — admin whitelist (blue-y-admin-users) + config (blue-y-config)
   - apiGroups: [""]
     resources: ["configmaps"]
