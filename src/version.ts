@@ -14,6 +14,7 @@ export interface VersionInfo {
   version: string;    // semver e.g. "1.1.0"
   commit: string;     // short git hash e.g. "5d1b71d"
   buildDate: string;  // ISO timestamp e.g. "2026-03-14T07:43:45Z"
+  edition: string;    // 'community' | 'premium'
 }
 
 function readPackageVersion(): string {
@@ -29,6 +30,7 @@ export const buildInfo: VersionInfo = {
   version:   process.env.BUILD_VERSION || readPackageVersion(),
   commit:    (process.env.BUILD_COMMIT || 'dev').slice(0, 8),
   buildDate: process.env.BUILD_DATE || 'unknown',
+  edition:   process.env.BUILD_EDITION || 'community',
 };
 
 const START_MS = Date.now();

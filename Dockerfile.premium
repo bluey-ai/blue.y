@@ -36,9 +36,11 @@ COPY --from=builder /app/dist ./dist
 ARG BUILD_VERSION=dev
 ARG BUILD_COMMIT=dev
 ARG BUILD_DATE=unknown
+ARG BUILD_EDITION=premium
 ENV BUILD_VERSION=$BUILD_VERSION
 ENV BUILD_COMMIT=$BUILD_COMMIT
 ENV BUILD_DATE=$BUILD_DATE
+ENV BUILD_EDITION=$BUILD_EDITION
 
 RUN addgroup -g 1001 bluey && adduser -u 1001 -G bluey -s /bin/sh -D bluey
 

@@ -55,6 +55,7 @@ app.get('/health', (_req, res) => {
     version: buildInfo.version,
     commit: buildInfo.commit,
     buildDate: buildInfo.buildDate,
+    edition: buildInfo.edition,
     uptime: Math.floor(process.uptime()),
   });
 });
@@ -2791,6 +2792,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
   }
 
   if (cmd === '/version' || cmd === 'version') {
+    const editionLabel = buildInfo.edition === 'premium' ? '⭐ Premium' : '🌐 Community';
     const msg =
       `📦 <b>BLUE.Y v${buildInfo.version}</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -2798,7 +2800,8 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
       `🔀 Commit:      <code>${buildInfo.commit}</code>\n` +
       `🏗️ Built:       ${buildInfo.buildDate}\n` +
       `⏱️ Uptime:      ${uptime()}\n` +
-      `🐳 Image:       production-v${buildInfo.version}`;
+      `🐳 Image:       production-v${buildInfo.version}\n` +
+      `📋 Edition:     ${editionLabel}`;
     lastBotResponse = msg;
     await telegram.send(msg);
     return;
