@@ -40,6 +40,7 @@ hooks/
 scripts/test-telegram.js
 scripts/test-polling.js
 scripts/test-scan.js
+scripts/smoke-test.sh
 
 # ── Future premium modules (pre-declare to prevent accidental exposure) ───────
 # src/license/           # Phase 2 license key validation (BLY-future)

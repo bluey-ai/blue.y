@@ -1,8 +1,12 @@
 const { KubeClient } = require('../dist/clients/kube');
 const axios = require('axios');
 
-const BOT_TOKEN = '8781856722:AAEBbMoM_cMobvtkT5NqFX2LX6-x_DTh4lE';
-const CHAT_ID = '-5250662902';
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
+if (!BOT_TOKEN || !CHAT_ID) {
+  console.error('ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars are required');
+  process.exit(1);
+}
 const API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 let lastUpdateId = 0;
