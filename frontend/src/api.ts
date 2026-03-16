@@ -206,4 +206,4 @@ export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Ev
   return es;
 }
 
-export type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, ConfigData, NamespaceHealth, DeploymentInfo, LogAnalysis };
+export type { IncidentRow, IncidentStats, PodInfo, NodeInfo, AdminUser, MeResponse, LicenseInfo, ConfigData, NamespaceHealth, DeploymentInfo, LogAnalysis };

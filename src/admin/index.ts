@@ -193,10 +193,7 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     <p id="no-sso">SSO is not configured. Contact your administrator.</p>
     <div id="divider" class="divider" style="display:none;"><span>or</span></div>
 
-    <p class="magic-hint">
-      SuperAdmins: send <code>/admin</code> on Telegram, Slack, or Teams to receive a magic link.
-    </p>
-    <p class="note">Links expire in 4 hours and are single-use.</p>
+    <p class="note">Sign in with your company Microsoft or Google account.</p>
   </div>
   <script>
     (function() {

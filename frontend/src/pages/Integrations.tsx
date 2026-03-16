@@ -9,15 +9,18 @@ import Card from '../components/Card';
 import clsx from 'clsx';
 
 const PLATFORM_COLOR: Record<string, string> = {
-  telegram:  'text-[#0088cc] bg-[#0088cc]/10 border-[#0088cc]/20',
-  slack:     'text-[#4a154b] bg-[#4a154b]/10 border-[#4a154b]/20',
-  microsoft: 'text-[#6264a7] bg-[#6264a7]/10 border-[#6264a7]/20',
-  whatsapp:  'text-[#25d366] bg-[#25d366]/10 border-[#25d366]/20',
-  email:     'text-[#ff9900] bg-[#ff9900]/10 border-[#ff9900]/20',
+  telegram:       'text-[#0088cc] bg-[#0088cc]/10 border-[#0088cc]/20',
+  slack:          'text-[#4a154b] bg-[#4a154b]/10 border-[#4a154b]/20',
+  microsoft:      'text-[#6264a7] bg-[#6264a7]/10 border-[#6264a7]/20',
+  whatsapp:       'text-[#25d366] bg-[#25d366]/10 border-[#25d366]/20',
+  email:          'text-[#ff9900] bg-[#ff9900]/10 border-[#ff9900]/20',
+  'microsoft-sso': 'text-[#00a4ef] bg-[#00a4ef]/10 border-[#00a4ef]/20',
+  'google-sso':    'text-[#ea4335] bg-[#ea4335]/10 border-[#ea4335]/20',
 };
 
 const PLATFORM_LABEL: Record<string, string> = {
   telegram: 'TG', slack: 'SL', microsoft: 'MS', whatsapp: 'WA', email: 'SES',
+  'microsoft-sso': 'MS', 'google-sso': 'G',
 };
 
 const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; url: string }[] }> = {
@@ -74,6 +77,37 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
     links: [
       { label: 'SES Console', url: 'https://console.aws.amazon.com/ses/home' },
       { label: 'Verified identities', url: 'https://console.aws.amazon.com/ses/home#/verified-identities' },
+    ],
+  },
+  'microsoft-sso': {
+    steps: [
+      '1. Sign in to portal.azure.com → search "App registrations" → New registration',
+      '2. Name: "BLUE.Y SSO" — Supported account types: "Accounts in this org directory only"',
+      '3. Redirect URI → Web → https://blue-y.blueonion.today/admin/auth/microsoft/callback',
+      '4. Click Register — copy the Application (client) ID → paste as Client ID',
+      '5. Copy the Directory (tenant) ID from the Overview page → paste as Tenant ID',
+      '6. Go to Certificates & secrets → New client secret → set expiry → copy the Value immediately (shown once) → paste as Client Secret',
+      '7. Go to API permissions → Add permission → Microsoft Graph → Delegated → add: openid, profile, email → Grant admin consent',
+      '8. Save credentials here — SSO login buttons appear immediately (no restart needed)',
+    ],
+    links: [
+      { label: 'Azure App Registrations', url: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps' },
+      { label: 'Azure AD Docs', url: 'https://learn.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app' },
+    ],
+  },
+  'google-sso': {
+    steps: [
+      '1. Go to console.cloud.google.com → select or create a project',
+      '2. APIs & Services → OAuth consent screen → External → fill in App name, support email → Save',
+      '3. APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID',
+      '4. Application type: Web application — Name: "BLUE.Y SSO"',
+      '5. Authorised redirect URIs → Add: https://blue-y.blueonion.today/admin/auth/google/callback',
+      '6. Click Create — copy the Client ID and Client Secret → paste here',
+      '7. Save credentials here — SSO login buttons appear immediately (no restart needed)',
+    ],
+    links: [
+      { label: 'Google Cloud Console', url: 'https://console.cloud.google.com/apis/credentials' },
+      { label: 'Google OAuth Docs', url: 'https://developers.google.com/identity/openid-connect/openid-connect' },
     ],
   },
 };
@@ -133,6 +167,161 @@ export default function Integrations() {
     } finally { setSaving(false); }
   };
 
+  const renderCard = (intg: Integration) => {
+    const isEditing = editing === intg.id;
+    const colorClass = PLATFORM_COLOR[intg.icon] ?? 'text-[#8b949e] bg-[#21262d] border-[#30363d]';
+    const ts = testStates[intg.id];
+    return (
+      <Card key={intg.id}>
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={clsx('w-9 h-9 rounded-lg border flex items-center justify-center text-sm font-bold', colorClass)}>
+              {PLATFORM_LABEL[intg.icon] ?? intg.label.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-[#e6edf3]">{intg.label}</div>
+              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                {intg.enabled
+                  ? <><CheckCircle size={10} className="text-[#3fb950]" /><span className="text-[10px] text-[#3fb950]">Configured</span></>
+                  : <><XCircle size={10} className="text-[#6e7681]" /><span className="text-[10px] text-[#6e7681]">Not configured</span></>
+                }
+                {ts && !ts.loading && ts.status && (
+                  <span className={clsx(
+                    'flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium border',
+                    ts.status === 'connected'      ? 'text-[#3fb950] bg-[#3fb950]/10 border-[#3fb950]/30' :
+                    ts.status === 'not_configured' ? 'text-[#8b949e] bg-[#21262d] border-[#30363d]' :
+                                                     'text-[#f85149] bg-[#f85149]/10 border-[#f85149]/30'
+                  )}>
+                    {ts.status === 'connected'
+                      ? <><CheckCircle size={8} /> Live</>
+                      : ts.status === 'not_configured'
+                      ? <><XCircle size={8} /> Not configured</>
+                      : <><XCircle size={8} /> Unreachable</>
+                    }
+                  </span>
+                )}
+                {ts?.loading && (
+                  <span className="flex items-center gap-0.5 text-[9px] text-[#6e7681]">
+                    <Loader2 size={8} className="animate-spin" /> Testing…
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          {!readOnly && !isEditing && (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => handleTest(intg.id)}
+                disabled={ts?.loading}
+                title={ts?.message}
+                className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#58a6ff] hover:border-[#58a6ff]/50 transition-colors disabled:opacity-40"
+              >
+                <Zap size={9} /> Test
+              </button>
+              <button
+                onClick={() => startEdit(intg)}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#e6edf3] hover:border-[#58a6ff] transition-colors"
+              >
+                <Edit2 size={10} /> Edit
+              </button>
+            </div>
+          )}
+          {isEditing && (
+            <div className="flex gap-2">
+              <button
+                onClick={cancelEdit}
+                className="p-1.5 rounded text-[#8b949e] hover:text-[#f85149] hover:bg-[#f85149]/10 transition-colors"
+              >
+                <X size={13} />
+              </button>
+              <button
+                onClick={() => handleSave(intg.id)}
+                disabled={saving}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-[#238636] hover:bg-[#2ea043] text-white transition-colors disabled:opacity-50"
+              >
+                <Save size={10} /> {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2.5">
+          {intg.fields.map(f => (
+            <div key={f.key}>
+              <label className="block text-[10px] text-[#6e7681] mb-0.5">{f.label}</label>
+              {isEditing ? (
+                <input
+                  type={f.type === 'password' ? 'password' : 'text'}
+                  value={editValues[f.key] ?? ''}
+                  onChange={e => setEditValues(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  placeholder={f.hasValue ? '(unchanged)' : `Enter ${f.label.toLowerCase()}`}
+                  className="w-full bg-[#0d1117] border border-[#30363d] rounded px-2.5 py-1.5 text-xs font-mono text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff]"
+                />
+              ) : (
+                <div className="text-xs font-mono text-[#8b949e] bg-[#0d1117] border border-[#30363d] rounded px-2.5 py-1.5 truncate">
+                  {f.value || <span className="text-[#6e7681] italic">not set</span>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Test result message */}
+        {ts && !ts.loading && ts.message && (
+          <p className={clsx(
+            'mt-3 text-[10px] px-2.5 py-1.5 rounded border',
+            ts.status === 'connected'
+              ? 'text-[#3fb950] bg-[#3fb950]/5 border-[#3fb950]/20'
+              : 'text-[#f85149] bg-[#f85149]/5 border-[#f85149]/20',
+          )}>
+            {ts.message}
+          </p>
+        )}
+
+        {/* Setup guide */}
+        {SETUP_GUIDES[intg.id] && (
+          <div className="mt-3 border-t border-[#21262d] pt-3">
+            <button
+              onClick={() => setShowGuide(showGuide === intg.id ? null : intg.id)}
+              className="flex items-center gap-1.5 text-[10px] text-[#6e7681] hover:text-[#8b949e] transition-colors"
+            >
+              <HelpCircle size={11} />
+              How to get these credentials
+              {showGuide === intg.id ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+            </button>
+            {showGuide === intg.id && (
+              <div className="mt-2 space-y-1.5">
+                {SETUP_GUIDES[intg.id].steps.map((step, i) => (
+                  <p key={i} className="text-[10px] text-[#8b949e] leading-relaxed">{step}</p>
+                ))}
+                <div className="flex items-center gap-3 mt-2 pt-2 border-t border-[#21262d]">
+                  {SETUP_GUIDES[intg.id].links.map(l => (
+                    <a
+                      key={l.url}
+                      href={l.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-[10px] text-[#58a6ff] hover:underline"
+                    >
+                      <ExternalLink size={9} />
+                      {l.label}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {msg?.id === intg.id && (
+          <p className={clsx('mt-3 text-xs', msg.type === 'ok' ? 'text-[#3fb950]' : 'text-[#f85149]')}>
+            {msg.text}
+          </p>
+        )}
+      </Card>
+    );
+  };
+
   return (
     <div className="p-6 space-y-5 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -150,162 +339,23 @@ export default function Integrations() {
       {loading ? (
         <p className="text-center text-sm text-[#6e7681] py-10">Loading…</p>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {integrations.map(intg => {
-            const isEditing = editing === intg.id;
-            const colorClass = PLATFORM_COLOR[intg.icon] ?? 'text-[#8b949e] bg-[#21262d] border-[#30363d]';
-            const ts = testStates[intg.id];
-            return (
-              <Card key={intg.id}>
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className={clsx('w-9 h-9 rounded-lg border flex items-center justify-center text-sm font-bold', colorClass)}>
-                      {PLATFORM_LABEL[intg.icon] ?? intg.label.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold text-[#e6edf3]">{intg.label}</div>
-                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                        {intg.enabled
-                          ? <><CheckCircle size={10} className="text-[#3fb950]" /><span className="text-[10px] text-[#3fb950]">Configured</span></>
-                          : <><XCircle size={10} className="text-[#6e7681]" /><span className="text-[10px] text-[#6e7681]">Not configured</span></>
-                        }
-                        {ts && !ts.loading && ts.status && (
-                          <span className={clsx(
-                            'flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium border',
-                            ts.status === 'connected'      ? 'text-[#3fb950] bg-[#3fb950]/10 border-[#3fb950]/30' :
-                            ts.status === 'not_configured' ? 'text-[#8b949e] bg-[#21262d] border-[#30363d]' :
-                                                             'text-[#f85149] bg-[#f85149]/10 border-[#f85149]/30'
-                          )}>
-                            {ts.status === 'connected'
-                              ? <><CheckCircle size={8} /> Live</>
-                              : ts.status === 'not_configured'
-                              ? <><XCircle size={8} /> Not configured</>
-                              : <><XCircle size={8} /> Unreachable</>
-                            }
-                          </span>
-                        )}
-                        {ts?.loading && (
-                          <span className="flex items-center gap-0.5 text-[9px] text-[#6e7681]">
-                            <Loader2 size={8} className="animate-spin" /> Testing…
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  {!readOnly && !isEditing && (
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => handleTest(intg.id)}
-                        disabled={ts?.loading}
-                        title={ts?.message}
-                        className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#58a6ff] hover:border-[#58a6ff]/50 transition-colors disabled:opacity-40"
-                      >
-                        <Zap size={9} /> Test
-                      </button>
-                      <button
-                        onClick={() => startEdit(intg)}
-                        className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#e6edf3] hover:border-[#58a6ff] transition-colors"
-                      >
-                        <Edit2 size={10} /> Edit
-                      </button>
-                    </div>
-                  )}
-                  {isEditing && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={cancelEdit}
-                        className="p-1.5 rounded text-[#8b949e] hover:text-[#f85149] hover:bg-[#f85149]/10 transition-colors"
-                      >
-                        <X size={13} />
-                      </button>
-                      <button
-                        onClick={() => handleSave(intg.id)}
-                        disabled={saving}
-                        className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-[#238636] hover:bg-[#2ea043] text-white transition-colors disabled:opacity-50"
-                      >
-                        <Save size={10} /> {saving ? 'Saving…' : 'Save'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2.5">
-                  {intg.fields.map(f => (
-                    <div key={f.key}>
-                      <label className="block text-[10px] text-[#6e7681] mb-0.5">{f.label}</label>
-                      {isEditing ? (
-                        <input
-                          type={f.type === 'password' ? 'password' : 'text'}
-                          value={editValues[f.key] ?? ''}
-                          onChange={e => setEditValues(prev => ({ ...prev, [f.key]: e.target.value }))}
-                          placeholder={f.hasValue ? '(unchanged)' : `Enter ${f.label.toLowerCase()}`}
-                          className="w-full bg-[#0d1117] border border-[#30363d] rounded px-2.5 py-1.5 text-xs font-mono text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff]"
-                        />
-                      ) : (
-                        <div className="text-xs font-mono text-[#8b949e] bg-[#0d1117] border border-[#30363d] rounded px-2.5 py-1.5 truncate">
-                          {f.value || <span className="text-[#6e7681] italic">not set</span>}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Test result message */}
-                {ts && !ts.loading && ts.message && (
-                  <p className={clsx(
-                    'mt-3 text-[10px] px-2.5 py-1.5 rounded border',
-                    ts.status === 'connected'
-                      ? 'text-[#3fb950] bg-[#3fb950]/5 border-[#3fb950]/20'
-                      : 'text-[#f85149] bg-[#f85149]/5 border-[#f85149]/20',
-                  )}>
-                    {ts.message}
-                  </p>
-                )}
-
-                {/* Setup guide */}
-                {SETUP_GUIDES[intg.id] && (
-                  <div className="mt-3 border-t border-[#21262d] pt-3">
-                    <button
-                      onClick={() => setShowGuide(showGuide === intg.id ? null : intg.id)}
-                      className="flex items-center gap-1.5 text-[10px] text-[#6e7681] hover:text-[#8b949e] transition-colors"
-                    >
-                      <HelpCircle size={11} />
-                      How to get these credentials
-                      {showGuide === intg.id ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                    </button>
-                    {showGuide === intg.id && (
-                      <div className="mt-2 space-y-1.5">
-                        {SETUP_GUIDES[intg.id].steps.map((step, i) => (
-                          <p key={i} className="text-[10px] text-[#8b949e] leading-relaxed">{step}</p>
-                        ))}
-                        <div className="flex items-center gap-3 mt-2 pt-2 border-t border-[#21262d]">
-                          {SETUP_GUIDES[intg.id].links.map(l => (
-                            <a
-                              key={l.url}
-                              href={l.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1 text-[10px] text-[#58a6ff] hover:underline"
-                            >
-                              <ExternalLink size={9} />
-                              {l.label}
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {msg?.id === intg.id && (
-                  <p className={clsx('mt-3 text-xs', msg.type === 'ok' ? 'text-[#3fb950]' : 'text-[#f85149]')}>
-                    {msg.text}
-                  </p>
-                )}
-              </Card>
-            );
-          })}
-        </div>
+        <>
+          {/* Messaging integrations */}
+          <div>
+            <h2 className="text-xs font-semibold text-[#6e7681] uppercase tracking-wider mb-3">Messaging Platforms</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {integrations.filter(i => !i.id.endsWith('-sso')).map(intg => renderCard(intg))}
+            </div>
+          </div>
+          {/* SSO integrations */}
+          <div>
+            <h2 className="text-xs font-semibold text-[#6e7681] uppercase tracking-wider mb-3">Single Sign-On (SSO)</h2>
+            <p className="text-xs text-[#8b949e] mb-3">Configure identity providers so invited users can sign in. Changes take effect immediately — no restart needed.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {integrations.filter(i => i.id.endsWith('-sso')).map(intg => renderCard(intg))}
+            </div>
+          </div>
+        </>
       )}
 
       <div className="rounded-lg border border-[#30363d] bg-[#161b22] px-4 py-3 text-xs text-[#8b949e]">

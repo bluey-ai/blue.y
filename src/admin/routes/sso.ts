@@ -3,6 +3,7 @@
 // Identity is proven by SSO; access is controlled by sso_invites table.
 import { Router, Request, Response } from 'express';
 import * as openidClient from 'openid-client';
+import * as k8s from '@kubernetes/client-node';
 import { config } from '../../config';
 import { getSsoInvite, markInviteJoined, countJoinedInvites } from '../db';
 import { getAuthorisedSeats } from '../license';
@@ -10,6 +11,17 @@ import { generateSessionToken } from '../auth';
 import { logger } from '../../utils/logger';
 
 const router = Router();
+
+async function readSsoCmConfig(): Promise<Record<string, string>> {
+  try {
+    const kc = new k8s.KubeConfig();
+    kc.loadFromDefault();
+    const api = kc.makeApiClient(k8s.CoreV1Api);
+    const namespace = config.kube.namespaces[0] || 'prod';
+    const cm = await api.readNamespacedConfigMap({ name: 'blue-y-config', namespace });
+    return cm.data ?? {};
+  } catch { return {}; }
+}
 
 // In-memory PKCE state store: state → { codeVerifier, createdAt }
 // Expires after 10 minutes.
@@ -23,19 +35,24 @@ setInterval(() => {
 
 // ── Microsoft OIDC (Azure AD) ─────────────────────────────────────────────────
 
-let msConfig: openidClient.Configuration | null = null;
-
 async function getMsConfig(): Promise<openidClient.Configuration> {
-  if (msConfig) return msConfig;
-  const { tenantId, clientId, clientSecret } = config.admin.microsoft;
+  const cm = await readSsoCmConfig();
+  const tenantId     = cm['sso.microsoft.tenant_id']     || config.admin.microsoft.tenantId;
+  const clientId     = cm['sso.microsoft.client_id']     || config.admin.microsoft.clientId;
+  const clientSecret = cm['sso.microsoft.client_secret'] || config.admin.microsoft.clientSecret;
   const issuerUrl = `https://login.microsoftonline.com/${tenantId}/v2.0`;
-  msConfig = await openidClient.discovery(new URL(issuerUrl), clientId, clientSecret);
-  return msConfig;
+  return openidClient.discovery(new URL(issuerUrl), clientId, clientSecret);
 }
 
 // GET /admin/auth/microsoft — redirect to Azure AD
 router.get('/microsoft', async (req: Request, res: Response) => {
-  if (!config.admin.microsoft.enabled) {
+  const cm = await readSsoCmConfig();
+  const msReady = !!(
+    (cm['sso.microsoft.tenant_id'] || config.admin.microsoft.tenantId) &&
+    (cm['sso.microsoft.client_id'] || config.admin.microsoft.clientId) &&
+    (cm['sso.microsoft.client_secret'] || config.admin.microsoft.clientSecret)
+  );
+  if (!msReady) {
     res.status(503).json({ error: 'Microsoft SSO is not configured' });
     return;
   }
@@ -65,7 +82,13 @@ router.get('/microsoft', async (req: Request, res: Response) => {
 
 // GET /admin/auth/microsoft/callback — exchange code, verify invite, set session
 router.get('/microsoft/callback', async (req: Request, res: Response) => {
-  if (!config.admin.microsoft.enabled) {
+  const cm2 = await readSsoCmConfig();
+  const msReady2 = !!(
+    (cm2['sso.microsoft.tenant_id'] || config.admin.microsoft.tenantId) &&
+    (cm2['sso.microsoft.client_id'] || config.admin.microsoft.clientId) &&
+    (cm2['sso.microsoft.client_secret'] || config.admin.microsoft.clientSecret)
+  );
+  if (!msReady2) {
     res.redirect('/admin/login?error=sso_disabled');
     return;
   }
@@ -132,22 +155,21 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
 
 // ── Google OAuth2 ─────────────────────────────────────────────────────────────
 
-let googleConfig: openidClient.Configuration | null = null;
-
 async function getGoogleConfig(): Promise<openidClient.Configuration> {
-  if (googleConfig) return googleConfig;
-  const { clientId, clientSecret } = config.admin.google;
-  googleConfig = await openidClient.discovery(
-    new URL('https://accounts.google.com'),
-    clientId,
-    clientSecret,
-  );
-  return googleConfig;
+  const cm = await readSsoCmConfig();
+  const clientId     = cm['sso.google.client_id']     || config.admin.google.clientId;
+  const clientSecret = cm['sso.google.client_secret'] || config.admin.google.clientSecret;
+  return openidClient.discovery(new URL('https://accounts.google.com'), clientId, clientSecret);
 }
 
 // GET /admin/auth/google — redirect to Google
 router.get('/google', async (req: Request, res: Response) => {
-  if (!config.admin.google.enabled) {
+  const gcm = await readSsoCmConfig();
+  const googleReady = !!(
+    (gcm['sso.google.client_id'] || config.admin.google.clientId) &&
+    (gcm['sso.google.client_secret'] || config.admin.google.clientSecret)
+  );
+  if (!googleReady) {
     res.status(503).json({ error: 'Google SSO is not configured' });
     return;
   }
@@ -177,7 +199,12 @@ router.get('/google', async (req: Request, res: Response) => {
 
 // GET /admin/auth/google/callback
 router.get('/google/callback', async (req: Request, res: Response) => {
-  if (!config.admin.google.enabled) {
+  const gcm2 = await readSsoCmConfig();
+  const googleReady2 = !!(
+    (gcm2['sso.google.client_id'] || config.admin.google.clientId) &&
+    (gcm2['sso.google.client_secret'] || config.admin.google.clientSecret)
+  );
+  if (!googleReady2) {
     res.redirect('/admin/login?error=sso_disabled');
     return;
   }
@@ -241,12 +268,18 @@ router.get('/google/callback', async (req: Request, res: Response) => {
 });
 
 // GET /admin/auth/providers — tell the frontend which SSO providers are available
-router.get('/providers', (_req: Request, res: Response) => {
-  res.json({
-    microsoft: config.admin.microsoft.enabled,
-    google:    config.admin.google.enabled,
-    magicLink: true,  // always available for SuperAdmin (Telegram break-glass)
-  });
+router.get('/providers', async (_req: Request, res: Response) => {
+  const cm = await readSsoCmConfig();
+  const msEnabled = !!(
+    (cm['sso.microsoft.tenant_id'] || config.admin.microsoft.tenantId) &&
+    (cm['sso.microsoft.client_id'] || config.admin.microsoft.clientId) &&
+    (cm['sso.microsoft.client_secret'] || config.admin.microsoft.clientSecret)
+  );
+  const googleEnabled = !!(
+    (cm['sso.google.client_id'] || config.admin.google.clientId) &&
+    (cm['sso.google.client_secret'] || config.admin.google.clientSecret)
+  );
+  res.json({ microsoft: msEnabled, google: googleEnabled, magicLink: true });
 });
 
 export default router;

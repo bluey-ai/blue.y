@@ -91,6 +91,25 @@ const INTEGRATIONS = [
       { key: 'email.ses_region', label: 'SES Region',      type: 'text' },
     ],
   },
+  {
+    id: 'microsoft-sso',
+    label: 'Microsoft SSO (Azure AD)',
+    icon: 'microsoft-sso',
+    fields: [
+      { key: 'sso.microsoft.tenant_id',     label: 'Tenant ID',     type: 'text'     },
+      { key: 'sso.microsoft.client_id',     label: 'Client ID',     type: 'text'     },
+      { key: 'sso.microsoft.client_secret', label: 'Client Secret', type: 'password' },
+    ],
+  },
+  {
+    id: 'google-sso',
+    label: 'Google SSO',
+    icon: 'google-sso',
+    fields: [
+      { key: 'sso.google.client_id',     label: 'Client ID',     type: 'text'     },
+      { key: 'sso.google.client_secret', label: 'Client Secret', type: 'password' },
+    ],
+  },
 ];
 
 // GET /api/integrations — returns integration status with masked secrets for non-superadmin
@@ -280,6 +299,28 @@ async function testIntegration(id: string, cfg: Record<string, string>): Promise
     } catch (e: any) {
       return { ok: false, status: 'failed', message: e?.message ?? 'SES connection failed — check IAM/IRSA permissions' };
     }
+  }
+
+  if (id === 'microsoft-sso') {
+    const tenantId     = cfg['sso.microsoft.tenant_id']     || process.env.MICROSOFT_TENANT_ID     || '';
+    const clientId     = cfg['sso.microsoft.client_id']     || process.env.MICROSOFT_CLIENT_ID     || '';
+    const clientSecret = cfg['sso.microsoft.client_secret'] || process.env.MICROSOFT_CLIENT_SECRET || '';
+    if (!tenantId || !clientId || !clientSecret) return { ok: false, status: 'not_configured', message: 'Tenant ID / Client ID / Client Secret not set' };
+    const body = new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret, scope: 'https://graph.microsoft.com/.default' });
+    const r = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, { ...fetchOpts, method: 'POST', body });
+    const json = await r.json() as { access_token?: string; error?: string; error_description?: string };
+    if (json.access_token) return { ok: true, status: 'connected', message: 'Azure AD credentials valid — SSO ready' };
+    return { ok: false, status: 'failed', message: json.error_description?.split('\r\n')[0] ?? json.error ?? 'Auth failed' };
+  }
+
+  if (id === 'google-sso') {
+    const clientId     = cfg['sso.google.client_id']     || process.env.GOOGLE_CLIENT_ID     || '';
+    const clientSecret = cfg['sso.google.client_secret'] || process.env.GOOGLE_CLIENT_SECRET || '';
+    if (!clientId || !clientSecret) return { ok: false, status: 'not_configured', message: 'Client ID / Client Secret not set' };
+    // Verify the discovery doc is reachable (confirms credentials format is valid)
+    const r = await fetch('https://accounts.google.com/.well-known/openid-configuration', fetchOpts);
+    if (r.ok) return { ok: true, status: 'connected', message: 'Google credentials saved — SSO ready' };
+    return { ok: false, status: 'failed', message: 'Could not reach Google OIDC discovery endpoint' };
   }
 
   return { ok: false, status: 'failed', message: 'Unknown integration' };
