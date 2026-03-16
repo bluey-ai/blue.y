@@ -1,5 +1,44 @@
 # BLUE.Y Changelog
 
+All notable changes to BLUE.Y are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+---
+
+## [1.7.1] — 2026-03-16 — Community vs Premium tier definitions (BLY-39)
+**Branch:** `feat/bly-39-community-premium-split`
+
+### Added
+- `README.md` — "Community vs Premium" section: clear feature tier table, licensing model
+  explanation, and contact details for premium inquiries.
+- `docs/CHANGELOG-premium.md` — dedicated premium changelog (Bitbucket-only). Tracks premium
+  releases separately from the community changelog. Includes planned v1.8.0 and v2.0.0 roadmap.
+
+---
+
+## [1.7.0] — 2026-03-16 — SMTP email support (BLY-22)
+**Branch:** `feat/bly-22-smtp-email`
+
+### Added
+- SMTP transport support via `nodemailer` — BLUE.Y can now send incident emails on GKE, AKS,
+  bare-metal, or any cloud where AWS SES is unavailable.
+- Auto-detection: if `SMTP_HOST` env var is set, SMTP is used; otherwise falls back to AWS SES
+  (fully backwards-compatible — existing EKS+SES deployments require no changes).
+- New Helm `email.smtp.*` values: `host`, `port`, `secure`, `user`, `pass`.
+  SMTP credentials stored in K8s Secret (`smtp-user`, `smtp-pass` keys, both optional).
+- `.env.example` updated with Option A (SMTP) / Option B (SES) sections.
+- `src/config.ts` — `config.email.smtp` block.
+
+### Changed
+- `helm/blue-y/values.yaml` — `emailFrom` renamed to `email.from` (nested under `email:`).
+  **Migration**: replace `emailFrom: "..."` with `email.from: "..."` in your override file.
+- `helm/blue-y/templates/deployment.yaml` — `EMAIL_FROM` now reads from `email.from`;
+  `SMTP_*` env vars injected conditionally when `email.smtp.host` is set.
+- `helm/blue-y/templates/secret.yaml` — `smtp-user` and `smtp-pass` keys added.
+
+### Dependencies
+- Added `nodemailer: ^8.0.2` (runtime), `@types/nodemailer: ^7.0.11` (dev).
+
 ---
 
 ## [1.6.0] — 2026-03-16 — Security Hardening (BLY-35)
@@ -33,31 +72,6 @@
 - `.github/workflows/ci.yml` — added secret-scan, Docker Scout, cosign, and SBOM steps to the
   existing build + publish pipeline.
 - `SECURITY.md` — new "Prompt Injection Mitigation" section documenting the two-layer defence.
-
----
-
-## [1.7.0] — 2026-03-16 — SMTP email support (BLY-22)
-**Branch:** `feat/bly-22-smtp-multi-cloud`
-
-### Added
-- SMTP transport support via `nodemailer` — BLUE.Y can now send incident emails on GKE, AKS,
-  bare-metal, or any cloud where AWS SES is unavailable.
-- Auto-detection: if `SMTP_HOST` env var is set, SMTP is used; otherwise falls back to AWS SES
-  (fully backwards-compatible — existing EKS+SES deployments require no changes).
-- New Helm `email.smtp.*` values: `host`, `port`, `secure`, `user`, `pass`.
-  SMTP credentials stored in K8s Secret (`smtp-user`, `smtp-pass` keys, both optional).
-- `.env.example` updated with Option A (SMTP) / Option B (SES) sections.
-- `src/config.ts` — `config.email.smtp` block.
-
-### Changed
-- `helm/blue-y/values.yaml` — `emailFrom` renamed to `email.from` (nested under `email:`).
-  **Migration**: replace `emailFrom: "..."` with `email.from: "..."` in your override file.
-- `helm/blue-y/templates/deployment.yaml` — `EMAIL_FROM` now reads from `email.from`;
-  `SMTP_*` env vars injected conditionally when `email.smtp.host` is set.
-- `helm/blue-y/templates/secret.yaml` — `smtp-user` and `smtp-pass` keys added.
-
-### Dependencies
-- Added `nodemailer: ^8.0.2` (runtime), `@types/nodemailer: ^7.0.11` (dev).
 
 ---
 
@@ -103,8 +117,8 @@
 
 ---
 
-## [1.2.0] — 2026-03-15 — Slack integration (BLY-3)
-**Branch:** `feat/hubs-6133-slack-notifier`
+## [1.2.0] — 2026-03-15 — Slack integration + Helm chart (BLY-3 + BLY-7)
+**Branches:** `feat/hubs-6133-slack-notifier`, `feat/bly-7-helm-chart`
 
 ### Added
 - `SlackNotifier` (`src/clients/notifiers/slack.ts`) — outbound messages via `@slack/web-api`.
@@ -116,23 +130,6 @@
   Supports: `status`, `check`, `nodes`, `load`, `help`.
   Administrative commands (restart, scale, etc.) remain Telegram-only until full platform
   refactor (future BLY ticket).
-
-### Config
-- `SLACK_BOT_TOKEN` (xoxb-...) — enables outbound Slack alerts
-- `SLACK_CHANNEL_ID` — channel to post alerts to
-- `SLACK_APP_TOKEN` (xapp-...) — enables Socket Mode inbound commands
-
----
-
-All notable changes to BLUE.Y are documented here.
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
-
----
-
-## [1.2.0] — 2026-03-15 — Helm chart (BLY-7)
-**Branch:** `feat/bly-7-helm-chart`
-
-### Added
 - `helm/blue-y/` — full Helm chart for community deployment.
   - `Chart.yaml` — version 1.2.0, appVersion 1.2.0
   - `values.yaml` — all config as values with sane defaults and inline comments
@@ -145,19 +142,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `templates/_helpers.tpl` — standard Helm helper templates
 - `existingSecret.name` value: point to a pre-existing K8s Secret instead of creating one
 - IRSA support via `serviceAccount.irsaRoleArn` annotation
-- Optional integrations (Slack, Teams, Jira, Grafana, Loki, Bitbucket, WAF) only emit
-  env vars when their values are non-empty — no noise for unused features
 
-### Install
-```bash
-helm install blue-y bluey/blue-y \
-  --set ai.apiKey=$AI_API_KEY \
-  --set telegram.botToken=$BOT_TOKEN \
-  --set telegram.chatId=$CHAT_ID \
-  --set kube.clusterName=my-cluster \
-  --set kube.awsRegion=us-east-1 \
-  --namespace monitoring --create-namespace
-```
+### Config
+- `SLACK_BOT_TOKEN` (xoxb-...) — enables outbound Slack alerts
+- `SLACK_CHANNEL_ID` — channel to post alerts to
+- `SLACK_APP_TOKEN` (xapp-...) — enables Socket Mode inbound commands
 
 ---
 
