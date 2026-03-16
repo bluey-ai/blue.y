@@ -5,6 +5,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.8.0] — 2026-03-16 — Admin Backend — ChatOps magic-link auth (BLY-37)
+**Branch:** `feat/bly-37-admin-backend`
+
+### Added
+- `src/admin/` (premium) — Express admin app mounted at `/admin` when `ADMIN_ENABLED=true`.
+- `src/admin/auth.ts` — JWT HS256 magic-link generation (4h expiry, single-use nonce). Nonces
+  stored in memory with TTL; consumed on first click.
+- `src/admin/config-watcher.ts` — K8s ConfigMap `blue-y-admin-users` polling every 30s.
+  Hot-reloads admin whitelist without pod restart.
+  Format: `platform:userId:Display Name` (e.g. `telegram:123456789:Zeeshan Ali`).
+- `src/admin/db.ts` — SQLite incident log via `better-sqlite3` (WAL mode, indexed).
+  Schema: `id, ts, severity, namespace, pod, monitor, title, message, ai_diagnosis`.
+- `src/admin/routes/incidents.ts` — `GET /admin/api/incidents` with filtering by severity,
+  namespace, monitor, and full-text search. `GET /admin/api/incidents/:id`.
+- `src/admin/routes/config.ts` — `GET /admin/api/config` returns live admin whitelist.
+- `src/admin/routes/cluster.ts` — `GET /admin/api/cluster/status|pods|nodes` — live K8s data.
+- `/admin` Telegram command — checks whitelist, generates magic link, sends as DM (not channel).
+  Community builds receive a "premium feature" message instead of crashing.
+- `Dockerfile.premium` — premium image build with native build tools for `better-sqlite3`.
+  Includes `/data` volume for SQLite persistence.
+- `helm/blue-y-premium/` — premium Helm chart: `Chart.yaml`, `values.yaml`, ingress template
+  (internal ALB for VPN mode), `blue-y-admin-users` ConfigMap template.
+- `.github-sync-ignore` — added `.bitbucket/` and `Dockerfile.premium` (internal files that
+  should never appear on GitHub).
+
+### Changed
+- `src/config.ts` — added `admin` config block: `enabled`, `jwtSecret`, `host`,
+  `sessionTtlHours`, `dbPath` (all via env vars).
+- `src/main.ts` — dynamic `require('./admin')` at startup (try/catch — safe for community builds).
+  Admin Express app mounted at `/admin` only when `ADMIN_ENABLED=true` + secrets present.
+
+### Dependencies
+- Added `better-sqlite3 ^9.4.3`, `cookie-parser ^1.4.7`, `jsonwebtoken ^9.0.2`.
+- Added dev types: `@types/better-sqlite3`, `@types/cookie-parser`, `@types/jsonwebtoken`.
+
+---
+
 ## [1.7.1] — 2026-03-16 — Community vs Premium tier definitions (BLY-39)
 **Branch:** `feat/bly-39-community-premium-split`
 

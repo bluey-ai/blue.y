@@ -164,6 +164,15 @@ export const config = {
     enabled: !!process.env.TWILIO_ACCOUNT_SID,
   },
 
+  // Admin dashboard (premium — src/admin/)
+  admin: {
+    enabled:         process.env.ADMIN_ENABLED === 'true',
+    jwtSecret:       process.env.ADMIN_JWT_SECRET || '',
+    host:            process.env.ADMIN_HOST || '',          // e.g. https://admin.example.com
+    sessionTtlHours: parseInt(process.env.ADMIN_SESSION_TTL_HOURS || '8', 10),
+    dbPath:          process.env.ADMIN_DB_PATH || '/data/blue-y-incidents.sqlite',
+  },
+
   // Safety
   safety: {
     maxActionsPerHour: parseInt(process.env.MAX_ACTIONS_PER_HOUR || '5', 10),

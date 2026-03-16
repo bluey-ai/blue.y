@@ -6,9 +6,7 @@
 
 ---
 
-## [Unreleased] — Admin Dashboard (BLY-37, BLY-38, BLY-36)
-
-### Planned for v1.8.0
+## [1.8.0] — 2026-03-16 — Admin Backend (BLY-37)
 
 - **Admin backend** (`src/admin/`) — Express REST API with ChatOps magic-link auth
   - `/admin` Telegram command → signed JWT magic link (HS256, 4h expiry, single-use nonce)

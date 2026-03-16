@@ -1,0 +1,99 @@
+# BLUE.Y Premium — Helm values
+# ─────────────────────────────────────────────────────────────────────────────
+# Replace all <...> placeholders before installing.
+# Refer to docs/premium/SETUP-GUIDE.md for full instructions.
+
+# ── Image (private ECR — provided by BlueOnion) ──────────────────────────────
+image:
+  repository: 716156543026.dkr.ecr.ap-southeast-1.amazonaws.com/blue.y
+  tag: "production-latest"
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: ecr-pull-secret   # kubectl create secret docker-registry ecr-pull-secret ...
+
+# ── Core bot config (same as community) ──────────────────────────────────────
+ai:
+  apiKey: ""                 # DEEPSEEK_API_KEY / any OpenAI-compatible key
+  baseUrl: "https://api.deepseek.com/v1"
+  routineModel: "deepseek-chat"
+  incidentModel: "deepseek-reasoner"
+
+telegram:
+  botToken: ""
+  chatId: ""
+  adminId: ""
+
+kube:
+  clusterName: "<your-cluster-name>"
+  watchNamespaces: "prod,monitoring"
+  awsRegion: "ap-southeast-1"
+
+# ── Admin dashboard (premium) ─────────────────────────────────────────────────
+admin:
+  enabled: true
+
+  # Access mode: "vpn" (default, internal ALB) or "dynamic-ip" (public ALB, no VPN needed)
+  accessMode: "vpn"
+
+  # Public-facing URL of the admin dashboard (used for magic link generation)
+  # VPN mode:      use your internal ALB DNS or a VPN-accessible hostname
+  # dynamic-ip:    use the public ALB DNS
+  host: "https://admin.<your-domain>"
+
+  # JWT secret for magic links and sessions — store in K8s Secret
+  jwtSecret: ""              # use existingSecret below instead of inline
+
+  # Session lifetime
+  sessionTtlHours: 8
+
+  # SQLite incident log path (must be on a persistent volume)
+  dbPath: "/data/blue-y-incidents.sqlite"
+
+  # Admin user whitelist ConfigMap — created below or pre-existing
+  # Format per entry: "platform:userId:Display Name"
+  # e.g.: "telegram:123456789:Zeeshan Ali"
+  users: {}
+  # user1: "telegram:123456789:Zeeshan Ali"
+  # user2: "slack:U01ABC123:Alice"
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+
+  # VPN mode: internal ALB (private VPC, unreachable from internet)
+  # dynamic-ip:  internet-facing ALB
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internal         # change to "internet-facing" for dynamic-ip
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: ""      # ACM certificate ARN
+
+  host: "admin.<your-domain>"
+  tls: true
+
+# ── Persistent volume for SQLite ─────────────────────────────────────────────
+persistence:
+  enabled: true
+  storageClass: "gp3"
+  size: 1Gi
+  mountPath: /data
+
+# ── Existing K8s Secret (recommended over inline values) ─────────────────────
+existingSecret:
+  name: "blue-y-secrets"    # must contain: ai-api-key, telegram-bot-token, telegram-chat-id, admin-jwt-secret
+
+# ── Service account / IRSA ───────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  irsaRoleArn: ""            # IAM role ARN for AWS integrations (SES, WAF, EKS node groups)
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
