@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { UserPlus, Trash2, RefreshCw, Shield, Mail, Globe, ShieldCheck, Eye, MapPin, Plus, X } from 'lucide-react';
+import { UserPlus, Trash2, RefreshCw, Shield, Mail, Globe, ShieldCheck, Eye, MapPin, Plus, X, Crosshair } from 'lucide-react';
 import {
   getInvites, createInvite, revokeInvite, changeInviteRole,
   getAllowlist, getMyIp, addAllowlistEntry, deleteAllowlistEntry,
@@ -44,6 +44,7 @@ export default function Users() {
   const [ipForm, setIpForm] = useState({ cidr: '', label: '' });
   const [addingIp, setAddingIp] = useState(false);
   const [ipError, setIpError] = useState('');
+  const [detectingIp, setDetectingIp] = useState(false);
 
   const [revoking, setRevoking] = useState<string | null>(null);
   const [deletingIp, setDeletingIp] = useState<number | null>(null);
@@ -90,6 +91,18 @@ export default function Users() {
     try { await changeInviteRole(email, role); await load(); }
     catch (e: any) { setInviteError(e.message); }
     finally { setChangingRole(null); }
+  };
+
+  const detectMyIp = async () => {
+    setDetectingIp(true);
+    try {
+      const ip = await getMyIp();
+      setMyIp(ip.ip);
+      setIpForm(f => ({ cidr: ip.ip, label: f.label || 'My IP' }));
+      setIpError('');
+    } catch {
+      setIpError('Could not detect IP — check your connection.');
+    } finally { setDetectingIp(false); }
   };
 
   const handleAddIp = async (e: React.FormEvent) => {
@@ -261,23 +274,34 @@ export default function Users() {
         <form onSubmit={handleAddIp} className="flex flex-wrap gap-3 items-end mb-4">
           <div className="space-y-1 flex-1 min-w-[160px]">
             <label className="text-xs text-[#8b949e]">IP or CIDR</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="1.2.3.4 or 10.0.0.0/8"
-                className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-sm font-mono text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff]"
-                value={ipForm.cidr}
-                onChange={e => setIpForm(f => ({ ...f, cidr: e.target.value }))}
-              />
-              {myIp && (
-                <button
-                  type="button"
-                  onClick={() => setIpForm(f => ({ ...f, cidr: myIp, label: f.label || 'My IP' }))}
-                  title={`Add my IP (${myIp})`}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#e6edf3] hover:border-[#58a6ff] transition-colors whitespace-nowrap"
-                >
-                  <MapPin size={11} /> My IP
-                </button>
+            <input
+              type="text"
+              placeholder="1.2.3.4 or 10.0.0.0/8"
+              className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-sm font-mono text-[#e6edf3] placeholder-[#6e7681] outline-none focus:border-[#58a6ff]"
+              value={ipForm.cidr}
+              onChange={e => setIpForm(f => ({ ...f, cidr: e.target.value }))}
+            />
+            <div className="flex items-center gap-1.5 mt-1">
+              <button
+                type="button"
+                onClick={detectMyIp}
+                disabled={detectingIp}
+                className="flex items-center gap-1 text-[10px] text-[#58a6ff] hover:text-[#79b8ff] disabled:opacity-50 transition-colors"
+              >
+                <Crosshair size={10} className={detectingIp ? 'animate-spin' : ''} />
+                {detectingIp ? 'Detecting…' : 'Detect my IP'}
+              </button>
+              {myIp && !detectingIp && (
+                <span className="text-[10px] text-[#6e7681]">
+                  →{' '}
+                  <button
+                    type="button"
+                    onClick={() => setIpForm(f => ({ cidr: myIp, label: f.label || 'My IP' }))}
+                    className="font-mono text-[#8b949e] hover:text-[#e6edf3] transition-colors"
+                  >
+                    {myIp}
+                  </button>
+                </span>
               )}
             </div>
           </div>
