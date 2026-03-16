@@ -114,7 +114,7 @@ spec:
                   key: teams-app-password
                   optional: true
             - name: TEAMS_TENANT_ID
-              value: ""   # Set your Azure AD tenant ID here
+              value: "<TEAMS_TENANT_ID>"   # Set TEAMS_TENANT_ID as a Bitbucket repo variable
             - name: JIRA_BASE_URL
               value: "https://your-org.atlassian.net"
             - name: JIRA_PROJECT_KEY
