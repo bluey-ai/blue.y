@@ -69,9 +69,18 @@ export const config = {
   //   { name: 'My Frontend', url: 'https://app.example.com', expect: 200 },
   productionUrls: JSON.parse(process.env.PRODUCTION_URLS || '[]'),
 
-  // Email sender
+  // Email — SMTP (any provider) or AWS SES fallback
+  // If SMTP_HOST is set, SMTP is used. Otherwise falls back to AWS SES.
   email: {
     from: process.env.EMAIL_FROM || 'noreply@example.com',
+    smtp: {
+      host: process.env.SMTP_HOST || '',
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      secure: process.env.SMTP_SECURE === 'true',
+      user: process.env.SMTP_USER || '',
+      pass: process.env.SMTP_PASS || '',
+      enabled: !!process.env.SMTP_HOST,
+    },
   },
 
   // Loki (log aggregation)

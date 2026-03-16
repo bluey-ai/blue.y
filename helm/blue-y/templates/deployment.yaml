@@ -260,7 +260,29 @@ spec:
 
             # ── Email ──────────────────────────────────────────────────────────
             - name: EMAIL_FROM
-              value: {{ .Values.emailFrom | quote }}
+              value: {{ .Values.email.from | quote }}
+            {{- if .Values.email.smtp.host }}
+            - name: SMTP_HOST
+              value: {{ .Values.email.smtp.host | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.email.smtp.port | quote }}
+            - name: SMTP_SECURE
+              value: {{ .Values.email.smtp.secure | quote }}
+            {{- if .Values.email.smtp.user }}
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: smtp-user
+                  optional: true
+            - name: SMTP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "blue-y.secretName" . }}
+                  key: smtp-pass
+                  optional: true
+            {{- end }}
+            {{- end }}
 
             # ── Scheduling ─────────────────────────────────────────────────────
             - name: SCHEDULE_DAILY_REPORT
