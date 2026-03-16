@@ -1,0 +1,41 @@
+{{- if and .Values.admin.enabled .Values.admin.ingress.enabled }}
+# Internal ALB Ingress for BLUE.Y admin dashboard.
+# scheme: internal — the ALB has a private IP only. Unreachable from public internet.
+# Access requires VPN (Tailscale) or being inside the VPC subnet.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "blue-y.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "blue-y.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.admin.ingress.ingressClass | default "alb" | quote }}
+    alb.ingress.kubernetes.io/scheme: {{ .Values.admin.ingress.scheme | default "internal" | quote }}
+    alb.ingress.kubernetes.io/target-type: "ip"
+    {{- if .Values.admin.ingress.certificateArn }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ .Values.admin.ingress.certificateArn | quote }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    {{- end }}
+    {{- range $key, $val := .Values.admin.ingress.annotations }}
+    {{ $key }}: {{ $val | quote }}
+    {{- end }}
+spec:
+  rules:
+    - host: {{ required "admin.ingress.host is required when admin ingress is enabled" .Values.admin.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "blue-y.fullname" . }}
+                port:
+                  number: 80
+  {{- if .Values.admin.ingress.certificateArn }}
+  tls:
+    - hosts:
+        - {{ .Values.admin.ingress.host | quote }}
+  {{- end }}
+{{- end }}

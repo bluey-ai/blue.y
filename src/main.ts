@@ -244,8 +244,25 @@ let lastIncident: {
   lokiTrend?: string;
 } | null = null;
 
-// Wire up auto-diagnose → lastIncident
-scheduler.onIncident = (incident) => { lastIncident = incident; };
+// Wire up auto-diagnose → lastIncident + SQLite incident log (premium)
+scheduler.onIncident = (incident) => {
+  lastIncident = incident;
+  if (adminModule?.insertIncident) {
+    try {
+      adminModule.insertIncident({
+        severity:     (incident.status?.toLowerCase() === 'critical') ? 'critical' : 'warning',
+        namespace:    incident.namespace  ?? '',
+        pod:          incident.pod        ?? '',
+        monitor:      incident.monitor    ?? '',
+        title:        `${incident.monitor ?? 'monitor'}: ${incident.pod ?? 'unknown'} is ${incident.status ?? 'unhealthy'}`,
+        message:      incident.description ?? incident.logs?.substring(0, 500) ?? '',
+        ai_diagnosis: incident.analysis   ?? null,
+      });
+    } catch (e) {
+      logger.warn('[admin] Failed to write incident to SQLite', e);
+    }
+  }
+};
 
 // Track last bot response for "email this" context
 let lastBotResponse: string | null = null;

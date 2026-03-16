@@ -1,14 +1,19 @@
 // @premium — BlueOnion internal only.
 import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 import path from 'path';
 import { generateMagicLink, validateMagicLink, generateSessionToken, validateSession } from './auth';
 import { openDb, insertIncident } from './db';
 import { startConfigWatcher, stopConfigWatcher, isAdminUser } from './config-watcher';
 import { setKubeClient } from './routes/cluster';
+import { setStreamKubeClient } from './routes/stream';
 import incidentRoutes from './routes/incidents';
 import configRoutes from './routes/config';
 import clusterRoutes from './routes/cluster';
+import usersRoutes from './routes/users';
+import streamRoutes from './routes/stream';
 import { KubeClient } from '../clients/kube';
 import { config } from '../config';
 import { logger } from '../utils/logger';
@@ -28,10 +33,34 @@ function requireSession(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+const authRateLimit = rateLimit({
+  windowMs: 60_000,          // 1 minute
+  max: 5,                     // 5 requests per window per IP
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many auth attempts. Try again in a minute.' },
+});
+
 export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<express.Router> {
   const router = express.Router();
   router.use(cookieParser());
   router.use(express.json());
+
+  // Security headers on all /admin routes
+  router.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc:  ["'self'"],
+        scriptSrc:   ["'self'", "'unsafe-inline'"],  // needed for inline React/Vite dev
+        styleSrc:    ["'self'", "'unsafe-inline'"],
+        imgSrc:      ["'self'", 'data:'],
+        connectSrc:  ["'self'"],
+        frameSrc:    ["'none'"],
+        objectSrc:   ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,  // relaxed for SSE stream compatibility
+  }));
 
   // Initialise SQLite
   openDb();
@@ -40,8 +69,11 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
   const namespace = opts.namespace ?? (config.kube.namespaces[0] || 'prod');
   await startConfigWatcher(namespace);
 
-  // Wire kube client into cluster routes
-  if (opts.kube) setKubeClient(opts.kube);
+  // Wire kube client into cluster + stream routes
+  if (opts.kube) {
+    setKubeClient(opts.kube);
+    setStreamKubeClient(opts.kube);
+  }
 
   // ── Auth routes ─────────────────────────────────────────────────────────────
 
@@ -75,8 +107,8 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
 </html>`);
   });
 
-  // Magic link callback — validates JWT nonce and sets session cookie
-  router.get('/auth', (req: Request, res: Response) => {
+  // Magic link callback — rate-limited, validates JWT nonce and sets session cookie
+  router.get('/auth', authRateLimit, (req: Request, res: Response) => {
     const token = req.query.token as string;
     if (!token) { res.redirect('/admin/login'); return; }
 
@@ -151,9 +183,17 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
   });
 
   // ── REST API (protected) ─────────────────────────────────────────────────────
+  // No caching on any API response
+  router.use('/api', (_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+
   router.use('/api/incidents', requireSession, incidentRoutes);
   router.use('/api/config',    requireSession, configRoutes);
   router.use('/api/cluster',   requireSession, clusterRoutes);
+  router.use('/api/users',     requireSession, usersRoutes);
+  router.use('/api/stream',    requireSession, streamRoutes);
 
   // API: current session info
   router.get('/api/me', requireSession, (req: Request, res: Response) => {

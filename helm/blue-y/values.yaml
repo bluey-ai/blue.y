@@ -148,6 +148,32 @@ email:
 schedule:
   dailyReport: "0 9 * * *"
 
+# -- Admin dashboard (premium — requires Dockerfile.premium build)
+admin:
+  # Set to true to enable the /admin route and magic-link bot command
+  enabled: false
+  # Public hostname for magic link URLs (no trailing slash)
+  # Example: "https://blue-y.example.com"
+  host: ""
+  # HS256 JWT signing secret for magic links and session tokens.
+  # Leave empty to auto-generate (stored in Secret blue-y-admin-jwt).
+  # Recommended: generate with: openssl rand -hex 32
+  jwtSecret: ""
+  # Session cookie lifetime in hours (default: 8)
+  sessionTtlHours: 8
+  # Path inside the container for the SQLite incidents DB
+  dbPath: "/data/incidents.db"
+  # Internal ALB Ingress — makes the admin panel reachable from VPN/Tailscale only.
+  # scheme: internal means the ALB has no public IP — impossible to reach from internet.
+  ingress:
+    enabled: false
+    host: ""                   # e.g. blue-y.example.com  (must match admin.host domain)
+    ingressClass: "alb"
+    scheme: "internal"         # KEEP internal — this is the security boundary
+    certificateArn: ""         # ACM certificate ARN for HTTPS
+    # Extra annotations to merge (e.g. WAF ACL, target group attributes)
+    annotations: {}
+
 # -- Pod resources
 resources:
   requests:

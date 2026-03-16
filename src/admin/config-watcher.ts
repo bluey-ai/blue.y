@@ -76,3 +76,56 @@ export function isAdminUser(platform: string, userId: string): AdminUser | undef
 export function getAdminUsers(): AdminUser[] {
   return [...adminUsers];
 }
+
+/** Add or overwrite an admin user entry in the ConfigMap. Key = platform_userId. */
+export async function addAdminUser(user: AdminUser): Promise<void> {
+  if (!coreApi) throw new Error('Config watcher not started');
+  const key = `${user.platform}_${user.userId}`;
+  const value = `${user.platform}:${user.userId}:${user.displayName}`;
+
+  // Fetch current ConfigMap data
+  let currentData: Record<string, string> = {};
+  try {
+    const res = await coreApi.readNamespacedConfigMap({ name: CONFIGMAP_NAME, namespace: watchNamespace });
+    currentData = res.data ?? {};
+  } catch (e: any) {
+    if (e?.response?.statusCode !== 404) throw e;
+    // ConfigMap doesn't exist — create it
+    await coreApi.createNamespacedConfigMap({
+      namespace: watchNamespace,
+      body: { metadata: { name: CONFIGMAP_NAME }, data: { [key]: value } },
+    });
+    adminUsers = [...adminUsers.filter(u => !(u.platform === user.platform && u.userId === user.userId)), user];
+    logger.info(`[admin] ConfigMap created with first admin user: ${user.platform}:${user.userId}`);
+    return;
+  }
+
+  currentData[key] = value;
+  await coreApi.replaceNamespacedConfigMap({
+    name: CONFIGMAP_NAME,
+    namespace: watchNamespace,
+    body: { metadata: { name: CONFIGMAP_NAME }, data: currentData },
+  });
+  adminUsers = [...adminUsers.filter(u => !(u.platform === user.platform && u.userId === user.userId)), user];
+  logger.info(`[admin] Admin user added/updated: ${user.platform}:${user.userId} (${user.displayName})`);
+}
+
+/** Remove an admin user entry from the ConfigMap. */
+export async function removeAdminUser(platform: string, userId: string): Promise<boolean> {
+  if (!coreApi) throw new Error('Config watcher not started');
+  const key = `${platform}_${userId}`;
+
+  const res = await coreApi.readNamespacedConfigMap({ name: CONFIGMAP_NAME, namespace: watchNamespace });
+  const currentData = res.data ?? {};
+  if (!(key in currentData)) return false;
+
+  delete currentData[key];
+  await coreApi.replaceNamespacedConfigMap({
+    name: CONFIGMAP_NAME,
+    namespace: watchNamespace,
+    body: { metadata: { name: CONFIGMAP_NAME }, data: currentData },
+  });
+  adminUsers = adminUsers.filter(u => !(u.platform === platform && u.userId === userId));
+  logger.info(`[admin] Admin user removed: ${platform}:${userId}`);
+  return true;
+}
