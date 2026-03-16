@@ -160,6 +160,23 @@ export const testIntegration = (id: string) =>
 export const getDeploymentPods = (namespace: string, deployment: string) =>
   get<{ pods: PodInfo[]; namespace: string; deployment: string }>(`/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(deployment)}/pods`);
 
+// Email Templates (BLY-67)
+export interface EmailTemplateField {
+  key: string; label: string; type: 'text' | 'textarea'; default: string;
+  hint?: string; value: string; isCustomised: boolean;
+}
+export interface EmailTemplateVariable { name: string; desc: string; }
+export interface EmailTemplate {
+  id: string; label: string; description: string; trigger: string;
+  fields: EmailTemplateField[]; variables: EmailTemplateVariable[];
+}
+export const getEmailTemplates = () => get<{ templates: EmailTemplate[] }>('/email-templates');
+export const saveEmailTemplate  = (id: string, fields: Record<string, string>) =>
+  put<{ ok: boolean }>(`/email-templates/${encodeURIComponent(id)}`, { fields });
+export const resetEmailTemplate = (id: string) => del(`/email-templates/${encodeURIComponent(id)}`);
+export const testEmailTemplate  = (id: string, to: string, fields: Record<string, string>) =>
+  post<{ ok: boolean; message?: string }>(`/email-templates/${encodeURIComponent(id)}/test`, { to, fields });
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });

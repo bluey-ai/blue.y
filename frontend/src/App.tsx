@@ -8,21 +8,23 @@ import Config from './pages/Config';
 import Logs from './pages/Logs';
 import Deployments from './pages/Deployments';
 import Integrations from './pages/Integrations';
+import EmailTemplates from './pages/EmailTemplates';
 
-export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'users' | 'integrations' | 'config';
+export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'users' | 'integrations' | 'config' | 'email-templates';
 
 export default function App() {
   const [page, setPage] = useState<Page>('overview');
 
   const content = {
-    overview:     <Overview />,
-    incidents:    <Incidents />,
-    cluster:      <Cluster />,
-    deployments:  <Deployments />,
-    logs:         <Logs />,
-    users:        <Users />,
-    integrations: <Integrations />,
-    config:       <Config />,
+    overview:          <Overview />,
+    incidents:         <Incidents />,
+    cluster:           <Cluster />,
+    deployments:       <Deployments />,
+    logs:              <Logs />,
+    users:             <Users />,
+    integrations:      <Integrations />,
+    config:            <Config />,
+    'email-templates': <EmailTemplates />,
   }[page];
 
   return (

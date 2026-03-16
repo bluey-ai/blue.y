@@ -7,6 +7,10 @@ const FROM_ADDRESS = process.env.EMAIL_FROM || 'noreply@example.com';
 // Auto-detect transport: SMTP if SMTP_HOST is set, otherwise SES
 const useSmtp = !!process.env.SMTP_HOST;
 
+function escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 export class EmailClient {
   private ses?: SESClient;
   private smtpTransport?: nodemailer.Transporter;
@@ -36,6 +40,123 @@ export class EmailClient {
       this.ses = new SESClient(sesConfig);
       logger.info('EmailClient: using AWS SES transport');
     }
+  }
+
+  // Generic send — used by email-templates (BLY-56/67)
+  async send(to: string | string[], fromName: string, subject: string, htmlBody: string): Promise<boolean> {
+    const toArr = Array.isArray(to) ? to : [to];
+    const fromAddr = fromName ? `${fromName} <${FROM_ADDRESS}>` : FROM_ADDRESS;
+    try {
+      if (useSmtp && this.smtpTransport) {
+        await this.smtpTransport.sendMail({
+          from: fromAddr,
+          to: toArr.join(', '),
+          subject,
+          html: htmlBody,
+          text: htmlBody.replace(/<[^>]*>/g, ''),
+        });
+      } else if (this.ses) {
+        await this.ses.send(new SendEmailCommand({
+          Source: fromAddr,
+          Destination: { ToAddresses: toArr },
+          Message: {
+            Subject: { Data: subject, Charset: 'UTF-8' },
+            Body: {
+              Html: { Data: htmlBody, Charset: 'UTF-8' },
+              Text: { Data: htmlBody.replace(/<[^>]*>/g, ''), Charset: 'UTF-8' },
+            },
+          },
+        }));
+      }
+      logger.info(`[email] Sent "${subject}" to ${toArr.join(', ')}`);
+      return true;
+    } catch (err) {
+      logger.error(`[email] Failed to send "${subject}": ${err}`);
+      return false;
+    }
+  }
+
+  // Build invite email HTML (BLY-56/67)
+  buildInviteHtml(vars: {
+    inviteeName: string;
+    inviterName: string;
+    role: string;
+    dashboardUrl: string;
+    orgName: string;
+    welcomeMsg: string;
+    footerMsg: string;
+  }): string {
+    const roleStyle = vars.role === 'superadmin'
+      ? 'background:#fbefff;color:#8250df;border:1px solid #d8b9f8;'
+      : vars.role === 'admin'
+      ? 'background:#ddf4ff;color:#0969da;border:1px solid #b6e3ff;'
+      : 'background:#f6f8fa;color:#57606a;border:1px solid #d0d7de;';
+    const roleLabel = vars.role.charAt(0).toUpperCase() + vars.role.slice(1);
+    const welcomeBlock = vars.welcomeMsg
+      ? `<p style="margin:0 0 20px;color:#57606a;font-size:15px;line-height:1.6;">${escHtml(vars.welcomeMsg)}</p>`
+      : '';
+    const footerLine = vars.footerMsg ? `${escHtml(vars.footerMsg)}<br>` : '';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>You've been invited to BLUE.Y</title></head>
+<body style="margin:0;padding:0;background:#f6f8fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f6f8fa;padding:40px 20px;">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #d0d7de;max-width:560px;">
+  <tr>
+    <td style="background:#0d1117;padding:28px 40px;text-align:center;">
+      <table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;">
+        <tr>
+          <td style="background:#58a6ff;width:32px;height:32px;border-radius:8px;vertical-align:middle;text-align:center;font-size:14px;font-weight:700;color:#0d1117;">B</td>
+          <td style="padding-left:10px;vertical-align:middle;">
+            <span style="font-size:18px;font-weight:700;color:#e6edf3;letter-spacing:-0.3px;">BLUE.Y</span>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:8px 0 0;color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;">Admin Dashboard</p>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:36px 40px 28px;">
+      <h1 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#24292f;">Hi ${escHtml(vars.inviteeName)},</h1>
+      <p style="margin:0 0 20px;color:#57606a;font-size:15px;line-height:1.6;">
+        <strong style="color:#24292f;">${escHtml(vars.inviterName)}</strong> has invited you to the
+        <strong style="color:#24292f;">${escHtml(vars.orgName)}</strong> BLUE.Y Admin Dashboard.
+      </p>
+      ${welcomeBlock}
+      <p style="margin:0 0 8px;font-size:13px;color:#57606a;">Your role:</p>
+      <p style="margin:0 0 28px;">
+        <span style="display:inline-block;padding:4px 14px;border-radius:20px;font-size:12px;font-weight:600;${roleStyle}">${escHtml(roleLabel)}</span>
+      </p>
+      <table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 24px;">
+        <tr>
+          <td style="border-radius:8px;background:#1f6feb;">
+            <a href="${vars.dashboardUrl}" style="display:inline-block;padding:13px 28px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;font-family:sans-serif;">
+              Sign in to Dashboard &#8594;
+            </a>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:0;color:#8b949e;font-size:13px;line-height:1.6;">
+        Sign in with your Microsoft or Google account using this email address.<br>
+        Your access is active immediately &mdash; no waiting required.
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:16px 40px 20px;background:#f6f8fa;border-top:1px solid #e1e4e8;">
+      <p style="margin:0;font-size:12px;color:#8b949e;line-height:1.6;">
+        ${footerLine}
+        Powered by <strong>BLUE.Y</strong> &middot;
+        <a href="${vars.dashboardUrl}" style="color:#0969da;text-decoration:none;">Open Dashboard</a>
+      </p>
+    </td>
+  </tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
   }
 
   async sendIncidentReport(to: string[], subject: string, body: string): Promise<boolean> {

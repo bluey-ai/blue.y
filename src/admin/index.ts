@@ -22,6 +22,7 @@ import invitesRoutes from './routes/invites';
 import allowlistRoutes from './routes/allowlist';
 import ssoRoutes from './routes/sso';
 import integrationsRoutes from './routes/integrations';
+import emailTemplatesRoutes from './routes/email-templates';
 import licenseRoutes from './routes/license';
 import { ipEnforcementMiddleware } from './middleware/ipEnforcement';
 import { KubeClient } from '../clients/kube';
@@ -312,6 +313,9 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
 
   // integrations — GET: all roles (secrets masked for non-superadmin), PUT: superadmin only (enforced inside route)
   router.use('/api/integrations', requireSession, requireRole('viewer'), integrationsRoutes);
+
+  // email templates — superadmin only (BLY-67)
+  router.use('/api/email-templates', requireSession, requireRole('superadmin'), emailTemplatesRoutes);
 
   // license — GET: all roles (show plan/seats), POST /verify: superadmin only
   router.use('/api/license',      requireSession, requireRole('viewer'), licenseRoutes);
