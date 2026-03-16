@@ -4,7 +4,8 @@
 import { Router, Request, Response } from 'express';
 import * as openidClient from 'openid-client';
 import { config } from '../../config';
-import { getSsoInvite } from '../db';
+import { getSsoInvite, markInviteJoined, countJoinedInvites } from '../db';
+import { getAuthorisedSeats } from '../license';
 import { generateSessionToken } from '../auth';
 import { logger } from '../../utils/logger';
 
@@ -101,6 +102,17 @@ router.get('/microsoft/callback', async (req: Request, res: Response) => {
       logger.warn(`[sso/microsoft] Access denied for ${email} — not in invite list`);
       res.redirect('/admin/login?error=not_invited');
       return;
+    }
+
+    // Check seat limit only on first join
+    if (!invite.joined_at) {
+      const seats = getAuthorisedSeats();
+      if (countJoinedInvites() >= seats) {
+        logger.warn(`[sso/microsoft] Seat limit reached, denying first login for ${email}`);
+        res.redirect('/admin/login?error=seat_limit');
+        return;
+      }
+      markInviteJoined(email);
     }
 
     const sessionToken = generateSessionToken(`ms:${email}`, 'microsoft', name, invite.role);
@@ -200,6 +212,17 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       logger.warn(`[sso/google] Access denied for ${email} — not in invite list`);
       res.redirect('/admin/login?error=not_invited');
       return;
+    }
+
+    // Check seat limit only on first join
+    if (!invite.joined_at) {
+      const seats = getAuthorisedSeats();
+      if (countJoinedInvites() >= seats) {
+        logger.warn(`[sso/google] Seat limit reached, denying first login for ${email}`);
+        res.redirect('/admin/login?error=seat_limit');
+        return;
+      }
+      markInviteJoined(email);
     }
 
     const sessionToken = generateSessionToken(`google:${email}`, 'google', name, invite.role);

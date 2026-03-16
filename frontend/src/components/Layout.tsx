@@ -62,11 +62,11 @@ export default function Layout({ page, onNavigate, children }: Props) {
           onClick={() => setCollapsed(c => !c)}
           className="shrink-0 hover:opacity-80 transition-opacity hidden lg:block"
         >
-          <Logo size={28} />
+          <Logo size={36} />
         </button>
         {/* Mobile: just the logo, no collapse */}
         <div className="shrink-0 lg:hidden">
-          <Logo size={28} />
+          <Logo size={36} />
         </div>
         {(!collapsed || mobileOpen) && (
           <div className="flex-1 min-w-0">

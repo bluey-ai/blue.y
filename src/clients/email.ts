@@ -108,9 +108,11 @@ export class EmailClient {
     <td style="background:#0d1117;padding:28px 40px;text-align:center;">
       <table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;">
         <tr>
-          <td style="background:#58a6ff;width:32px;height:32px;border-radius:8px;vertical-align:middle;text-align:center;font-size:14px;font-weight:700;color:#0d1117;">B</td>
-          <td style="padding-left:10px;vertical-align:middle;">
-            <span style="font-size:18px;font-weight:700;color:#e6edf3;letter-spacing:-0.3px;">BLUE.Y</span>
+          <td style="vertical-align:middle;">
+            <img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Cpolygon%20points%3D%22476%2C256%20366%2C65.5%20146%2C65.5%2036%2C256%20146%2C446.5%20366%2C446.5%22%20fill%3D%22%230D1B4B%22%2F%3E%3Cpolygon%20points%3D%22298%2C112%20224%2C112%20194%2C272%20256%2C272%20218%2C402%20300%2C264%20242%2C264%22%20fill%3D%22white%22%2F%3E%3Cpath%20d%3D%22M%20183%2C364%20Q%20256%2C306%20329%2C364%22%20stroke%3D%22white%22%20stroke-width%3D%2216%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22378%22%20r%3D%2223%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E" alt="BLUE.Y Logo" width="44" height="44" style="display:block;" />
+          </td>
+          <td style="padding-left:12px;vertical-align:middle;">
+            <span style="font-size:22px;font-weight:700;color:#e6edf3;letter-spacing:-0.3px;">BLUE.Y</span>
           </td>
         </tr>
       </table>

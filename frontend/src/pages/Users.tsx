@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
-import { UserPlus, Trash2, RefreshCw, Shield, Mail, Globe, ShieldCheck, Eye, MapPin, Plus, X, Crosshair } from 'lucide-react';
+import { UserPlus, Trash2, RefreshCw, Shield, Mail, Globe, ShieldCheck, Eye, MapPin, Plus, X, Crosshair, Send, Clock } from 'lucide-react';
 import {
-  getInvites, createInvite, revokeInvite, changeInviteRole,
+  getInvites, createInvite, revokeInvite, changeInviteRole, resendInvite,
   getAllowlist, getMyIp, addAllowlistEntry, deleteAllowlistEntry,
 } from '../api';
 import type { SsoInvite, AllowlistEntry } from '../api';
@@ -31,6 +31,7 @@ function RoleBadge({ role }: { role: string }) {
 export default function Users() {
   const [invites, setInvites] = useState<SsoInvite[]>([]);
   const [activeCount, setActiveCount] = useState(0);
+  const [joinedCount, setJoinedCount] = useState(0);
   const [seatLimit, setSeatLimit] = useState(10);
   const [allowlist, setAllowlist] = useState<AllowlistEntry[]>([]);
   const [myIp, setMyIp] = useState('');
@@ -47,6 +48,7 @@ export default function Users() {
   const [detectingIp, setDetectingIp] = useState(false);
 
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [resending, setResending] = useState<string | null>(null);
   const [deletingIp, setDeletingIp] = useState<number | null>(null);
   const [changingRole, setChangingRole] = useState<string | null>(null);
 
@@ -56,6 +58,7 @@ export default function Users() {
       const [inv, al, ip] = await Promise.all([getInvites(), getAllowlist(), getMyIp()]);
       setInvites(inv.invites);
       setActiveCount(inv.activeCount);
+      setJoinedCount(inv.joinedCount ?? 0);
       setSeatLimit(inv.seatLimit);
       setAllowlist(al.entries);
       setMyIp(ip.ip);
@@ -70,12 +73,24 @@ export default function Users() {
     if (!inviteForm.email.trim()) { setInviteError('Email is required.'); return; }
     setInviting(true); setInviteError(''); setInviteSuccess('');
     try {
-      await createInvite(inviteForm.email.trim(), inviteForm.role);
-      setInviteSuccess(`Invite created for ${inviteForm.email.trim()}`);
+      const r = await createInvite(inviteForm.email.trim(), inviteForm.role);
+      setInviteSuccess(r.warning
+        ? `Invite created but email failed: ${r.warning}`
+        : `Invitation sent to ${inviteForm.email.trim()}`);
       setInviteForm(f => ({ ...f, email: '' }));
       await load();
     } catch (e: any) { setInviteError(e.message); }
     finally { setInviting(false); }
+  };
+
+  const handleResend = async (email: string) => {
+    setResending(email);
+    setInviteError('');
+    try {
+      await resendInvite(email);
+      setInviteSuccess(`Invitation resent to ${email}`);
+    } catch (e: any) { setInviteError(e.message || 'Failed to resend invitation'); }
+    finally { setResending(null); }
   };
 
   const handleRevoke = async (email: string) => {
@@ -123,7 +138,7 @@ export default function Users() {
 
   const activeInvites = invites.filter(i => i.status === 'active');
   const revokedInvites = invites.filter(i => i.status === 'revoked');
-  const seatPct = Math.round((activeCount / seatLimit) * 100);
+  const seatPct = Math.round((joinedCount / seatLimit) * 100);
 
   return (
     <div className="p-6 space-y-5 animate-fade-in">
@@ -144,7 +159,7 @@ export default function Users() {
             <Shield size={14} className="text-[#58a6ff]" />
             <span className="text-sm font-semibold text-[#e6edf3]">License Seats</span>
           </div>
-          <span className="text-xs text-[#8b949e]">{activeCount} / {seatLimit} used</span>
+          <span className="text-xs text-[#8b949e]">{joinedCount} / {seatLimit} used <span className="text-[#6e7681]">({activeCount - joinedCount} pending)</span></span>
         </div>
         <div className="h-1.5 bg-[#21262d] rounded-full overflow-hidden">
           <div
@@ -152,7 +167,8 @@ export default function Users() {
             style={{ width: `${Math.min(seatPct, 100)}%` }}
           />
         </div>
-        {seatPct >= 100 && <p className="mt-1.5 text-[10px] text-[#f85149]">Seat limit reached. Upgrade your license to invite more users.</p>}
+        <p className="mt-1.5 text-[10px] text-[#6e7681]">Seats consumed only when a user first signs in. Pending invites are free.</p>
+        {seatPct >= 100 && <p className="mt-0.5 text-[10px] text-[#f85149]">Seat limit reached. Upgrade your license to allow more users.</p>}
       </Card>
 
       {/* Invite form */}
@@ -213,13 +229,24 @@ export default function Users() {
           <div className="divide-y divide-[#21262d]">
             {activeInvites.map(inv => (
               <div key={inv.email} className="px-4 py-3 flex items-center gap-3">
-                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#58a6ff] to-[#bc8cff] flex items-center justify-center text-[11px] text-white font-bold shrink-0">
+                <div className={clsx(
+                  'w-7 h-7 rounded-full flex items-center justify-center text-[11px] text-white font-bold shrink-0',
+                  inv.joined_at ? 'bg-gradient-to-br from-[#58a6ff] to-[#bc8cff]' : 'bg-[#21262d] text-[#8b949e]',
+                )}>
                   {inv.email.charAt(0).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-[#e6edf3] truncate">{inv.email}</div>
                   <div className="text-[10px] text-[#6e7681]">Invited {new Date(inv.created_at).toLocaleDateString()}</div>
                 </div>
+                {/* Joined vs pending badge */}
+                {inv.joined_at ? (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#3fb950]/15 text-[#3fb950] border border-[#3fb950]/20 shrink-0">Joined</span>
+                ) : (
+                  <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-[#d29922]/10 text-[#d29922] border border-[#d29922]/20 shrink-0">
+                    <Clock size={9} /> Pending
+                  </span>
+                )}
                 <select
                   value={inv.role}
                   disabled={changingRole === inv.email}
@@ -229,6 +256,18 @@ export default function Users() {
                   {ROLE_OPTS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
                 <RoleBadge role={inv.role} />
+                {/* Resend button — only for pending invites */}
+                {!inv.joined_at && (
+                  <button
+                    onClick={() => handleResend(inv.email)}
+                    disabled={resending === inv.email}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-[#58a6ff]/10 text-[#58a6ff] hover:bg-[#58a6ff]/20 border border-[#58a6ff]/20 transition-colors disabled:opacity-40"
+                    title="Resend invitation email"
+                  >
+                    {resending === inv.email ? <RefreshCw size={9} className="animate-spin" /> : <Send size={9} />}
+                    <span className="hidden sm:inline">Resend</span>
+                  </button>
+                )}
                 <button
                   onClick={() => handleRevoke(inv.email)}
                   disabled={revoking === inv.email}

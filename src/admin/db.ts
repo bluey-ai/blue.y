@@ -66,6 +66,10 @@ export function openDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_sso_invites_email  ON sso_invites(email);
     CREATE INDEX IF NOT EXISTS idx_sso_invites_status ON sso_invites(status);
+  `);
+  // Migration: add joined_at column (safe on existing DBs)
+  try { db.exec("ALTER TABLE sso_invites ADD COLUMN joined_at TEXT"); } catch { /* already exists */ }
+  db.exec(`
 
     CREATE TABLE IF NOT EXISTS incidents (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,6 +145,7 @@ export interface SsoInviteRow {
   role:       AdminRole;
   invited_by: string;   // platform_id of the inviting SuperAdmin
   status:     'active' | 'revoked';
+  joined_at:  string | null;  // set on first successful SSO login
   created_at: string;
   updated_at: string;
 }
@@ -157,6 +162,18 @@ export function listSsoInvites(): SsoInviteRow[] {
 
 export function countActiveInvites(): number {
   return (openDb().prepare("SELECT COUNT(*) as n FROM sso_invites WHERE status = 'active'").get() as { n: number }).n;
+}
+
+/** Count only users who have actually logged in (joined). Used for seat billing. */
+export function countJoinedInvites(): number {
+  return (openDb().prepare("SELECT COUNT(*) as n FROM sso_invites WHERE status = 'active' AND joined_at IS NOT NULL").get() as { n: number }).n;
+}
+
+/** Mark an invite as joined on first successful SSO login. */
+export function markInviteJoined(email: string): void {
+  openDb().prepare(
+    "UPDATE sso_invites SET joined_at = datetime('now'), updated_at = datetime('now') WHERE email = ? AND joined_at IS NULL"
+  ).run(email.toLowerCase().trim());
 }
 
 export function createSsoInvite(email: string, role: AdminRole, invitedBy: string): SsoInviteRow {

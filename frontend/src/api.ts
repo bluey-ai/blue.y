@@ -128,9 +128,10 @@ export function streamLogs(
 }
 
 // SSO Invites (BLY-50/58)
-export interface SsoInvite { id: number; email: string; role: string; status: string; invited_by: string; created_at: string; }
-export const getInvites = () => get<{ invites: SsoInvite[]; activeCount: number; seatLimit: number }>('/invites');
-export const createInvite = (email: string, role: string) => post<{ ok: boolean; invite: SsoInvite }>('/invites', { email, role });
+export interface SsoInvite { id: number; email: string; role: string; status: string; invited_by: string; joined_at: string | null; created_at: string; }
+export const getInvites = () => get<{ invites: SsoInvite[]; activeCount: number; joinedCount: number; seatLimit: number }>('/invites');
+export const createInvite = (email: string, role: string) => post<{ ok: boolean; invite: SsoInvite; warning?: string }>('/invites', { email, role, sendEmail: true });
+export const resendInvite = (email: string) => post<{ ok: boolean; message?: string }>(`/invites/${encodeURIComponent(email)}/resend`, {});
 export const revokeInvite = (email: string) => del(`/invites/${encodeURIComponent(email)}`);
 export const changeInviteRole = (email: string, role: string) => {
   return fetch(`${BASE}/invites/${encodeURIComponent(email)}/role`, {

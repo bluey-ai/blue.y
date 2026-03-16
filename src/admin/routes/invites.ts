@@ -3,7 +3,7 @@ import { Router, Request, Response } from 'express';
 import * as k8s from '@kubernetes/client-node';
 import {
   listSsoInvites, getSsoInvite, createSsoInvite, revokeSsoInvite,
-  changeSsoInviteRole, countActiveInvites,
+  changeSsoInviteRole, countJoinedInvites,
 } from '../db';
 import type { AdminRole } from '../db';
 import { getAuthorisedSeats } from '../license';
@@ -35,8 +35,9 @@ const VALID_ROLES: AdminRole[] = ['admin', 'viewer']; // superadmin cannot be in
 router.get('/', (_req: Request, res: Response) => {
   const invites = listSsoInvites();
   const activeCount = invites.filter(i => i.status === 'active').length;
+  const joinedCount = countJoinedInvites();   // only counts users who have actually logged in
   const seatLimit = getAuthorisedSeats();
-  res.json({ invites, activeCount, seatLimit });
+  res.json({ invites, activeCount, joinedCount, seatLimit });
 });
 
 // POST /api/invites — create a new invite
@@ -52,15 +53,15 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  // Check seat limit against active license (BLY-61)
+  // Check seat limit against joined users only — pending invites don't consume seats
   const seatLimit = getAuthorisedSeats();
-  const activeCount = countActiveInvites();
-  if (activeCount >= seatLimit) {
+  const joinedCount = countJoinedInvites();
+  if (joinedCount >= seatLimit) {
     res.status(402).json({
-      error: `Seat limit reached (${seatLimit} active). Upgrade your license to invite more users ($2.99/user/month).`,
+      error: `Seat limit reached (${seatLimit} joined users). Upgrade your license to add more users ($2.99/user/month).`,
       code: 'SEAT_LIMIT_REACHED',
       seatLimit,
-      activeCount,
+      joinedCount,
     });
     return;
   }
@@ -101,6 +102,41 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   res.status(201).json({ ok: true, invite, ...(emailWarning ? { warning: emailWarning } : {}) });
+});
+
+// POST /api/invites/:email/resend — resend invitation email to a pending (not yet joined) invite
+router.post('/:email/resend', async (req: Request, res: Response) => {
+  const email = decodeURIComponent(req.params.email as string);
+  const invite = getSsoInvite(email);
+  if (!invite || invite.status !== 'active') {
+    res.status(404).json({ error: 'No active invite found for this email' });
+    return;
+  }
+  const adminUser = (req as any).adminUser;
+  try {
+    const cfg = await readConfigMap();
+    const orgName      = cfg['email.org_name']                  || 'BLUE.Y';
+    const fromName     = cfg['email.template.invite.from_name'] || 'BLUE.Y Admin';
+    const welcomeMsg   = cfg['email.template.invite.welcome_msg'] || '';
+    const footerMsg    = cfg['email.template.invite.footer_msg']  || '';
+    const rawSubject   = cfg['email.template.invite.subject']   || "You've been invited to {{org_name}} BLUE.Y Dashboard";
+    const subject      = rawSubject.replace(/\{\{org_name\}\}/g, orgName);
+    const dashboardUrl = (config.admin.host || '') + '/admin/';
+    const inviteeName  = email.split('@')[0];
+    const inviterName  = adminUser?.name || 'Your administrator';
+
+    const html = emailClient.buildInviteHtml({ inviteeName, inviterName, role: invite.role, dashboardUrl, orgName, welcomeMsg, footerMsg });
+    const sent = await emailClient.send(email, fromName, subject, html);
+    if (sent) {
+      logger.info(`[invites] Resent invite email to ${email}`);
+      res.json({ ok: true, message: `Invitation resent to ${email}` });
+    } else {
+      res.status(500).json({ ok: false, error: 'Email delivery failed — check SES/SMTP config.' });
+    }
+  } catch (err: any) {
+    logger.error(`[invites] Resend email failed for ${email}: ${err?.message}`);
+    res.status(500).json({ ok: false, error: 'Email delivery failed — check SES/SMTP config.' });
+  }
 });
 
 // PATCH /api/invites/:email/role — change role of active invite
