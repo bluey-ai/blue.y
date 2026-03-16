@@ -153,6 +153,8 @@ export interface Integration { id: string; label: string; icon: string; enabled:
 export const getIntegrations = () => get<{ integrations: Integration[]; readOnly: boolean }>('/integrations');
 export const saveIntegration = (id: string, fields: Record<string, string>) =>
   put<{ ok: boolean; integration: string }>(`/integrations/${encodeURIComponent(id)}`, { fields });
+export const testIntegration = (id: string) =>
+  post<{ ok: boolean; status: 'connected' | 'failed' | 'not_configured'; message: string }>(`/integrations/${encodeURIComponent(id)}/test`, {});
 
 // Pod terminal — BLY-63
 export const getDeploymentPods = (namespace: string, deployment: string) =>

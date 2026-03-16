@@ -175,4 +175,87 @@ router.put('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/integrations/:id/test — live connectivity check (superadmin only)
+router.post('/:id/test', async (req: Request, res: Response) => {
+  const role: string = (req as any).adminUser?.role ?? 'viewer';
+  if (role !== 'superadmin') { res.status(403).json({ error: 'Requires superadmin' }); return; }
+
+  const intgId = req.params.id as string;
+  const intg = INTEGRATIONS.find(i => i.id === intgId);
+  if (!intg) { res.status(404).json({ error: `Unknown integration: ${intgId}` }); return; }
+
+  // Read current config from ConfigMap
+  let configData: Record<string, string> = {};
+  try {
+    const coreApi = getCoreApi();
+    const cm = await coreApi.readNamespacedConfigMap({ name: CONFIG_MAP_NAME, namespace: getNamespace() });
+    configData = cm.data ?? {};
+  } catch (e: any) {
+    if (!isK8sNotFound(e)) {
+      res.status(500).json({ ok: false, status: 'error', message: 'Failed to read config' }); return;
+    }
+  }
+
+  try {
+    const result = await testIntegration(intgId, configData);
+    res.json(result);
+  } catch (e: any) {
+    res.json({ ok: false, status: 'failed', message: e?.message ?? String(e) });
+  }
+});
+
+async function testIntegration(id: string, cfg: Record<string, string>): Promise<{ ok: boolean; status: 'connected' | 'failed' | 'not_configured'; message: string }> {
+  const timeout = 6000;
+  const fetchOpts = { signal: AbortSignal.timeout(timeout) };
+
+  if (id === 'telegram') {
+    const token = cfg['telegram.bot_token'];
+    if (!token) return { ok: false, status: 'not_configured', message: 'Bot Token not set' };
+    const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, fetchOpts);
+    const body = await r.json() as { ok: boolean; result?: { username: string } };
+    if (body.ok) return { ok: true, status: 'connected', message: `@${body.result?.username ?? 'bot'} is online` };
+    return { ok: false, status: 'failed', message: 'Invalid bot token' };
+  }
+
+  if (id === 'slack') {
+    const botToken = cfg['slack.bot_token'];
+    if (!botToken) return { ok: false, status: 'not_configured', message: 'Bot Token not set' };
+    const r = await fetch('https://slack.com/api/auth.test', {
+      ...fetchOpts,
+      method: 'POST',
+      headers: { Authorization: `Bearer ${botToken}`, 'Content-Type': 'application/json' },
+    });
+    const body = await r.json() as { ok: boolean; team?: string; error?: string };
+    if (body.ok) return { ok: true, status: 'connected', message: `Connected to workspace: ${body.team ?? '–'}` };
+    return { ok: false, status: 'failed', message: body.error ?? 'Auth failed' };
+  }
+
+  if (id === 'microsoft') {
+    const tenantId = cfg['teams.tenant_id'];
+    const clientId = cfg['teams.client_id'];
+    const clientSecret = cfg['teams.client_secret'];
+    if (!tenantId || !clientId || !clientSecret) return { ok: false, status: 'not_configured', message: 'Tenant ID / Client ID / Client Secret not set' };
+    const body = new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret, scope: 'https://graph.microsoft.com/.default' });
+    const r = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, { ...fetchOpts, method: 'POST', body });
+    const json = await r.json() as { access_token?: string; error?: string; error_description?: string };
+    if (json.access_token) return { ok: true, status: 'connected', message: 'Azure AD credentials valid' };
+    return { ok: false, status: 'failed', message: json.error_description?.split('\r\n')[0] ?? json.error ?? 'Auth failed' };
+  }
+
+  if (id === 'whatsapp') {
+    const sid = cfg['whatsapp.account_sid'];
+    const token = cfg['whatsapp.auth_token'];
+    if (!sid || !token) return { ok: false, status: 'not_configured', message: 'Account SID / Auth Token not set' };
+    const creds = Buffer.from(`${sid}:${token}`).toString('base64');
+    const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}.json`, { ...fetchOpts, headers: { Authorization: `Basic ${creds}` } });
+    if (r.ok) {
+      const json = await r.json() as { friendly_name?: string };
+      return { ok: true, status: 'connected', message: `Account: ${json.friendly_name ?? sid}` };
+    }
+    return { ok: false, status: 'failed', message: `HTTP ${r.status} — check credentials` };
+  }
+
+  return { ok: false, status: 'failed', message: 'Unknown integration' };
+}
+
 export default router;

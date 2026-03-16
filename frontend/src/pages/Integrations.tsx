@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, CheckCircle, XCircle, Edit2, Save, X, HelpCircle, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
-import { getIntegrations, saveIntegration } from '../api';
+import { RefreshCw, CheckCircle, XCircle, Edit2, Save, X, HelpCircle, ChevronDown, ChevronRight, ExternalLink, Zap, Loader2 } from 'lucide-react';
+import { getIntegrations, saveIntegration, testIntegration } from '../api';
 import type { Integration } from '../api';
+
+type TestStatus = 'connected' | 'failed' | 'not_configured';
+interface TestState { loading: boolean; status?: TestStatus; message?: string; }
 import Card from '../components/Card';
 import clsx from 'clsx';
 
@@ -68,6 +71,7 @@ export default function Integrations() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ id: string; type: 'ok' | 'err'; text: string } | null>(null);
   const [showGuide, setShowGuide] = useState<string | null>(null);
+  const [testStates, setTestStates] = useState<Record<string, TestState>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -90,6 +94,16 @@ export default function Integrations() {
   };
 
   const cancelEdit = () => { setEditing(null); setEditValues({}); };
+
+  const handleTest = async (id: string) => {
+    setTestStates(prev => ({ ...prev, [id]: { loading: true } }));
+    try {
+      const r = await testIntegration(id);
+      setTestStates(prev => ({ ...prev, [id]: { loading: false, status: r.status, message: r.message } }));
+    } catch (e: any) {
+      setTestStates(prev => ({ ...prev, [id]: { loading: false, status: 'failed', message: e.message } }));
+    }
+  };
 
   const handleSave = async (id: string) => {
     setSaving(true); setMsg(null);
@@ -124,6 +138,7 @@ export default function Integrations() {
           {integrations.map(intg => {
             const isEditing = editing === intg.id;
             const colorClass = PLATFORM_COLOR[intg.icon] ?? 'text-[#8b949e] bg-[#21262d] border-[#30363d]';
+            const ts = testStates[intg.id];
             return (
               <Card key={intg.id}>
                 <div className="flex items-start justify-between mb-4">
@@ -133,21 +148,51 @@ export default function Integrations() {
                     </div>
                     <div>
                       <div className="text-sm font-semibold text-[#e6edf3]">{intg.label}</div>
-                      <div className="flex items-center gap-1 mt-0.5">
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         {intg.enabled
-                          ? <><CheckCircle size={10} className="text-[#3fb950]" /><span className="text-[10px] text-[#3fb950]">Connected</span></>
+                          ? <><CheckCircle size={10} className="text-[#3fb950]" /><span className="text-[10px] text-[#3fb950]">Configured</span></>
                           : <><XCircle size={10} className="text-[#6e7681]" /><span className="text-[10px] text-[#6e7681]">Not configured</span></>
                         }
+                        {ts && !ts.loading && ts.status && (
+                          <span className={clsx(
+                            'flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium border',
+                            ts.status === 'connected'      ? 'text-[#3fb950] bg-[#3fb950]/10 border-[#3fb950]/30' :
+                            ts.status === 'not_configured' ? 'text-[#8b949e] bg-[#21262d] border-[#30363d]' :
+                                                             'text-[#f85149] bg-[#f85149]/10 border-[#f85149]/30'
+                          )}>
+                            {ts.status === 'connected'
+                              ? <><CheckCircle size={8} /> Live</>
+                              : ts.status === 'not_configured'
+                              ? <><XCircle size={8} /> Not configured</>
+                              : <><XCircle size={8} /> Unreachable</>
+                            }
+                          </span>
+                        )}
+                        {ts?.loading && (
+                          <span className="flex items-center gap-0.5 text-[9px] text-[#6e7681]">
+                            <Loader2 size={8} className="animate-spin" /> Testing…
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
                   {!readOnly && !isEditing && (
-                    <button
-                      onClick={() => startEdit(intg)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#e6edf3] hover:border-[#58a6ff] transition-colors"
-                    >
-                      <Edit2 size={10} /> Edit
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleTest(intg.id)}
+                        disabled={ts?.loading}
+                        title={ts?.message}
+                        className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#58a6ff] hover:border-[#58a6ff]/50 transition-colors disabled:opacity-40"
+                      >
+                        <Zap size={9} /> Test
+                      </button>
+                      <button
+                        onClick={() => startEdit(intg)}
+                        className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-[#e6edf3] hover:border-[#58a6ff] transition-colors"
+                      >
+                        <Edit2 size={10} /> Edit
+                      </button>
+                    </div>
                   )}
                   {isEditing && (
                     <div className="flex gap-2">
@@ -188,6 +233,18 @@ export default function Integrations() {
                     </div>
                   ))}
                 </div>
+
+                {/* Test result message */}
+                {ts && !ts.loading && ts.message && (
+                  <p className={clsx(
+                    'mt-3 text-[10px] px-2.5 py-1.5 rounded border',
+                    ts.status === 'connected'
+                      ? 'text-[#3fb950] bg-[#3fb950]/5 border-[#3fb950]/20'
+                      : 'text-[#f85149] bg-[#f85149]/5 border-[#f85149]/20',
+                  )}>
+                    {ts.message}
+                  </p>
+                )}
 
                 {/* Setup guide */}
                 {SETUP_GUIDES[intg.id] && (
