@@ -254,7 +254,6 @@ export default function Deployments() {
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e] hidden md:table-cell">Age</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Scale</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Actions</th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-[#8b949e]">Pods</th>
             </tr></thead>
             <tbody className="divide-y divide-[#21262d]">
               {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-[#6e7681] text-sm">Loading…</td></tr>}
@@ -263,6 +262,7 @@ export default function Deployments() {
                   No deployments found in <code className="font-mono">{ns}</code>.
                 </td></tr>
               )}
+
               {deployments.map(d => {
                 const act = actions[d.name];
                 const target = scaleTargets[d.name] ?? d.replicas;
@@ -280,9 +280,24 @@ export default function Deployments() {
                     act?.phase === 'error' && 'bg-[#f85149]/5',
                     !isActive && degraded && !zero && 'bg-[#d29922]/5',
                   )}>
-                    {/* Name + live feedback */}
+                    {/* Name — click to expand pods */}
                     <td className="px-4 py-3">
-                      <div className="font-mono text-xs text-[#e6edf3] font-medium">{d.name}</div>
+                      <button
+                        onClick={() => togglePods(d.name)}
+                        className="flex items-center gap-1.5 group text-left"
+                        title="Click to expand pods"
+                      >
+                        {loadingPods === d.name
+                          ? <Loader size={11} className="text-[#8b949e] animate-spin shrink-0" />
+                          : expandedDep === d.name
+                          ? <ChevronDown size={11} className="text-[#bc8cff] shrink-0" />
+                          : <ChevronRight size={11} className="text-[#6e7681] group-hover:text-[#8b949e] shrink-0" />
+                        }
+                        <span className={clsx(
+                          'font-mono text-xs font-medium transition-colors',
+                          expandedDep === d.name ? 'text-[#bc8cff]' : 'text-[#e6edf3] group-hover:text-[#58a6ff]',
+                        )}>{d.name}</span>
+                      </button>
                       {act && act.phase !== 'idle' && (
                         <div className="mt-1.5 flex items-center gap-1.5">
                           {act.phase === 'requesting' && <Loader size={10} className="text-[#58a6ff] animate-spin shrink-0" />}
@@ -391,33 +406,12 @@ export default function Deployments() {
                       </button>
                     </td>
 
-                    {/* Pod expand toggle */}
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => togglePods(d.name)}
-                        className={clsx(
-                          'flex items-center gap-1 px-2 py-1.5 rounded text-xs border transition-colors',
-                          expandedDep === d.name
-                            ? 'bg-[#bc8cff]/10 text-[#bc8cff] border-[#bc8cff]/20'
-                            : 'bg-[#21262d] text-[#8b949e] hover:text-[#e6edf3] border-[#30363d]',
-                        )}
-                        title="Show pods"
-                      >
-                        {loadingPods === d.name
-                          ? <Loader size={10} className="animate-spin" />
-                          : expandedDep === d.name
-                          ? <ChevronDown size={10} />
-                          : <ChevronRight size={10} />
-                        }
-                        <span className="hidden sm:inline">Pods</span>
-                      </button>
-                    </td>
                   </tr>
 
                   {/* Expanded pods row */}
                   {expandedDep === d.name && (
                     <tr className="bg-[#0d1117]">
-                      <td colSpan={8} className="px-6 py-3 border-b border-[#21262d]">
+                      <td colSpan={7} className="px-6 py-3 border-b border-[#21262d]">
                         {loadingPods === d.name ? (
                           <p className="text-xs text-[#6e7681]">Loading pods…</p>
                         ) : (podsMap[d.name] ?? []).length === 0 ? (
@@ -427,15 +421,18 @@ export default function Deployments() {
                             {(podsMap[d.name] ?? []).map(pod => (
                               <div key={pod.name} className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2">
                                 <div className={clsx('w-1.5 h-1.5 rounded-full shrink-0', pod.status === 'Running' ? 'bg-[#3fb950]' : 'bg-[#f85149]')} />
-                                <span className="font-mono text-[10px] text-[#8b949e] max-w-[220px] truncate" title={pod.name}>{pod.name}</span>
-                                <span className="text-[10px] text-[#6e7681]">{pod.status}</span>
+                                <span className="font-mono text-[10px] text-[#8b949e] max-w-[200px] truncate" title={pod.name}>{pod.name}</span>
+                                <span className={clsx('text-[10px]', pod.status === 'Running' ? 'text-[#3fb950]' : 'text-[#f85149]')}>{pod.status}</span>
+                                {pod.age && <span className="text-[10px] text-[#6e7681]">{pod.age}</span>}
+                                {typeof pod.restarts === 'number' && pod.restarts > 0 && (
+                                  <span className="text-[10px] text-[#d29922]" title="Restart count">{pod.restarts}↺</span>
+                                )}
                                 <button
                                   onClick={() => setTerminal({ namespace: ns, pod: pod.name, container: pod.containers[0]?.name ?? '' })}
-                                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-[#58a6ff]/10 text-[#58a6ff] hover:bg-[#58a6ff]/20 border border-[#58a6ff]/20 transition-colors ml-1"
-                                  title="Open terminal"
+                                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-[#58a6ff]/10 text-[#58a6ff] hover:bg-[#58a6ff]/20 border border-[#58a6ff]/20 transition-colors"
+                                  title="Open shell"
                                 >
-                                  <TerminalIcon size={9} />
-                                  <span>Shell</span>
+                                  <TerminalIcon size={9} /> Shell
                                 </button>
                               </div>
                             ))}
