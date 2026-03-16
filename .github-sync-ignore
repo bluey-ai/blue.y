@@ -33,6 +33,11 @@ docs/CHANGELOG-premium.md
 bitbucket-pipelines.yml
 Dockerfile.premium
 
+# ── Internal test scripts (contain hardcoded credentials / internal endpoints) ─
+scripts/test-telegram.js
+scripts/test-polling.js
+scripts/test-scan.js
+
 # ── Future premium modules (pre-declare to prevent accidental exposure) ───────
 # src/license/           # Phase 2 license key validation (BLY-future)
 # src/multi-tenant/      # Multi-tenant support (BLY-future)
