@@ -9,6 +9,14 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "pods/log", "nodes", "services", "secrets", "events", "namespaces"]
     verbs: ["get", "list", "watch"]
+  # Pod exec (BLY-63): WebSocket upgrade uses GET, kubectl exec uses POST → need both get+create
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "create"]
+  # ConfigMap read/write for blue-y-config (template customisations, config watcher)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "patch", "update"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "replicasets"]
     verbs: ["get", "list", "watch"]
