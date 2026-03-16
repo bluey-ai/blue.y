@@ -21,6 +21,21 @@ if [[ "$REMOTE_URL" != *"github.com"* ]]; then
   exit 0
 fi
 
+# Allow branch deletions (no code is transferred) — read stdin refs
+# Git passes: <local-ref> <local-sha1> <remote-ref> <remote-sha1>
+# For deletes, local-sha1 is the zero SHA
+ZERO_SHA="0000000000000000000000000000000000000000"
+PUSHING_CODE=false
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$local_sha" != "$ZERO_SHA" ]]; then
+    PUSHING_CODE=true
+    break
+  fi
+done
+if [[ "$PUSHING_CODE" == "false" ]]; then
+  exit 0  # All refs are deletions — nothing to scan
+fi
+
 # Must be at repo root to find .github-sync-ignore
 if [[ ! -f "$IGNORE_FILE" ]]; then
   echo "⚠️  WARNING: .github-sync-ignore not found — cannot verify premium code safety."
