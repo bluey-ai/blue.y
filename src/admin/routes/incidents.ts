@@ -6,7 +6,7 @@ const router = Router();
 
 // GET /api/incidents?limit=50&severity=critical&namespace=prod&monitor=pods&search=OOM
 router.get('/', (req: Request, res: Response) => {
-  const limit     = Math.min(parseInt(req.query.limit     as string || '50', 10), 500);
+  const limit     = Math.min(parseInt((req.query.limit as string) || '50', 10) || 50, 500);
   const severity  = req.query.severity  as string | undefined;
   const namespace = req.query.namespace as string | undefined;
   const monitor   = req.query.monitor   as string | undefined;

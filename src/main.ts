@@ -1200,7 +1200,7 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     if (!adminModule || !config.admin.enabled) {
       await telegram.send(
         '🔵 <b>Admin Dashboard</b> is a premium feature.\n' +
-        'Contact <a href="mailto:hello@bluey.ai">hello@bluey.ai</a> for access.',
+        'Contact <a href="mailto:hello@blueonion.today">hello@blueonion.today</a> for access.',
         chatId,
       );
       return;
