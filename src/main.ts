@@ -1279,6 +1279,205 @@ async function handleTelegramCommand(text: string, chatId: string, userName?: st
     return;
   }
 
+  // --- Postmortem (BLY-26) ---
+  if (cmd === '/postmortem' || cmd.startsWith('/postmortem ')) {
+    const idArg = cmd.replace('/postmortem', '').trim();
+
+    // Resolve incident data from SQLite or in-memory lastIncident
+    let incidentData: {
+      id?: number;
+      timestamp?: string;
+      severity: string;
+      pod?: string;
+      namespace?: string;
+      monitor?: string;
+      title: string;
+      message: string;
+      analysis: string;
+      logs?: string;
+      events?: string;
+    } | null = null;
+
+    if (idArg && /^\d+$/.test(idArg)) {
+      // Specific incident by ID from SQLite
+      if (adminModule?.getIncidentById) {
+        const row = adminModule.getIncidentById(parseInt(idArg, 10));
+        if (row) {
+          incidentData = {
+            id: row.id,
+            timestamp: row.ts,
+            severity: row.severity,
+            pod: row.pod,
+            namespace: row.namespace,
+            monitor: row.monitor,
+            title: row.title,
+            message: row.message,
+            analysis: row.ai_diagnosis || '',
+          };
+        }
+      }
+      if (!incidentData) {
+        await telegram.send(`❌ Incident #${idArg} not found.`);
+        return;
+      }
+    } else if (lastIncident) {
+      // Most recent in-memory incident (richest data)
+      incidentData = {
+        timestamp: lastIncident.timestamp,
+        severity: lastIncident.status?.toLowerCase() === 'critical' ? 'critical' : 'warning',
+        pod: lastIncident.pod,
+        namespace: lastIncident.namespace,
+        monitor: lastIncident.monitor,
+        title: `${lastIncident.monitor || 'monitor'}: ${lastIncident.pod || 'pod'} is ${lastIncident.status || 'unhealthy'}`,
+        message: lastIncident.description || lastIncident.logs?.substring(0, 500) || '',
+        analysis: lastIncident.analysis || '',
+        logs: lastIncident.logs,
+        events: lastIncident.events,
+      };
+    } else if (adminModule?.queryIncidents) {
+      // Fall back to most recent SQLite incident
+      const rows = adminModule.queryIncidents({ limit: 1 });
+      if (rows.length > 0) {
+        const row = rows[0];
+        incidentData = {
+          id: row.id,
+          timestamp: row.ts,
+          severity: row.severity,
+          pod: row.pod,
+          namespace: row.namespace,
+          monitor: row.monitor,
+          title: row.title,
+          message: row.message,
+          analysis: row.ai_diagnosis || '',
+        };
+      }
+    }
+
+    if (!incidentData) {
+      await telegram.send(
+        '❌ No incidents found. Postmortems are generated from incidents detected by BLUE.Y.\n\n' +
+        'Run <code>/incidents</code> to see recorded incidents.\n' +
+        'Or specify an ID: <code>/postmortem 42</code>',
+      );
+      return;
+    }
+
+    await telegram.send(`📋 <b>Generating postmortem...</b>\n<i>Analysing incident data with AI...</i>`);
+
+    // Optionally check current pod state (was it fixed?)
+    let currentState = '';
+    if (incidentData.pod && incidentData.namespace) {
+      try {
+        const found = await kube.findPod(incidentData.pod);
+        if (found) {
+          currentState = `Pod current state: ${found.pod.status} (${found.pod.ready ? 'Ready' : 'Not Ready'})`;
+        } else {
+          currentState = 'Pod no longer found in cluster (may have been restarted or replaced)';
+        }
+      } catch { /* ignore */ }
+    }
+
+    const incidentTs = incidentData.timestamp ? new Date(incidentData.timestamp) : new Date();
+    const incidentDate = incidentTs.toLocaleDateString('en-SG', { timeZone: 'Asia/Singapore', year: 'numeric', month: 'short', day: 'numeric' });
+    const incidentTime = incidentTs.toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit', hour12: false });
+
+    const contextParts = [
+      `Incident Date: ${incidentDate} at ${incidentTime} (Singapore time)`,
+      `Severity: ${incidentData.severity}`,
+      `Pod: ${incidentData.namespace || 'unknown'}/${incidentData.pod || 'unknown'}`,
+      `Monitor: ${incidentData.monitor || 'unknown'}`,
+      `Title: ${incidentData.title}`,
+      `Message: ${incidentData.message?.substring(0, 500)}`,
+      `AI Diagnosis: ${incidentData.analysis?.substring(0, 800)}`,
+      currentState ? `Current Status: ${currentState}` : '',
+      incidentData.logs ? `Recent Logs:\n${incidentData.logs.substring(0, 1500)}` : '',
+      incidentData.events ? `Pod Events:\n${incidentData.events.substring(0, 800)}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    const prompt = `You are a senior SRE writing a structured incident postmortem document for an engineering team.
+
+=== INCIDENT CONTEXT ===
+${contextParts}
+=== END CONTEXT ===
+
+Generate a complete, useful postmortem. Respond with ONLY valid JSON:
+{
+  "title": "Short incident title (e.g. 'backend OOMKilled', 'api-service connection refused')",
+  "summary": "1-2 sentence executive summary of what happened and impact",
+  "duration": "Estimate in minutes if determinable, otherwise 'unknown'",
+  "impact": "What services/users were impacted and estimated scope",
+  "timeline": [
+    "${incidentTime} — BLUE.Y detected ${incidentData.pod || 'pod'}: ${incidentData.title}",
+    "${incidentTime} — AI auto-diagnosis initiated",
+    "Add 2-4 more realistic timeline entries based on the incident type and logs"
+  ],
+  "rootCause": "2-4 sentence plain English root cause. Be specific — mention the exact error, config issue, or resource limit.",
+  "actionItems": [
+    "Immediate fix (e.g. increase memory limit from 512Mi to 1Gi)",
+    "Short-term fix (e.g. add resource usage alerts)",
+    "Long-term prevention (e.g. load test the endpoint, add circuit breaker)"
+  ],
+  "preventionSteps": [
+    "Add specific alert or monitor",
+    "Process or config change to prevent recurrence"
+  ]
+}
+
+Focus on specifics from the incident data. Avoid generic advice. Be direct and actionable.`;
+
+    try {
+      const raw = await bedrock.analyzeRaw(prompt);
+      const match = raw.match(/\{[\s\S]*\}/);
+      const pm = match ? JSON.parse(match[0]) : null;
+
+      if (!pm) {
+        // AI returned unstructured text — still useful
+        const fallback = `📋 <b>POSTMORTEM — ${incidentData.title}</b>\n<i>${incidentDate}</i>\n\n${raw.substring(0, 3500)}`;
+        lastBotResponse = fallback;
+        await telegram.send(fallback);
+        return;
+      }
+
+      const sevIcon = incidentData.severity === 'critical' ? '🔴' : '🟡';
+      let msg = `📋 <b>POSTMORTEM — ${pm.title}</b>\n`;
+      msg += `<i>${incidentDate}</i>   ${sevIcon} ${(incidentData.severity || 'warning').toUpperCase()}\n`;
+      msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      msg += `<b>Summary</b>\n${pm.summary}\n\n`;
+
+      if (pm.duration && pm.duration !== 'unknown') {
+        msg += `⏱️ <b>Duration:</b> ${pm.duration}\n`;
+      }
+      msg += `💥 <b>Impact:</b> ${pm.impact}\n\n`;
+
+      msg += `<b>Timeline</b>\n`;
+      (pm.timeline as string[] || []).forEach((t) => { msg += `• ${t}\n`; });
+      msg += '\n';
+
+      msg += `<b>Root Cause</b>\n${pm.rootCause}\n\n`;
+
+      msg += `<b>Action Items</b>\n`;
+      (pm.actionItems as string[] || []).forEach((a, i) => { msg += `${i + 1}. ${a}\n`; });
+      msg += '\n';
+
+      if ((pm.preventionSteps as string[] || []).length > 0) {
+        msg += `<b>Prevention</b>\n`;
+        (pm.preventionSteps as string[]).forEach((p) => { msg += `• ${p}\n`; });
+      }
+
+      if (incidentData.id) {
+        msg += `\n<i>Incident #${incidentData.id} — stored in BLUE.Y incident database</i>`;
+      }
+      msg += `\n\n💡 <code>/email team</code> to send this · <code>/jira</code> to attach to ticket`;
+
+      lastBotResponse = msg;
+      await telegram.send(msg);
+    } catch (e: any) {
+      await telegram.send(`❌ Failed to generate postmortem: ${e?.message ?? String(e)}`);
+    }
+    return;
+  }
+
   // --- Email incident report ---
   // Match: /email command, or "email/send/forward/share" + email address or team name
   const hasEmailAddress = text.match(/[\w.-]+@[\w.-]+\.\w+/);

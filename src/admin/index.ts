@@ -363,6 +363,7 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
 // ── Exported helpers for main.ts ─────────────────────────────────────────────
 
 export { generateMagicLink, isAdminUser, insertIncident };
+export { queryIncidents, getIncidentById } from './db';
 
 /**
  * BLY-60: Check if a Telegram user is SuperAdmin.

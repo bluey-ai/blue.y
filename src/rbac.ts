@@ -76,6 +76,7 @@ const COMMAND_ROLES: Record<string, Role> = {
   '/yes':              'operator',
   '/no':               'operator',
   '/cheatsheet':       'operator',
+  '/postmortem':       'operator',
 
   // Admin only
   '/waf':              'admin',
