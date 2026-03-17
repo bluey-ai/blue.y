@@ -248,6 +248,32 @@ export const getStepLog = (repo: string, pipelineId: string, stepId: string, pro
   return get<{ log: string; total: number }>(`/ci/step-log?${p}`);
 };
 
+// CI/CD Pipelines page (BLY-75)
+export interface CiRepo {
+  slug: string; name: string; fullName: string; isPrivate: boolean; updatedOn: string;
+}
+export interface CiPipeline {
+  pipelineId: string; buildNumber: number;
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'stopped';
+  branch: string; createdAt: string; completedAt: string | null;
+  durationSeconds: number | null; url: string; triggeredBy: string;
+}
+export const getCiRepos = () =>
+  get<{ repos: CiRepo[]; workspace: string; provider: string }>('/ci/repos');
+export const getCiBranches = (repo: string) =>
+  get<{ branches: string[] }>(`/ci/branches?repo=${encodeURIComponent(repo)}`);
+export const getCiPipelines = (repo: string, page = 1, status?: string) => {
+  const p = new URLSearchParams({ repo, page: String(page) });
+  if (status && status !== 'all') p.set('status', status);
+  return get<{ pipelines: CiPipeline[]; page: number; hasMore: boolean; provider: string; workspace: string }>(`/ci/pipelines?${p}`);
+};
+export const getCiSteps = (repo: string, pipelineId: string) =>
+  get<{ steps: PipelineStep[] }>(`/ci/steps?repo=${encodeURIComponent(repo)}&pipelineId=${encodeURIComponent(pipelineId)}`);
+export const triggerCiPipeline = (repo: string, branch: string) =>
+  post<{ ok: boolean; pipelineId?: string; buildNumber?: number }>('/ci/trigger', { repo, branch });
+export const stopCiPipeline = (repo: string, pipelineId: string) =>
+  post<{ ok: boolean }>('/ci/stop', { repo, pipelineId });
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });
