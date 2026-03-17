@@ -1,6 +1,6 @@
 // BLY-75 — CI/CD Pipelines page
 // Viewer: read-only (view pipelines + logs). Admin/SuperAdmin: trigger + stop.
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   ExternalLink, Play, Square, ChevronDown, ChevronRight,
   RefreshCw, CheckCircle2, XCircle, Clock, Minus, Loader2,
@@ -284,8 +284,8 @@ function branchToEnv(branch: string): { label: string; color: string; dot: strin
 
 // ── TriggerModal ──────────────────────────────────────────────────────────────
 
-function TriggerModal({ repo, branches, onClose, onTriggered }: {
-  repo: string; branches: string[];
+function TriggerModal({ repo, branches, branchEnvMap, onClose, onTriggered }: {
+  repo: string; branches: string[]; branchEnvMap: Record<string, string>;
   onClose: () => void; onTriggered: () => void;
 }) {
   const [branch, setBranch] = useState(branches[0] ?? '');
@@ -328,8 +328,25 @@ function TriggerModal({ repo, branches, onClose, onTriggered }: {
               className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-sm text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff]"
             />
           )}
-          {/* Environment inference */}
+          {/* Environment — real data from Bitbucket deployments, fallback to name inference */}
           {branch && (() => {
+            const realEnv = branchEnvMap[branch]; // from actual deployment history
+            if (realEnv) {
+              // Real environment from Bitbucket's deployments API
+                const n = realEnv.toLowerCase();
+              const color = n.includes('prod') ? 'text-[#f85149]' : n.includes('stag') ? 'text-[#d29922]' : n.includes('dev') || n.includes('test') ? 'text-[#3fb950]' : 'text-[#8b949e]';
+              const dot = n.includes('prod') ? 'bg-[#f85149]' : n.includes('stag') ? 'bg-[#d29922]' : n.includes('dev') || n.includes('test') ? 'bg-[#3fb950]' : 'bg-[#8b949e]';
+              return (
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-[#6e7681]">Deploys to</span>
+                  <span className={`flex items-center gap-1.5 text-[11px] font-medium ${color}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${dot} animate-pulse`} />
+                    {realEnv}
+                  </span>
+                </div>
+              );
+            }
+            // Fallback: infer from branch name (GitHub / branches not yet deployed)
             const env = branchToEnv(branch);
             return (
               <div className="flex items-center justify-between pt-1">
@@ -337,6 +354,7 @@ function TriggerModal({ repo, branches, onClose, onTriggered }: {
                 <span className={`flex items-center gap-1.5 text-[11px] font-medium ${env.color}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${env.dot} animate-pulse`} />
                   {env.label}
+                  <span className="text-[#6e7681] font-normal">(inferred)</span>
                 </span>
               </div>
             );
@@ -417,6 +435,13 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
       })
       .catch(() => {});
   }, [selectedRepo]);
+
+  // Derive branch→environment from deployment history (pipelines ordered newest-first, so first match wins)
+  const branchEnvMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    pipelines.forEach(p => { if (envMap[p.pipelineId] && !map[p.branch]) map[p.branch] = envMap[p.pipelineId]; });
+    return map;
+  }, [pipelines, envMap]);
 
   // Load pipelines
   const loadPipelines = useCallback(async (repo: string, pg: number, filter: StatusFilter, append = false) => {
@@ -660,6 +685,7 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
         <TriggerModal
           repo={selectedRepo}
           branches={branches}
+          branchEnvMap={branchEnvMap}
           onClose={() => setShowTrigger(false)}
           onTriggered={() => loadPipelines(selectedRepo, 1, statusFilter)}
         />
