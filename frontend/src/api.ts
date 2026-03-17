@@ -303,6 +303,73 @@ export const saveAiConfig = (fields: Record<string, string>) => put<{ ok: boolea
 export const testAiConnection = (payload: { baseUrl?: string; apiKey?: string; model?: string }) =>
   post<{ ok: boolean; latency?: number; reply?: string; model?: string; error?: string }>('/ai/test', payload);
 
+// Network Explorer (BLY-77)
+export interface IngressRule {
+  host: string;
+  paths: Array<{ path: string; pathType: string; serviceName: string; servicePort: number | string }>;
+}
+export interface IngressTls { hosts: string[]; secretName: string; }
+export interface IngressInfo {
+  name: string; namespace: string; ingressClass: string | null;
+  rules: IngressRule[];
+  tls: IngressTls[];
+  tlsStatus: 'none' | 'valid' | 'expiring' | 'expired' | 'missing-secret';
+  annotations: Record<string, string>;
+  createdAt: string | null;
+  raw: object;
+}
+export interface ServicePort { name?: string; port: number; targetPort: number | string; protocol: string; nodePort?: number; }
+export interface ServiceInfo {
+  name: string; namespace: string; type: string; clusterIP: string; externalIP: string | null;
+  ports: ServicePort[];
+  selector: Record<string, string>;
+  endpointsReady: number; endpointsTotal: number;
+  isDead: boolean; isOrphan: boolean;
+  createdAt: string | null;
+  raw: object;
+}
+export interface NetworkPolicyInfo {
+  name: string; namespace: string;
+  podSelector: Record<string, string>;
+  affectedPods: string[];
+  ingressRuleCount: number; egressRuleCount: number;
+  isDefaultDeny: boolean;
+  createdAt: string | null;
+  raw: object;
+}
+export interface RouteHealth {
+  ingressName: string; namespace: string; host: string; path: string;
+  serviceName: string; servicePort: number | string;
+  health: 'green' | 'yellow' | 'red';
+  breakpoint: 'none' | 'service-missing' | 'no-endpoints' | 'pods-not-ready';
+  endpointsReady: number; endpointsTotal: number;
+  issue?: string;
+}
+export interface RouteHealthSummary { total: number; green: number; yellow: number; red: number; }
+
+export const getNetworkHealth = (namespace = 'prod') =>
+  get<{ routes: RouteHealth[]; summary: RouteHealthSummary; namespace: string }>(`/network/health?namespace=${encodeURIComponent(namespace)}`);
+export const getIngresses = (namespace = 'prod') =>
+  get<{ ingresses: IngressInfo[]; namespace: string }>(`/network/ingresses?namespace=${encodeURIComponent(namespace)}`);
+export const createIngress = (namespace: string, body: object) =>
+  post<{ ok: boolean; ingress: object }>('/network/ingresses', { namespace, body });
+export const updateIngress = (namespace: string, name: string, body: object) =>
+  put<{ ok: boolean; ingress: object }>(`/network/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { body });
+export const deleteIngress = (namespace: string, name: string) =>
+  del(`/network/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
+
+export const getServices = (namespace = 'prod') =>
+  get<{ services: ServiceInfo[]; namespace: string }>(`/network/services?namespace=${encodeURIComponent(namespace)}`);
+export const createService = (namespace: string, body: object) =>
+  post<{ ok: boolean; service: object }>('/network/services', { namespace, body });
+export const updateService = (namespace: string, name: string, body: object) =>
+  put<{ ok: boolean; service: object }>(`/network/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { body });
+export const deleteService = (namespace: string, name: string) =>
+  del(`/network/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
+
+export const getNetworkPolicies = (namespace = 'prod') =>
+  get<{ policies: NetworkPolicyInfo[]; namespace: string }>(`/network/policies?namespace=${encodeURIComponent(namespace)}`);
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });

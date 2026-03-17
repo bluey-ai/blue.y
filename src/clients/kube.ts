@@ -86,6 +86,64 @@ export interface PodDetail {
   } | null;
 }
 
+// BLY-77: Network Explorer types
+export interface IngressInfo {
+  name: string;
+  namespace: string;
+  ingressClass: string | null;
+  rules: Array<{
+    host: string;
+    paths: Array<{ path: string; pathType: string; serviceName: string; servicePort: number | string }>;
+  }>;
+  tls: Array<{ hosts: string[]; secretName: string }>;
+  tlsStatus: 'none' | 'valid' | 'expiring' | 'expired' | 'missing-secret';
+  annotations: Record<string, string>;
+  createdAt: string | null;
+  raw: object;
+}
+
+export interface ServiceInfo {
+  name: string;
+  namespace: string;
+  type: string;
+  clusterIP: string;
+  externalIP: string | null;
+  ports: Array<{ name?: string; port: number; targetPort: number | string; protocol: string; nodePort?: number }>;
+  selector: Record<string, string>;
+  endpointsReady: number;
+  endpointsTotal: number;
+  isDead: boolean;
+  isOrphan: boolean;
+  createdAt: string | null;
+  raw: object;
+}
+
+export interface NetworkPolicyInfo {
+  name: string;
+  namespace: string;
+  podSelector: Record<string, string>;
+  affectedPods: string[];
+  ingressRuleCount: number;
+  egressRuleCount: number;
+  isDefaultDeny: boolean;
+  createdAt: string | null;
+  raw: object;
+}
+
+export interface RouteHealth {
+  ingressName: string;
+  namespace: string;
+  host: string;
+  path: string;
+  serviceName: string;
+  servicePort: number | string;
+  health: 'green' | 'yellow' | 'red';
+  breakpoint: 'none' | 'service-missing' | 'no-endpoints' | 'pods-not-ready';
+  endpointsReady: number;
+  endpointsTotal: number;
+  issue?: string;
+}
+
 export class KubeClient {
   private coreApi: k8s.CoreV1Api;
   private appsApi: k8s.AppsV1Api;
@@ -825,6 +883,307 @@ export class KubeClient {
       logger.warn(`Failed to auto-discover ingress URLs: ${err}`);
       return [];
     }
+  }
+
+  // BLY-77: Network Explorer — list ingresses with TLS health
+  async listIngresses(namespace: string): Promise<IngressInfo[]> {
+    try {
+      const res = await this.networkingApi.listNamespacedIngress({ namespace });
+      const items = res.items || [];
+
+      const secretRes = await this.coreApi
+        .listNamespacedSecret({ namespace, fieldSelector: 'type=kubernetes.io/tls' })
+        .catch(() => ({ items: [] as k8s.V1Secret[] }));
+      const tlsSecrets = new Map<string, Date | null>();
+      for (const secret of secretRes.items || []) {
+        const sName = secret.metadata?.name || '';
+        const expiry = secret.metadata?.annotations?.['cert-manager.io/certificate-expiry'];
+        tlsSecrets.set(sName, expiry ? new Date(expiry) : null);
+      }
+
+      const now = new Date();
+      const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+
+      return items.map((ingress): IngressInfo => {
+        const tls = (ingress.spec?.tls || []).map((t) => ({
+          hosts: t.hosts || [],
+          secretName: t.secretName || '',
+        }));
+
+        let tlsStatus: IngressInfo['tlsStatus'] = 'none';
+        if (tls.length > 0) {
+          const sName = tls[0].secretName;
+          if (!sName || !tlsSecrets.has(sName)) {
+            tlsStatus = 'missing-secret';
+          } else {
+            const expiresAt = tlsSecrets.get(sName) ?? null;
+            if (expiresAt === null) {
+              tlsStatus = 'valid';
+            } else if (expiresAt < now) {
+              tlsStatus = 'expired';
+            } else if (expiresAt.getTime() - now.getTime() < thirtyDays) {
+              tlsStatus = 'expiring';
+            } else {
+              tlsStatus = 'valid';
+            }
+          }
+        }
+
+        const rules = (ingress.spec?.rules || []).map((rule) => ({
+          host: rule.host || '*',
+          paths: (rule.http?.paths || []).map((p) => ({
+            path: p.path || '/',
+            pathType: (p.pathType as string) || 'Prefix',
+            serviceName: p.backend?.service?.name || '',
+            servicePort: (p.backend?.service?.port as any)?.number ?? (p.backend?.service?.port as any)?.name ?? 0,
+          })),
+        }));
+
+        return {
+          name: ingress.metadata?.name || '',
+          namespace: ingress.metadata?.namespace || namespace,
+          ingressClass:
+            (ingress.spec as any)?.ingressClassName ??
+            ingress.metadata?.annotations?.['kubernetes.io/ingress.class'] ??
+            null,
+          rules,
+          tls,
+          tlsStatus,
+          annotations: (ingress.metadata?.annotations as Record<string, string>) || {},
+          createdAt: (ingress.metadata?.creationTimestamp as any)?.toISOString?.() ?? null,
+          raw: ingress,
+        };
+      });
+    } catch (err) {
+      logger.error(`[kube] Failed to list ingresses in ${namespace}:`, err);
+      return [];
+    }
+  }
+
+  // BLY-77: List services with endpoint health + dead/orphan detection
+  async listServicesWithHealth(namespace: string): Promise<ServiceInfo[]> {
+    try {
+      const [svcRes, allIngresses] = await Promise.all([
+        this.coreApi.listNamespacedService({ namespace }),
+        this.listIngresses(namespace).catch(() => [] as IngressInfo[]),
+      ]);
+
+      const ingressRefs = new Set<string>();
+      for (const ing of allIngresses) {
+        for (const rule of ing.rules) {
+          for (const path of rule.paths) {
+            if (path.serviceName) ingressRefs.add(path.serviceName);
+          }
+        }
+      }
+
+      return await Promise.all(
+        (svcRes.items || []).map(async (svc): Promise<ServiceInfo> => {
+          const name = svc.metadata?.name || '';
+          const type = svc.spec?.type || 'ClusterIP';
+          const selector = (svc.spec?.selector as Record<string, string>) || {};
+          const hasSelector = Object.keys(selector).length > 0;
+
+          let endpointsReady = 0;
+          let endpointsTotal = 0;
+
+          if (hasSelector && type !== 'ExternalName') {
+            try {
+              const ep = await this.coreApi.readNamespacedEndpoints({ namespace, name });
+              for (const subset of (ep as any).subsets || []) {
+                endpointsReady += (subset.addresses || []).length;
+                endpointsTotal += (subset.addresses || []).length + (subset.notReadyAddresses || []).length;
+              }
+            } catch { /* no endpoints resource yet */ }
+          }
+
+          const lbIngress = svc.status?.loadBalancer?.ingress || [];
+          const externalIP =
+            lbIngress.length > 0
+              ? (lbIngress[0] as any).ip || (lbIngress[0] as any).hostname || null
+              : (svc.spec?.externalIPs?.[0] ?? null);
+
+          const ports = (svc.spec?.ports || []).map((p) => {
+            const tp = p.targetPort as any;
+            return {
+              name: p.name,
+              port: p.port,
+              targetPort: (tp?.intVal ?? tp?.strVal ?? tp) || p.port,
+              protocol: p.protocol || 'TCP',
+              nodePort: p.nodePort,
+            };
+          });
+
+          return {
+            name,
+            namespace: svc.metadata?.namespace || namespace,
+            type,
+            clusterIP: svc.spec?.clusterIP || '',
+            externalIP,
+            ports,
+            selector,
+            endpointsReady,
+            endpointsTotal,
+            isDead: hasSelector && endpointsTotal === 0,
+            isOrphan: !ingressRefs.has(name),
+            createdAt: (svc.metadata?.creationTimestamp as any)?.toISOString?.() ?? null,
+            raw: svc,
+          };
+        }),
+      );
+    } catch (err) {
+      logger.error(`[kube] Failed to list services in ${namespace}:`, err);
+      return [];
+    }
+  }
+
+  // BLY-77: List network policies with affected pod count
+  async listNetworkPolicies(namespace: string): Promise<NetworkPolicyInfo[]> {
+    try {
+      const [npRes, podRes] = await Promise.all([
+        this.networkingApi.listNamespacedNetworkPolicy({ namespace }),
+        this.coreApi.listNamespacedPod({ namespace }).catch(() => ({ items: [] as k8s.V1Pod[] })),
+      ]);
+
+      const runningPods = (podRes.items || []).filter((p) => p.status?.phase === 'Running');
+
+      return (npRes.items || []).map((np): NetworkPolicyInfo => {
+        const podSelector = (np.spec?.podSelector?.matchLabels as Record<string, string>) || {};
+
+        const affectedPods = runningPods
+          .filter((pod) => {
+            const podLabels = (pod.metadata?.labels as Record<string, string>) || {};
+            return Object.entries(podSelector).every(([k, v]) => podLabels[k] === v);
+          })
+          .map((pod) => pod.metadata?.name || '')
+          .filter(Boolean);
+
+        const ingressRules = np.spec?.ingress || [];
+        const egressRules = np.spec?.egress || [];
+        const isDefaultDeny =
+          Object.keys(podSelector).length === 0 &&
+          ingressRules.length === 0 &&
+          egressRules.length === 0;
+
+        return {
+          name: np.metadata?.name || '',
+          namespace: np.metadata?.namespace || namespace,
+          podSelector,
+          affectedPods,
+          ingressRuleCount: ingressRules.length,
+          egressRuleCount: egressRules.length,
+          isDefaultDeny,
+          createdAt: (np.metadata?.creationTimestamp as any)?.toISOString?.() ?? null,
+          raw: np,
+        };
+      });
+    } catch (err) {
+      logger.error(`[kube] Failed to list network policies in ${namespace}:`, err);
+      return [];
+    }
+  }
+
+  // BLY-77: Walk full Ingress→Service→Endpoints chain for health dashboard
+  async routeHealthWalk(namespace: string): Promise<RouteHealth[]> {
+    try {
+      const ingresses = await this.listIngresses(namespace);
+      const results: RouteHealth[] = [];
+
+      for (const ingress of ingresses) {
+        for (const rule of ingress.rules) {
+          for (const path of rule.paths) {
+            if (!path.serviceName) continue;
+
+            const result: RouteHealth = {
+              ingressName: ingress.name,
+              namespace,
+              host: rule.host,
+              path: path.path,
+              serviceName: path.serviceName,
+              servicePort: path.servicePort,
+              health: 'green',
+              breakpoint: 'none',
+              endpointsReady: 0,
+              endpointsTotal: 0,
+            };
+
+            try {
+              const svc = await this.coreApi.readNamespacedService({ namespace, name: path.serviceName });
+              const selector = (svc.spec?.selector as Record<string, string>) || {};
+
+              if (Object.keys(selector).length === 0) {
+                result.health = 'green'; // headless / external — no endpoints to check
+              } else {
+                try {
+                  const ep = await this.coreApi.readNamespacedEndpoints({ namespace, name: path.serviceName });
+                  let ready = 0;
+                  let total = 0;
+                  for (const subset of (ep as any).subsets || []) {
+                    ready += (subset.addresses || []).length;
+                    total += (subset.addresses || []).length + (subset.notReadyAddresses || []).length;
+                  }
+                  result.endpointsReady = ready;
+                  result.endpointsTotal = total;
+
+                  if (total === 0) {
+                    result.health = 'red';
+                    result.breakpoint = 'no-endpoints';
+                    result.issue = `Service "${path.serviceName}" has no endpoints — selector may not match any pods`;
+                  } else if (ready === 0) {
+                    result.health = 'red';
+                    result.breakpoint = 'pods-not-ready';
+                    result.issue = `Service "${path.serviceName}" has ${total} endpoint(s) but none are ready`;
+                  } else if (ready < total) {
+                    result.health = 'yellow';
+                    result.breakpoint = 'pods-not-ready';
+                    result.issue = `Service "${path.serviceName}": ${ready}/${total} endpoints ready`;
+                  }
+                } catch {
+                  result.health = 'red';
+                  result.breakpoint = 'no-endpoints';
+                  result.issue = `Could not read endpoints for service "${path.serviceName}"`;
+                }
+              }
+            } catch {
+              result.health = 'red';
+              result.breakpoint = 'service-missing';
+              result.issue = `Service "${path.serviceName}" not found in namespace ${namespace}`;
+            }
+
+            results.push(result);
+          }
+        }
+      }
+      return results;
+    } catch (err) {
+      logger.error(`[kube] Route health walk failed in ${namespace}:`, err);
+      return [];
+    }
+  }
+
+  // BLY-77: Write operations (require blue-y-network-write ClusterRole verbs)
+  async createIngress(namespace: string, body: k8s.V1Ingress): Promise<k8s.V1Ingress> {
+    return this.networkingApi.createNamespacedIngress({ namespace, body });
+  }
+
+  async updateIngress(namespace: string, name: string, body: k8s.V1Ingress): Promise<k8s.V1Ingress> {
+    return this.networkingApi.replaceNamespacedIngress({ namespace, name, body });
+  }
+
+  async deleteIngress(namespace: string, name: string): Promise<void> {
+    await this.networkingApi.deleteNamespacedIngress({ namespace, name });
+  }
+
+  async createService(namespace: string, body: k8s.V1Service): Promise<k8s.V1Service> {
+    return this.coreApi.createNamespacedService({ namespace, body });
+  }
+
+  async updateService(namespace: string, name: string, body: k8s.V1Service): Promise<k8s.V1Service> {
+    return this.coreApi.replaceNamespacedService({ namespace, name, body });
+  }
+
+  async deleteService(namespace: string, name: string): Promise<void> {
+    await this.coreApi.deleteNamespacedService({ namespace, name });
   }
 
   // Namespaces that are internal to Kubernetes — excluded from /status, shown by /system-status

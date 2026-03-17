@@ -11,6 +11,8 @@ import { setKubeClient } from './routes/cluster';
 import { setStreamKubeClient } from './routes/stream';
 import { setLogsKubeClient } from './routes/logs';
 import { setDeploymentsKubeClient, setDeploymentsTelegramSend } from './routes/deployments';
+import { setNetworkKubeClient } from './routes/network';
+import networkRoutes from './routes/network';
 import incidentRoutes from './routes/incidents';
 import configRoutes from './routes/config';
 import clusterRoutes from './routes/cluster';
@@ -107,6 +109,7 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
     setStreamKubeClient(opts.kube);
     setLogsKubeClient(opts.kube);
     setDeploymentsKubeClient(opts.kube);
+    setNetworkKubeClient(opts.kube);
   }
   // Wire Telegram sender for approval notifications (BLY-62)
   if (opts.telegramSend) {
@@ -349,6 +352,7 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
   router.use('/api/ci',           requireSession, requireRole('superadmin'), ciRoutes); // BLY-70
   router.use('/api/recipients',   requireSession, requireRole('admin'),      recipientsRoutes); // BLY-73
   router.use('/api/ai',           requireSession, requireRole('viewer'),     aiRoutes);         // BLY-76 (PUT enforced inside route)
+  router.use('/api/network',      requireSession, requireRole('viewer'),     networkRoutes);    // BLY-77 (write ops enforced inside route)
 
   // API: current session info + build version
   router.get('/api/me', requireSession, (req: Request, res: Response) => {
