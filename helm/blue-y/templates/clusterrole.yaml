@@ -36,3 +36,18 @@ rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs", "jobs"]
     verbs: ["get", "list", "watch"]
+  # Endpoints — required for service health detection (isDead check)
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch"]
+  # Network Explorer — read ingresses + network policies (BLY-77)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  # Network Explorer — admin write (create/update/delete ingresses + services)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "update", "patch", "delete"]
