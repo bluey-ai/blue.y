@@ -345,16 +345,20 @@ async function testIntegration(id: string, cfg: Record<string, string>): Promise
     const token     = cfg['ci.bitbucket.token'];
     const workspace = cfg['ci.bitbucket.workspace'];
     if (!token) return { ok: false, status: 'not_configured', message: 'API Token not set' };
-    const r = await fetch('https://api.bitbucket.org/2.0/user', {
+    // Test with read:repository:bitbucket scope (doesn't need account scope unlike /user)
+    const testUrl = workspace
+      ? `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}?pagelen=1`
+      : 'https://api.bitbucket.org/2.0/repositories?role=member&pagelen=1';
+    const r = await fetch(testUrl, {
       ...fetchOpts,
       headers: { Authorization: `Bearer ${token}` },
     });
     if (r.ok) {
-      const json = await r.json() as { display_name?: string; username?: string };
-      const who = json.display_name ?? json.username ?? '–';
-      return { ok: true, status: 'connected', message: `Authenticated as ${who}${workspace ? ` — workspace: ${workspace}` : ''}` };
+      const json = await r.json() as { values?: { full_name?: string }[] };
+      const count = json.values?.length ?? 0;
+      return { ok: true, status: 'connected', message: `Connected${workspace ? ` — workspace: ${workspace}` : ''} (${count} repo${count !== 1 ? 's' : ''} visible)` };
     }
-    return { ok: false, status: 'failed', message: `HTTP ${r.status} — check token (needs write:pipeline:bitbucket + read:pipeline:bitbucket scopes)` };
+    return { ok: false, status: 'failed', message: `HTTP ${r.status} — check token has all 3 scopes: read:repository:bitbucket, write:pipeline:bitbucket, read:pipeline:bitbucket` };
   }
 
   if (id === 'github') {
