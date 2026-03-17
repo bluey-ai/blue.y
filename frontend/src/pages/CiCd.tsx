@@ -5,6 +5,7 @@ import {
   ExternalLink, Play, Square, ChevronDown, ChevronRight,
   RefreshCw, CheckCircle2, XCircle, Clock, Minus, Loader2,
   GitBranch, AlertCircle, Lock, Workflow, List, FileText, StopCircle,
+  GitCommit, User, GitPullRequest, CalendarClock, Terminal, Zap, type LucideIcon,
 } from 'lucide-react';
 import {
   getCiRepos, getCiBranches, getCiPipelines, getCiSteps,
@@ -40,6 +41,16 @@ function statusBadge(status: string) {
       {status}
     </span>
   );
+}
+
+function triggerLabel(raw: string): { label: string; Icon: LucideIcon } {
+  const t = raw.toLowerCase();
+  if (t === 'push' || t === 'push_trigger' || t.includes('push')) return { label: 'Push', Icon: Zap };
+  if (t === 'pull_request' || t.includes('pr_')) return { label: 'PR', Icon: GitPullRequest };
+  if (t === 'manual' || t === 'workflow_dispatch' || t.includes('manual')) return { label: 'Manual', Icon: Play };
+  if (t === 'schedule' || t.includes('cron') || t.includes('schedule')) return { label: 'Scheduled', Icon: CalendarClock };
+  if (t === 'api' || t.includes('api')) return { label: 'API', Icon: Terminal };
+  return { label: raw, Icon: Zap };
 }
 
 function fmtDuration(secs: number | null): string {
@@ -122,26 +133,72 @@ function PipelineRow({ pipeline, repo, provider, canAct, onStop }: {
     try { await onStop(pipeline); } finally { setStopping(false); }
   };
 
+  const { label: tLabel, Icon: TIcon } = triggerLabel(pipeline.triggeredBy);
+
   return (
     <div className="border border-[#30363d] rounded-lg overflow-hidden">
       {/* Row header */}
       <button
         onClick={toggle}
-        className="w-full flex items-center gap-3 px-4 py-3 bg-[#161b22] hover:bg-[#1c2128] transition-colors text-left"
+        className="w-full flex items-start gap-3 px-4 py-3 bg-[#161b22] hover:bg-[#1c2128] transition-colors text-left"
       >
-        <span className="text-[#8b949e]">
+        {/* Chevron */}
+        <span className="text-[#8b949e] mt-0.5 shrink-0">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
-        <span className="text-[#8b949e] font-mono text-xs w-10 shrink-0">#{pipeline.buildNumber}</span>
-        <span className="shrink-0">{statusBadge(pipeline.status)}</span>
-        <span className="flex items-center gap-1.5 text-xs text-[#e6edf3] font-mono min-w-0 flex-1 truncate">
-          <GitBranch size={11} className="text-[#58a6ff] shrink-0" />
-          <span className="truncate">{pipeline.branch}</span>
-        </span>
-        <span className="text-[10px] text-[#8b949e] shrink-0 hidden sm:block">{fmtDuration(pipeline.durationSeconds)}</span>
-        <span className="text-[10px] text-[#8b949e] shrink-0 hidden md:block">{timeAgo(pipeline.createdAt)}</span>
-        <span className="text-[10px] text-[#6e7681] shrink-0 hidden lg:block capitalize">{pipeline.triggeredBy}</span>
-        <div className="flex items-center gap-1 shrink-0 ml-auto" onClick={e => e.stopPropagation()}>
+
+        {/* Build # */}
+        <span className="text-[#8b949e] font-mono text-xs w-10 shrink-0 mt-0.5">#{pipeline.buildNumber}</span>
+
+        {/* Status badge */}
+        <span className="shrink-0 mt-0.5">{statusBadge(pipeline.status)}</span>
+
+        {/* Middle — branch + commit info */}
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+          {/* Branch + SHA */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="flex items-center gap-1 text-xs text-[#e6edf3] font-mono">
+              <GitBranch size={11} className="text-[#58a6ff] shrink-0" />
+              <span className="truncate max-w-[120px] sm:max-w-none">{pipeline.branch}</span>
+            </span>
+            {pipeline.commitSha && (
+              <span className="flex items-center gap-1 text-[10px] text-[#6e7681] font-mono">
+                <GitCommit size={10} className="shrink-0" />
+                {pipeline.commitSha}
+              </span>
+            )}
+          </div>
+          {/* Commit message */}
+          {pipeline.commitMessage && (
+            <span className="text-[10px] text-[#8b949e] truncate leading-relaxed">
+              {pipeline.commitMessage}
+            </span>
+          )}
+          {/* Trigger user */}
+          {pipeline.triggerUser && (
+            <span className="flex items-center gap-1 text-[10px] text-[#6e7681]">
+              <User size={9} className="shrink-0" />
+              {pipeline.triggerUser}
+            </span>
+          )}
+        </div>
+
+        {/* Right meta */}
+        <div className="flex flex-col items-end gap-1 shrink-0 ml-auto">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[#8b949e]">{fmtDuration(pipeline.durationSeconds)}</span>
+            <span className="text-[10px] text-[#8b949e]" title={new Date(pipeline.createdAt).toLocaleString()}>{timeAgo(pipeline.createdAt)}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1 text-[10px] text-[#6e7681] bg-[#21262d] border border-[#30363d] px-1.5 py-0.5 rounded">
+              <TIcon size={9} />
+              {tLabel}
+            </span>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 shrink-0 mt-0.5" onClick={e => e.stopPropagation()}>
           {canAct && pipeline.status === 'running' && (
             <button
               onClick={handleStop}
@@ -492,6 +549,25 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
           <AlertCircle size={15} className="shrink-0" /> {error}
         </div>
       )}
+
+      {/* Stats strip */}
+      {displayPipelines.length > 0 && (() => {
+        const counts = displayPipelines.reduce((acc, p) => { acc[p.status] = (acc[p.status] ?? 0) + 1; return acc; }, {} as Record<string, number>);
+        const withDur = displayPipelines.filter(p => p.durationSeconds != null);
+        const avgSecs = withDur.length > 0 ? Math.round(withDur.reduce((s, p) => s + (p.durationSeconds ?? 0), 0) / withDur.length) : null;
+        const passRate = displayPipelines.length > 0 ? Math.round(((counts.passed ?? 0) / displayPipelines.length) * 100) : null;
+        return (
+          <div className="flex items-center gap-3 text-[10px] px-1 flex-wrap">
+            <span className="text-[#6e7681]">{displayPipelines.length} build{displayPipelines.length !== 1 ? 's' : ''}</span>
+            {(counts.passed ?? 0) > 0 && <span className="flex items-center gap-1 text-[#3fb950]"><CheckCircle2 size={10} /> {counts.passed} passed</span>}
+            {(counts.failed ?? 0) > 0 && <span className="flex items-center gap-1 text-[#f85149]"><XCircle size={10} /> {counts.failed} failed</span>}
+            {(counts.running ?? 0) > 0 && <span className="flex items-center gap-1 text-[#58a6ff]"><Loader2 size={10} className="animate-spin" /> {counts.running} running</span>}
+            {(counts.stopped ?? 0) > 0 && <span className="flex items-center gap-1 text-[#8b949e]"><Minus size={10} /> {counts.stopped} stopped</span>}
+            {passRate != null && <span className="text-[#6e7681] ml-1">· {passRate}% pass rate</span>}
+            {avgSecs != null && <span className="text-[#6e7681]">· avg {fmtDuration(avgSecs)}</span>}
+          </div>
+        );
+      })()}
 
       {/* Pipeline list */}
       <div className="space-y-2">

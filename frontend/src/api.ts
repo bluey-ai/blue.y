@@ -257,6 +257,7 @@ export interface CiPipeline {
   status: 'pending' | 'running' | 'passed' | 'failed' | 'stopped';
   branch: string; createdAt: string; completedAt: string | null;
   durationSeconds: number | null; url: string; triggeredBy: string;
+  triggerUser: string; commitSha: string | null; commitMessage: string | null;
 }
 export const getCiRepos = () =>
   get<{ repos: CiRepo[]; workspace: string; provider: string }>('/ci/repos');
