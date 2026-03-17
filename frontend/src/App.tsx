@@ -23,7 +23,7 @@ export default function App() {
     cluster:           <Cluster />,
     deployments:       <Deployments />,
     logs:              <Logs />,
-    cicd:              <CiCd />,
+    cicd:              <CiCd onNavigate={setPage} />,
     users:             <Users />,
     integrations:      <Integrations />,
     config:            <Config />,

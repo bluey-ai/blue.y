@@ -4,13 +4,14 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   ExternalLink, Play, Square, ChevronDown, ChevronRight,
   RefreshCw, CheckCircle2, XCircle, Clock, Minus, Loader2,
-  GitBranch, AlertCircle, Lock,
+  GitBranch, AlertCircle, Lock, Workflow, List, FileText, StopCircle,
 } from 'lucide-react';
 import {
   getCiRepos, getCiBranches, getCiPipelines, getCiSteps,
   triggerCiPipeline, stopCiPipeline, getStepLog, getMe,
 } from '../api';
 import type { CiRepo, CiPipeline, PipelineStep, MeResponse } from '../api';
+import type { Page } from '../App';
 import clsx from 'clsx';
 
 type StatusFilter = 'all' | 'running' | 'passed' | 'failed' | 'stopped';
@@ -264,7 +265,7 @@ function TriggerModal({ repo, branches, onClose, onTriggered }: {
 
 // ── Main CiCd page ────────────────────────────────────────────────────────────
 
-export default function CiCd() {
+export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void }) {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [repos, setRepos] = useState<CiRepo[]>([]);
   const [selectedRepo, setSelectedRepo] = useState('');
@@ -277,6 +278,7 @@ export default function CiCd() {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [reposLoading, setReposLoading] = useState(true);
+  const [reposError, setReposError] = useState('');
   const [error, setError] = useState('');
   const [showTrigger, setShowTrigger] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -295,7 +297,7 @@ export default function CiCd() {
         setWorkspace(r.workspace);
         if (r.repos.length > 0) setSelectedRepo(r.repos[0].slug);
       })
-      .catch(e => setError(e?.message ?? 'Failed to load repos'))
+      .catch(() => setReposError('not_configured'))
       .finally(() => setReposLoading(false));
   }, []);
 
@@ -346,14 +348,55 @@ export default function CiCd() {
     loadPipelines(selectedRepo, next, statusFilter, true);
   };
 
-  // No CI configured
-  if (!reposLoading && error.includes('No CI provider')) {
+  // Bitbucket not configured — show friendly onboarding state
+  if (!reposLoading && reposError) {
     return (
-      <div className="p-6 flex items-center justify-center min-h-64">
-        <div className="text-center space-y-3">
-          <AlertCircle size={32} className="text-[#d29922] mx-auto" />
-          <div className="text-sm font-semibold text-[#e6edf3]">CI provider not configured</div>
-          <div className="text-xs text-[#8b949e]">Go to Integrations → CI/CD Providers and add a Bitbucket or GitHub token.</div>
+      <div className="p-6 flex items-center justify-center min-h-[calc(100vh-4rem)]">
+        <div className="max-w-md w-full text-center space-y-6">
+          {/* Icon */}
+          <div className="flex justify-center">
+            <div className="w-16 h-16 rounded-2xl bg-[#58a6ff]/10 border border-[#58a6ff]/20 flex items-center justify-center">
+              <Workflow size={28} className="text-[#58a6ff]" />
+            </div>
+          </div>
+
+          {/* Heading */}
+          <div className="space-y-2">
+            <h2 className="text-base font-semibold text-[#e6edf3]">Bitbucket CI/CD not configured</h2>
+            <p className="text-sm text-[#8b949e] leading-relaxed">
+              Connect your Bitbucket workspace to monitor and manage pipelines directly from this dashboard — no more tab-switching.
+            </p>
+          </div>
+
+          {/* Feature list */}
+          <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-4 text-left space-y-3">
+            <div className="text-[10px] uppercase tracking-widest text-[#6e7681] font-semibold">What you'll get</div>
+            {[
+              { Icon: List,        text: 'All pipeline runs across every repository, with status and duration' },
+              { Icon: FileText,    text: 'Step-by-step build logs — drill into any step inline without leaving the page' },
+              { Icon: Play,        text: 'Trigger a new build on any branch with one click (Admin+)' },
+              { Icon: StopCircle, text: 'Stop a running pipeline instantly (Admin+)' },
+            ].map(({ Icon, text }) => (
+              <div key={text} className="flex items-start gap-3">
+                <Icon size={14} className="text-[#58a6ff] shrink-0 mt-0.5" />
+                <span className="text-xs text-[#8b949e] leading-relaxed">{text}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* CTA */}
+          {me?.role === 'superadmin' ? (
+            <button
+              onClick={() => onNavigate?.('integrations')}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-[#58a6ff] text-[#0d1117] hover:bg-[#79c0ff] transition-colors"
+            >
+              Configure in Integrations →
+            </button>
+          ) : (
+            <p className="text-xs text-[#6e7681]">
+              Ask your <span className="text-[#bc8cff]">SuperAdmin</span> to add a Bitbucket API token under Integrations → CI/CD Providers.
+            </p>
+          )}
         </div>
       </div>
     );
