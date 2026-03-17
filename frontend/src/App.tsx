@@ -10,8 +10,9 @@ import Deployments from './pages/Deployments';
 import Integrations from './pages/Integrations';
 import EmailTemplates from './pages/EmailTemplates';
 import AlertRecipients from './pages/AlertRecipients';
+import CiCd from './pages/CiCd';
 
-export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'users' | 'integrations' | 'config' | 'email-templates' | 'alert-recipients';
+export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'cicd' | 'users' | 'integrations' | 'config' | 'email-templates' | 'alert-recipients';
 
 export default function App() {
   const [page, setPage] = useState<Page>('overview');
@@ -22,6 +23,7 @@ export default function App() {
     cluster:           <Cluster />,
     deployments:       <Deployments />,
     logs:              <Logs />,
+    cicd:              <CiCd />,
     users:             <Users />,
     integrations:      <Integrations />,
     config:            <Config />,

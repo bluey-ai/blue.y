@@ -115,7 +115,7 @@ const INTEGRATIONS = [
     label: 'Bitbucket',
     icon: 'bitbucket',
     fields: [
-      { key: 'ci.bitbucket.token',     label: 'API Token (repository:write)',  type: 'password' },
+      { key: 'ci.bitbucket.token',     label: 'API Token',  type: 'password' },
       { key: 'ci.bitbucket.workspace', label: 'Workspace slug',                type: 'text'     },
     ],
   },
@@ -354,7 +354,7 @@ async function testIntegration(id: string, cfg: Record<string, string>): Promise
       const who = json.display_name ?? json.username ?? '–';
       return { ok: true, status: 'connected', message: `Authenticated as ${who}${workspace ? ` — workspace: ${workspace}` : ''}` };
     }
-    return { ok: false, status: 'failed', message: `HTTP ${r.status} — check token (needs repository:write scope)` };
+    return { ok: false, status: 'failed', message: `HTTP ${r.status} — check token (needs write:pipeline:bitbucket + read:pipeline:bitbucket scopes)` };
   }
 
   if (id === 'github') {

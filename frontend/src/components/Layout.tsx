@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LayoutDashboard, AlertTriangle, Server, Layers, Terminal, Users, Settings, LogOut, Wifi, WifiOff, Menu, X, Plug, Mail, BookUser } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, Server, Layers, Terminal, Users, Settings, LogOut, Wifi, WifiOff, Menu, X, Plug, Mail, BookUser, Workflow } from 'lucide-react';
 import type { Page } from '../App';
 import Logo from './Logo';
 import { getMe, getLicense } from '../api';
@@ -18,6 +18,7 @@ const NAV: { id: Page; label: string; Icon: React.ElementType; minRole?: string 
   { id: 'cluster',     label: 'Cluster',      Icon: Server },
   { id: 'deployments', label: 'Deployments',  Icon: Layers },
   { id: 'logs',        label: 'Log Explorer', Icon: Terminal },
+  { id: 'cicd',        label: 'CI/CD',        Icon: Workflow },
   { id: 'users',           label: 'Users',            Icon: Users,    minRole: 'superadmin' },
   { id: 'integrations',    label: 'Integrations',     Icon: Plug,     minRole: 'superadmin' },
   { id: 'email-templates',  label: 'Email Templates',   Icon: Mail,      minRole: 'superadmin' },

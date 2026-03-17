@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.12.0] — 2026-03-17 — CI/CD Pipelines Page (BLY-75)
+**Branch:** `feat/bly-74-live-build-monitor` | **Jira:** BLY-75
+
+### Added
+- **CI/CD Pipelines page** — dedicated dashboard page for full pipeline visibility and control.
+  - Lists all repos in the Bitbucket workspace (or GitHub org) via API — no hardcoded repo names.
+  - Shows paginated pipeline runs per repo: build number, branch, status badge, duration, trigger, time ago.
+  - Status filter tabs: All / Running / Failed / Passed / Stopped.
+  - Click any pipeline row to expand its step list with live status icons.
+  - Click any step to expand its last 300 lines of log output inline.
+  - Auto-refreshes every 10s while any pipeline is running or pending.
+  - **Trigger Build** modal — pick a branch from the live branch list and fire a pipeline instantly.
+  - **Stop** button on running pipelines (Bitbucket `stopPipeline` / GitHub `cancel`).
+  - "Open in Bitbucket/GitHub" external link on every pipeline row.
+  - **RBAC**: Admin + SuperAdmin can trigger and stop. Viewer sees read-only "View only" badge.
+  - Empty state when no CI provider is configured (links to Integrations page).
+
+### Changed
+- Bitbucket token scopes updated: now requires `read:repository:bitbucket` (view repos + branches),
+  `write:pipeline:bitbucket` (trigger + stop), `read:pipeline:bitbucket` (view status + logs).
+  `write:repository:bitbucket` is no longer needed.
+- Bitbucket rebuild method changed from git-push to direct Pipelines API trigger (no dummy commits).
+- Integration setup guide updated to reflect new scopes (7 steps, no deprecated app-password warning).
+
+---
+
 ## [1.11.0] — 2026-03-17 — Live Build Monitor (BLY-74)
 **Branch:** `feat/bly-74-live-build-monitor` | **Jira:** BLY-74
 

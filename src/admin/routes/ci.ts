@@ -184,47 +184,288 @@ router.post('/rebuild', async (req: Request, res: Response) => {
     return;
   }
 
-  const tmpDir = `/tmp/bluey-rebuild-${Date.now()}`;
-
   try {
     logger.info(`[ci] Rebuild triggered by ${caller} via ${ci.provider}: ${repo}@${branch}`);
 
-    const repoUrl = buildRepoUrl(ci, repo);
-    await execFileAsync('git', [
-      'clone', '--depth', '1', '--branch', branch, '--single-branch',
-      repoUrl, tmpDir,
-    ], { timeout: 60000 });
-
-    // Configure git identity for the commit
-    await execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', 'bluey@blueonion.today']);
-    await execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', 'BLUE.Y Dashboard']);
-
-    // Empty commit to trigger the pipeline
-    await execFileAsync('git', [
-      '-C', tmpDir, 'commit', '--allow-empty',
-      '-m', `ci: rebuild triggered from BLUE.Y dashboard by ${caller} [BLY-70]`,
-    ]);
-
-    // Push back (authenticated URL already embedded in remote)
-    await execFileAsync('git', ['-C', tmpDir, 'push', 'origin', branch], { timeout: 30000 });
-
-    logger.info(`[ci] Rebuild push OK: ${repo}@${branch} by ${caller} (${ci.provider})`);
-    res.json({ ok: true, repo, branch, workspace: ci.workspace, provider: ci.provider });
-  } catch (e: any) {
-    const msg = e?.stderr ?? e?.message ?? String(e);
-    logger.error(`[ci] Rebuild failed for ${repo}@${branch}: ${msg}`);
-    if (msg.includes('Authentication failed') || msg.includes('could not read Username')) {
-      res.status(503).json({
-        error: `${ci.provider === 'github' ? 'GitHub' : 'Bitbucket'} authentication failed — check your token in Integrations → CI/CD Providers`,
-      });
-    } else if (msg.includes("couldn't find remote ref")) {
-      res.status(404).json({ error: `Branch "${branch}" not found in ${repo}. Override with {repo, branch} in the request body.` });
+    if (ci.provider === 'bitbucket') {
+      // Bitbucket: trigger pipeline via API (write:pipeline:bitbucket scope only — no repo write needed)
+      const triggerRes = await fetch(
+        `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${repo}/pipelines/`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${ci.token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            target: {
+              type: 'pipeline_ref_target',
+              ref_type: 'branch',
+              ref_name: branch,
+              selector: { type: 'default' },
+            },
+          }),
+        },
+      );
+      if (!triggerRes.ok) {
+        const errText = await (triggerRes as any).text().catch(() => '');
+        if (triggerRes.status === 401) {
+          res.status(503).json({ error: 'Bitbucket authentication failed — check token in Integrations (needs write:pipeline:bitbucket scope)' }); return;
+        }
+        if (triggerRes.status === 404) {
+          res.status(404).json({ error: `Repo or branch "${branch}" not found in ${ci.workspace}/${repo}` }); return;
+        }
+        res.status(500).json({ error: `Bitbucket pipeline trigger failed (${triggerRes.status}): ${String(errText).slice(0, 200)}` }); return;
+      }
+      logger.info(`[ci] Bitbucket pipeline triggered: ${repo}@${branch} by ${caller}`);
+      res.json({ ok: true, repo, branch, workspace: ci.workspace, provider: ci.provider });
     } else {
-      res.status(500).json({ error: msg });
+      // GitHub: push empty commit to trigger Actions workflow
+      const tmpDir = `/tmp/bluey-rebuild-${Date.now()}`;
+      try {
+        const repoUrl = buildRepoUrl(ci, repo);
+        await execFileAsync('git', [
+          'clone', '--depth', '1', '--branch', branch, '--single-branch',
+          repoUrl, tmpDir,
+        ], { timeout: 60000 });
+        await execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', 'bluey@blueonion.today']);
+        await execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', 'BLUE.Y Dashboard']);
+        await execFileAsync('git', [
+          '-C', tmpDir, 'commit', '--allow-empty',
+          '-m', `ci: rebuild triggered from BLUE.Y dashboard by ${caller} [BLY-70]`,
+        ]);
+        await execFileAsync('git', ['-C', tmpDir, 'push', 'origin', branch], { timeout: 30000 });
+        logger.info(`[ci] GitHub rebuild push OK: ${repo}@${branch} by ${caller}`);
+        res.json({ ok: true, repo, branch, workspace: ci.workspace, provider: ci.provider });
+      } catch (e: any) {
+        const msg = e?.stderr ?? e?.message ?? String(e);
+        logger.error(`[ci] GitHub rebuild failed for ${repo}@${branch}: ${msg}`);
+        if (msg.includes('Authentication failed') || msg.includes('could not read Username')) {
+          res.status(503).json({ error: 'GitHub authentication failed — check your token in Integrations → CI/CD Providers' });
+        } else if (msg.includes("couldn't find remote ref")) {
+          res.status(404).json({ error: `Branch "${branch}" not found in ${repo}` });
+        } else {
+          res.status(500).json({ error: msg });
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     }
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch (e: any) {
+    const msg = e?.message ?? String(e);
+    logger.error(`[ci] Rebuild failed for ${repo}@${branch}: ${msg}`);
+    res.status(500).json({ error: msg });
   }
+});
+
+// ── BLY-75: CI/CD Pipelines page — repos, branches, pipeline list, trigger, stop ──
+
+// GET /api/ci/repos — list all repos in workspace
+router.get('/repos', async (req: Request, res: Response) => {
+  const ci = await resolveCiConfig();
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+  try {
+    if (ci.provider === 'bitbucket') {
+      const data = await bbApi(ci.token,
+        `/repositories/${ci.workspace}?role=member&pagelen=50&fields=values.slug,values.name,values.full_name,values.is_private,values.updated_on`);
+      const repos = (data.values ?? []).map((r: any) => ({
+        slug: r.slug as string, name: r.name as string,
+        fullName: r.full_name as string, isPrivate: r.is_private as boolean,
+        updatedOn: r.updated_on as string,
+      }));
+      res.json({ repos, workspace: ci.workspace, provider: 'bitbucket' });
+    } else {
+      const data = await ghApi(ci.token, `/user/repos?per_page=50&sort=updated`);
+      const repos = (data ?? []).map((r: any) => ({
+        slug: r.name as string, name: r.name as string,
+        fullName: r.full_name as string, isPrivate: r.private as boolean,
+        updatedOn: r.updated_at as string,
+      }));
+      res.json({ repos, workspace: ci.workspace, provider: 'github' });
+    }
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? String(e) }); }
+});
+
+// GET /api/ci/branches?repo= — list branches for a repo
+router.get('/branches', async (req: Request, res: Response) => {
+  const { repo } = req.query as Record<string, string>;
+  if (!repo) { res.status(400).json({ error: 'repo is required' }); return; }
+  const ci = await resolveCiConfig();
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+  try {
+    let branches: string[];
+    if (ci.provider === 'bitbucket') {
+      const data = await bbApi(ci.token,
+        `/repositories/${ci.workspace}/${repo}/refs/branches?pagelen=50&fields=values.name&sort=-target.date`);
+      branches = (data.values ?? []).map((b: any) => b.name as string);
+    } else {
+      const data = await ghApi(ci.token, `/repos/${ci.workspace}/${repo}/branches?per_page=50`);
+      branches = (data ?? []).map((b: any) => b.name as string);
+    }
+    res.json({ branches });
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? String(e) }); }
+});
+
+// GET /api/ci/pipelines?repo=&page=&status= — paginated pipeline list
+router.get('/pipelines', async (req: Request, res: Response) => {
+  const { repo, page = '1', status } = req.query as Record<string, string>;
+  if (!repo) { res.status(400).json({ error: 'repo is required' }); return; }
+  const ci = await resolveCiConfig();
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+  try {
+    if (ci.provider === 'bitbucket') {
+      let url = `/repositories/${ci.workspace}/${repo}/pipelines/?sort=-created_on&pagelen=20&page=${page}`;
+      if (status && status !== 'all') {
+        const stateMap: Record<string, string> = { running: 'IN_PROGRESS', pending: 'PENDING', passed: 'COMPLETED', failed: 'COMPLETED', stopped: 'COMPLETED' };
+        if (stateMap[status]) url += `&status=${stateMap[status]}`;
+      }
+      const data = await bbApi(ci.token, url);
+      const pipelines = (data.values ?? []).map((p: any) => ({
+        pipelineId: p.uuid as string,
+        buildNumber: p.build_number as number,
+        status: mapBbState(p.state),
+        branch: (p.target?.ref_name ?? '') as string,
+        createdAt: p.created_on as string,
+        completedAt: (p.completed_on ?? null) as string | null,
+        durationSeconds: (p.duration_in_seconds ?? null) as number | null,
+        url: `https://bitbucket.org/${ci.workspace}/${repo}/pipelines/${p.build_number as number}`,
+        triggeredBy: (p.trigger?.name ?? p.trigger?.type ?? 'manual') as string,
+      }));
+      res.json({ pipelines, page: Number(page), hasMore: !!data.next, provider: 'bitbucket', workspace: ci.workspace });
+    } else {
+      const data = await ghApi(ci.token,
+        `/repos/${ci.workspace}/${repo}/actions/runs?per_page=20&page=${page}`);
+      const pipelines = (data.workflow_runs ?? []).map((r: any) => ({
+        pipelineId: String(r.id as number),
+        buildNumber: r.run_number as number,
+        status: mapGhStatus(r.status as string, r.conclusion as string | null),
+        branch: r.head_branch as string,
+        createdAt: r.created_at as string,
+        completedAt: (r.updated_at ?? null) as string | null,
+        durationSeconds: null as null,
+        url: r.html_url as string,
+        triggeredBy: r.event as string,
+      }));
+      res.json({ pipelines, page: Number(page), hasMore: (data.total_count as number) > Number(page) * 20, provider: 'github', workspace: ci.workspace });
+    }
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? String(e) }); }
+});
+
+// GET /api/ci/steps?repo=&pipelineId= — steps for a specific pipeline
+router.get('/steps', async (req: Request, res: Response) => {
+  const { repo, pipelineId } = req.query as Record<string, string>;
+  if (!repo || !pipelineId) { res.status(400).json({ error: 'repo and pipelineId are required' }); return; }
+  const ci = await resolveCiConfig();
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+  try {
+    if (ci.provider === 'bitbucket') {
+      const data = await bbApi(ci.token,
+        `/repositories/${ci.workspace}/${repo}/pipelines/${encodeURIComponent(pipelineId)}/steps/`);
+      const steps = (data.values ?? []).map((s: any) => ({
+        id: s.uuid as string,
+        name: (s.name ?? s.type ?? 'Step') as string,
+        status: mapBbState(s.state),
+        durationSeconds: (s.duration_in_seconds ?? null) as number | null,
+        startedAt: (s.started_on ?? null) as string | null,
+      }));
+      res.json({ steps });
+    } else {
+      const data = await ghApi(ci.token,
+        `/repos/${ci.workspace}/${repo}/actions/runs/${encodeURIComponent(pipelineId)}/jobs`);
+      const steps = (data.jobs ?? []).map((j: any) => {
+        const dur = j.started_at && j.completed_at
+          ? Math.round((new Date(j.completed_at as string).getTime() - new Date(j.started_at as string).getTime()) / 1000) : null;
+        return {
+          id: String(j.id as number), name: j.name as string,
+          status: mapGhStatus(j.status as string, j.conclusion as string | null),
+          durationSeconds: dur, startedAt: (j.started_at ?? null) as string | null,
+        };
+      });
+      res.json({ steps });
+    }
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? String(e) }); }
+});
+
+// POST /api/ci/trigger — trigger pipeline from CI/CD page (admin+)
+router.post('/trigger', async (req: Request, res: Response) => {
+  const role: string = (req as any).adminUser?.role ?? 'viewer';
+  if (role === 'viewer') { res.status(403).json({ error: 'Admin access required to trigger pipelines' }); return; }
+  const { repo, branch } = req.body ?? {};
+  if (!repo || !branch) { res.status(400).json({ error: 'repo and branch are required' }); return; }
+  if (!/^[a-zA-Z0-9._-]+$/.test(String(repo)) || !/^[a-zA-Z0-9._/-]+$/.test(String(branch))) {
+    res.status(400).json({ error: 'Invalid repo or branch name' }); return;
+  }
+  const caller = (req as any).adminUser?.name ?? 'unknown';
+  const ci = await resolveCiConfig();
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+  try {
+    if (ci.provider === 'bitbucket') {
+      const triggerRes = await fetch(
+        `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${String(repo)}/pipelines/`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${ci.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ target: { type: 'pipeline_ref_target', ref_type: 'branch', ref_name: String(branch), selector: { type: 'default' } } }),
+        },
+      );
+      if (!triggerRes.ok) {
+        const errText = await (triggerRes as any).text().catch(() => '');
+        if (triggerRes.status === 401) { res.status(503).json({ error: 'Bitbucket auth failed — check token scopes in Integrations' }); return; }
+        if (triggerRes.status === 404) { res.status(404).json({ error: `Repo or branch "${String(branch)}" not found` }); return; }
+        res.status(500).json({ error: `Trigger failed (${triggerRes.status}): ${String(errText).slice(0, 200)}` }); return;
+      }
+      const triggered: any = await (triggerRes as any).json();
+      logger.info(`[ci] Pipeline triggered by ${caller}: ${String(repo)}@${String(branch)}`);
+      res.json({ ok: true, pipelineId: triggered.uuid as string, buildNumber: triggered.build_number as number });
+    } else {
+      const tmpDir = `/tmp/bluey-trigger-${Date.now()}`;
+      try {
+        const repoUrl = buildRepoUrl(ci, String(repo));
+        await execFileAsync('git', ['clone', '--depth', '1', '--branch', String(branch), '--single-branch', repoUrl, tmpDir], { timeout: 60000 });
+        await execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', 'bluey@blueonion.today']);
+        await execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', 'BLUE.Y Dashboard']);
+        await execFileAsync('git', ['-C', tmpDir, 'commit', '--allow-empty', '-m', `ci: pipeline triggered from BLUE.Y CI/CD page by ${caller}`]);
+        await execFileAsync('git', ['-C', tmpDir, 'push', 'origin', String(branch)], { timeout: 30000 });
+        logger.info(`[ci] GitHub pipeline triggered by ${caller}: ${String(repo)}@${String(branch)}`);
+        res.json({ ok: true });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? String(e) }); }
+});
+
+// POST /api/ci/stop — stop a running pipeline (admin+)
+router.post('/stop', async (req: Request, res: Response) => {
+  const role: string = (req as any).adminUser?.role ?? 'viewer';
+  if (role === 'viewer') { res.status(403).json({ error: 'Admin access required to stop pipelines' }); return; }
+  const { pipelineId, repo } = req.body ?? {};
+  if (!pipelineId || !repo) { res.status(400).json({ error: 'pipelineId and repo are required' }); return; }
+  const ci = await resolveCiConfig();
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+  try {
+    if (ci.provider === 'bitbucket') {
+      const stopRes = await fetch(
+        `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${String(repo)}/pipelines/${encodeURIComponent(String(pipelineId))}/stopPipeline`,
+        { method: 'POST', headers: { Authorization: `Bearer ${ci.token}`, 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      if (!stopRes.ok && stopRes.status !== 204) {
+        const errText = await (stopRes as any).text().catch(() => '');
+        res.status(stopRes.status).json({ error: `Stop failed: ${String(errText).slice(0, 200)}` }); return;
+      }
+    } else {
+      const cancelRes = await fetch(
+        `https://api.github.com/repos/${ci.workspace}/${String(repo)}/actions/runs/${encodeURIComponent(String(pipelineId))}/cancel`,
+        { method: 'POST', headers: { Authorization: `Bearer ${ci.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } },
+      );
+      if (!cancelRes.ok && cancelRes.status !== 202) {
+        const errText = await (cancelRes as any).text().catch(() => '');
+        res.status(cancelRes.status).json({ error: `Cancel failed: ${String(errText).slice(0, 200)}` }); return;
+      }
+    }
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? String(e) }); }
 });
 
 // ── BLY-74: Live Build Monitor ────────────────────────────────────────────────

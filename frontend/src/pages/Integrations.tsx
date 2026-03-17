@@ -115,14 +115,13 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
   },
   bitbucket: {
     steps: [
-      '⚠ App passwords were deprecated on Sep 9, 2025 — use API tokens instead (disabled June 9, 2026).',
       '1. Go to id.atlassian.com → Manage profile → Security → API tokens (or click the link below)',
       '2. Click "Create API token with scope" — give it a name (e.g. "BLUE.Y Dashboard") and set an expiry',
-      '3. On the Select scopes page, search "repository" → tick write:repository:bitbucket (includes read)',
-      '4. Also search "pipeline" → tick read:pipeline:bitbucket (needed for Live Build Monitor)',
+      '3. On the Select scopes page, search "repository" → tick read:repository:bitbucket (view repos + branches)',
+      '4. Search "pipeline" → tick write:pipeline:bitbucket (trigger + stop) and read:pipeline:bitbucket (view status + logs)',
       '5. Click Next → Create token — copy it immediately (shown only once) → paste as API Token above',
       '6. Set Workspace slug to your Bitbucket workspace URL slug (e.g. "blue-onion")',
-      '7. Once saved, Smart Rebuild will push an empty commit to trigger your pipeline, and the Live Build Monitor will poll status live',
+      '7. Once saved, the CI/CD Pipelines page will list all repos, show live build status, and let you trigger or stop pipelines directly from the dashboard',
     ],
     links: [
       { label: 'Bitbucket API Tokens', url: 'https://id.atlassian.com/manage-profile/security/api-tokens' },
