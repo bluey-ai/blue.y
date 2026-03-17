@@ -18,6 +18,9 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --production && npm cache clean --force
 
+# git required for BLY-70 smart rebuild (empty commit push to trigger Bitbucket pipeline)
+RUN apk add --no-cache git
+
 COPY --from=builder /app/dist ./dist
 
 # Build metadata — injected by CI/CD pipeline

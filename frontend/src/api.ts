@@ -196,6 +196,16 @@ export const resetEmailTemplate = (id: string) => del(`/email-templates/${encode
 export const testEmailTemplate  = (id: string, to: string, fields: Record<string, string>) =>
   post<{ ok: boolean; message?: string }>(`/email-templates/${encodeURIComponent(id)}/test`, { to, fields });
 
+// CI / Smart Rebuild (BLY-70)
+export interface ParsedImage {
+  image: string; repo: string; tagPrefix: string;
+  branch: string | null; environment: string;
+}
+export const parsePodImage = (namespace: string, podName: string) =>
+  get<ParsedImage>(`/ci/parse-image?namespace=${encodeURIComponent(namespace)}&podName=${encodeURIComponent(podName)}`);
+export const triggerRebuild = (body: { namespace?: string; podName?: string; repo?: string; branch?: string }) =>
+  post<{ ok: boolean; repo: string; branch: string; workspace: string }>('/ci/rebuild', body);
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });

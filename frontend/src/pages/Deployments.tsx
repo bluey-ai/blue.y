@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X, Info, Server, Tag, Database } from 'lucide-react';
-import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment, getPodDetail } from '../api';
-import type { DeploymentRevision, PodDetail } from '../api';
+import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X, Info, Server, Tag, Database, Hammer, AlertTriangle } from 'lucide-react';
+import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment, getPodDetail, parsePodImage, triggerRebuild } from '../api';
+import type { DeploymentRevision, PodDetail, ParsedImage } from '../api';
 import type { DeploymentInfo, PodInfo } from '../types';
 import PodTerminal from '../components/PodTerminal';
 import PodLogsViewer from '../components/PodLogsViewer';
@@ -595,7 +595,7 @@ export default function Deployments() {
                             ) : podDetailMap[selectedPodName] === null ? (
                               <div className="px-4 py-3 text-xs text-[#f85149]">Failed to load pod detail.</div>
                             ) : podDetailMap[selectedPodName] ? (
-                              <PodDetailPanel detail={podDetailMap[selectedPodName]!} onClose={() => setSelectedPodName(null)} />
+                              <PodDetailPanel detail={podDetailMap[selectedPodName]!} namespace={ns} onClose={() => setSelectedPodName(null)} />
                             ) : null}
                           </div>
                         )}
@@ -805,10 +805,48 @@ function ResourceBar({ label, used, limit, request, unit }: {
   );
 }
 
-function PodDetailPanel({ detail, onClose }: { detail: PodDetail; onClose: () => void }) {
+function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; namespace: string; onClose: () => void }) {
   const { pod, containers, node } = detail;
   const qosColor = pod.qosClass === 'Guaranteed' ? '#3fb950' : pod.qosClass === 'Burstable' ? '#d29922' : '#8b949e';
   const userVolumes = pod.volumes.filter(v => v.type !== 'secret' || !v.name.startsWith('kube-'));
+
+  // BLY-70: detect ImagePullBackOff
+  const imagePullFailed = containers.some(c =>
+    c.reason === 'ImagePullBackOff' || c.reason === 'ErrImagePull' || c.state === 'waiting' && (c.reason ?? '').toLowerCase().includes('image')
+  );
+
+  // Rebuild state
+  const [rebuildModal, setRebuildModal] = useState<{ parsed: ParsedImage; branchOverride: string } | null>(null);
+  const [loadingParse, setLoadingParse]   = useState(false);
+  const [rebuildPhase, setRebuildPhase]   = useState<'idle' | 'building' | 'done' | 'error'>('idle');
+  const [rebuildMsg, setRebuildMsg]       = useState('');
+
+  const openRebuild = async () => {
+    setLoadingParse(true);
+    try {
+      const parsed = await parsePodImage(namespace, pod.name);
+      setRebuildModal({ parsed, branchOverride: parsed.branch ?? '' });
+    } catch (e: any) {
+      setRebuildMsg(e.message ?? 'Failed to parse image');
+      setRebuildPhase('error');
+    } finally { setLoadingParse(false); }
+  };
+
+  const doRebuild = async () => {
+    if (!rebuildModal) return;
+    const { parsed, branchOverride } = rebuildModal;
+    setRebuildModal(null);
+    setRebuildPhase('building');
+    setRebuildMsg('Pushing empty commit to trigger Bitbucket pipeline…');
+    try {
+      await triggerRebuild({ repo: parsed.repo, branch: branchOverride || (parsed.branch ?? '') });
+      setRebuildPhase('done');
+      setRebuildMsg(`Pipeline triggered on ${parsed.repo}@${branchOverride || parsed.branch}. Build takes ~8-12 min.`);
+    } catch (e: any) {
+      setRebuildPhase('error');
+      setRebuildMsg(e.message ?? 'Rebuild failed');
+    }
+  };
 
   return (
     <div className="bg-[#0d1117] text-xs">
@@ -830,6 +868,99 @@ function PodDetailPanel({ detail, onClose }: { detail: PodDetail; onClose: () =>
           <X size={12} />
         </button>
       </div>
+
+      {/* BLY-70: ImagePullBackOff banner + Rebuild button */}
+      {imagePullFailed && (
+        <div className="px-4 py-3 border-b border-[#f85149]/20 bg-[#f85149]/5 flex items-center gap-3">
+          <AlertTriangle size={12} className="text-[#f85149] shrink-0" />
+          <span className="text-[#f85149] flex-1">
+            ECR image not found — pod cannot start. The image was likely deleted by a lifecycle policy.
+          </span>
+          {rebuildPhase === 'idle' && (
+            <button
+              onClick={openRebuild}
+              disabled={loadingParse}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-semibold bg-[#bc8cff]/15 text-[#bc8cff] hover:bg-[#bc8cff]/25 border border-[#bc8cff]/25 transition-colors disabled:opacity-50 shrink-0"
+            >
+              {loadingParse ? <Loader size={10} className="animate-spin" /> : <Hammer size={10} />}
+              Rebuild Image
+            </button>
+          )}
+          {rebuildPhase === 'building' && (
+            <span className="flex items-center gap-1.5 text-[#d29922] shrink-0">
+              <Loader size={10} className="animate-spin" /> Building…
+            </span>
+          )}
+          {rebuildPhase === 'done' && (
+            <span className="flex items-center gap-1.5 text-[#3fb950] shrink-0">
+              <CheckCircle size={10} /> Pipeline queued
+            </span>
+          )}
+          {rebuildPhase === 'error' && (
+            <button onClick={() => setRebuildPhase('idle')} className="flex items-center gap-1.5 text-[#f85149] shrink-0 hover:underline">
+              <XCircle size={10} /> Retry
+            </button>
+          )}
+        </div>
+      )}
+      {(rebuildPhase === 'done' || rebuildPhase === 'error') && rebuildMsg && (
+        <div className={clsx('px-4 py-2 text-[10px] border-b', rebuildPhase === 'done' ? 'text-[#3fb950] border-[#3fb950]/20 bg-[#3fb950]/5' : 'text-[#f85149] border-[#f85149]/20 bg-[#f85149]/5')}>
+          {rebuildMsg}
+        </div>
+      )}
+
+      {/* Rebuild confirmation modal */}
+      {rebuildModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="w-full max-w-md mx-4 bg-[#161b22] rounded-xl border border-[#30363d] shadow-2xl">
+            <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-[#30363d]">
+              <Hammer size={14} className="text-[#bc8cff]" />
+              <span className="text-sm font-semibold text-[#e6edf3]">Rebuild Image</span>
+              <button onClick={() => setRebuildModal(null)} className="ml-auto p-1.5 rounded text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-[#8b949e]">
+                An empty commit will be pushed to trigger a Bitbucket pipeline build. The pod will recover automatically once the new image is pushed to ECR (~8-12 min).
+              </p>
+              <div className="bg-[#0d1117] rounded-lg p-3 space-y-2 text-[11px] font-mono">
+                <div className="flex gap-2">
+                  <span className="text-[#6e7681] w-20 shrink-0">Repo</span>
+                  <span className="text-[#e6edf3]">{rebuildModal.parsed.repo}</span>
+                </div>
+                <div className="flex gap-2 items-center">
+                  <span className="text-[#6e7681] w-20 shrink-0">Branch</span>
+                  <input
+                    value={rebuildModal.branchOverride}
+                    onChange={e => setRebuildModal(m => m ? { ...m, branchOverride: e.target.value } : m)}
+                    className="flex-1 bg-[#161b22] border border-[#30363d] rounded px-2 py-1 text-[#e6edf3] focus:outline-none focus:border-[#bc8cff]/50"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <span className="text-[#6e7681] w-20 shrink-0">Env</span>
+                  <span className={clsx('px-1.5 py-0.5 rounded text-[10px] font-semibold',
+                    rebuildModal.parsed.environment === 'production' ? 'bg-[#f85149]/15 text-[#f85149]' : 'bg-[#d29922]/15 text-[#d29922]'
+                  )}>{rebuildModal.parsed.environment}</span>
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setRebuildModal(null)} className="px-4 py-2 rounded text-xs text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors">
+                  Cancel
+                </button>
+                <button
+                  onClick={doRebuild}
+                  disabled={!rebuildModal.branchOverride.trim()}
+                  className="px-4 py-2 rounded text-xs font-semibold bg-[#bc8cff] text-[#0d1117] hover:bg-[#bc8cff]/90 transition-colors disabled:opacity-40"
+                >
+                  Confirm Rebuild
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       <div className="p-4 space-y-4">
         {/* Node section */}
