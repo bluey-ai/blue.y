@@ -329,7 +329,9 @@ router.get('/pipelines', async (req: Request, res: Response) => {
         durationSeconds: (p.duration_in_seconds ?? null) as number | null,
         url: (p.links?.html?.href as string | undefined) ?? `https://bitbucket.org/${ci.workspace}/${repo}/pipelines/results/${p.build_number as number}`,
         triggeredBy: (p.trigger?.name ?? p.trigger?.type ?? 'manual') as string,
-        triggerUser: (p.trigger?.actor?.display_name ?? p.trigger?.actor?.nickname ?? '') as string,
+        // Bitbucket uses trigger.actor for manual/API triggers, creator for push/schedule
+        triggerUser: (p.trigger?.actor?.display_name ?? p.trigger?.actor?.nickname
+          ?? p.creator?.display_name ?? p.creator?.nickname ?? '') as string,
         commitSha: ((p.target?.commit?.hash as string | undefined)?.slice(0, 7) ?? null) as string | null,
         commitMessage: ((p.target?.commit?.message as string | undefined)?.split('\n')[0]?.slice(0, 80) ?? null) as string | null,
       }));

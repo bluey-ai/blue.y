@@ -67,6 +67,17 @@ function timeAgo(iso: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+function fmtDate(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric',
+    ...(!sameYear && { year: 'numeric' }),
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
 // ── StepLogViewer ─────────────────────────────────────────────────────────────
 
 function StepLogViewer({ repo, pipelineId, step, provider }: {
@@ -200,8 +211,9 @@ function PipelineRow({ pipeline, repo, provider, canAct, onStop, environment }: 
         <div className="flex flex-col items-end gap-1 shrink-0 ml-auto">
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-[#8b949e]">{fmtDuration(pipeline.durationSeconds)}</span>
-            <span className="text-[10px] text-[#8b949e]" title={new Date(pipeline.createdAt).toLocaleString()}>{timeAgo(pipeline.createdAt)}</span>
+            <span className="text-[10px] text-[#8b949e]">{timeAgo(pipeline.createdAt)}</span>
           </div>
+          <div className="text-[10px] text-[#6e7681] text-right">{fmtDate(pipeline.createdAt)}</div>
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {environment && envBadge(environment)}
             <span className="flex items-center gap-1 text-[10px] text-[#6e7681] bg-[#21262d] border border-[#30363d] px-1.5 py-0.5 rounded">
