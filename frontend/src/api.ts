@@ -117,6 +117,21 @@ export const fetchLogs = (namespace: string, pod: string, lines = 200) =>
   get<{ lines: string[]; pod: string; namespace: string }>(`/logs/fetch?namespace=${encodeURIComponent(namespace)}&pod=${encodeURIComponent(pod)}&lines=${lines}`);
 export const analyzeLogs = (pod: string, namespace: string, logs: string) =>
   post<{ analysis: LogAnalysis }>('/logs/analyze', { pod, namespace, logs });
+
+// BLY-71: AI pod diagnosis
+export interface PodDiagnosis {
+  rootCause: string;
+  confidence: 'high' | 'medium' | 'low';
+  severity: 'critical' | 'warning' | 'info';
+  suggestions: Array<{ rank: number; action: string; description: string; command?: string }>;
+  analyzedAt: string;
+}
+export const diagnosePod = (namespace: string, pod: string) =>
+  post<{ diagnosis: PodDiagnosis }>('/logs/diagnose', { namespace, pod });
+
+// BLY-72: NL log search
+export const nlSearchLogs = (query: string) =>
+  post<{ keywords: string[] }>('/logs/nl-search', { query });
 export function streamLogs(
   namespace: string, pod: string, container: string, tail: number,
   onLine: (line: string) => void, onError?: (e: Event) => void,

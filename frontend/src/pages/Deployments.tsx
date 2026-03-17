@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X, Info, Server, Tag, Database, Hammer, AlertTriangle, ExternalLink } from 'lucide-react';
-import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment, getPodDetail, parsePodImage, triggerRebuild, getPipelineStatus, getStepLog } from '../api';
-import type { DeploymentRevision, PodDetail, ParsedImage, PipelineStatus, PipelineStep } from '../api';
+import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X, Info, Server, Tag, Database, Hammer, AlertTriangle, ExternalLink, Bot } from 'lucide-react';
+import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment, getPodDetail, parsePodImage, triggerRebuild, getPipelineStatus, getStepLog, diagnosePod } from '../api';
+import type { DeploymentRevision, PodDetail, ParsedImage, PipelineStatus, PipelineStep, PodDiagnosis } from '../api';
 import type { DeploymentInfo, PodInfo } from '../types';
 import PodTerminal from '../components/PodTerminal';
 import PodLogsViewer from '../components/PodLogsViewer';
@@ -969,6 +969,31 @@ function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; nam
     c.reason === 'ImagePullBackOff' || c.reason === 'ErrImagePull' || c.state === 'waiting' && (c.reason ?? '').toLowerCase().includes('image')
   );
 
+  // BLY-71: AI inline diagnosis
+  const isUnhealthy = pod.phase !== 'Running' || containers.some(c => c.state !== 'running');
+  const [diagnosis, setDiagnosis] = useState<PodDiagnosis | null>(null);
+  const [diagnosing, setDiagnosing] = useState(false);
+
+  useEffect(() => {
+    if (isUnhealthy) {
+      setDiagnosing(true);
+      diagnosePod(namespace, pod.name)
+        .then(r => setDiagnosis(r.diagnosis))
+        .catch(() => {})
+        .finally(() => setDiagnosing(false));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pod.name]);
+
+  const runDiagnosis = () => {
+    setDiagnosing(true);
+    setDiagnosis(null);
+    diagnosePod(namespace, pod.name)
+      .then(r => setDiagnosis(r.diagnosis))
+      .catch(() => {})
+      .finally(() => setDiagnosing(false));
+  };
+
   // Rebuild state (BLY-70 / BLY-74)
   const [rebuildModal, setRebuildModal] = useState<{ parsed: ParsedImage; branchOverride: string } | null>(null);
   const [loadingParse, setLoadingParse]   = useState(false);
@@ -1145,6 +1170,66 @@ function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; nam
         </div>
       )}
 
+      {/* BLY-71: AI Diagnosis panel — shown for unhealthy pods */}
+      {(isUnhealthy || diagnosis || diagnosing) && (
+        <div className="px-4 py-3 border-b border-[#bc8cff]/20 bg-[#bc8cff]/5">
+          <div className="flex items-center gap-2 mb-2">
+            <Bot size={12} className="text-[#bc8cff] shrink-0" />
+            <span className="text-[11px] font-semibold text-[#bc8cff]">AI Diagnosis</span>
+            {diagnosis && (
+              <span className={clsx(
+                'text-[9px] px-1.5 py-0.5 rounded-full border',
+                diagnosis.confidence === 'high'   ? 'text-[#3fb950] bg-[#3fb950]/10 border-[#3fb950]/30' :
+                diagnosis.confidence === 'medium' ? 'text-[#d29922] bg-[#d29922]/10 border-[#d29922]/30' :
+                                                    'text-[#8b949e] bg-[#21262d] border-[#30363d]',
+              )}>
+                {diagnosis.confidence} confidence
+              </span>
+            )}
+            <button
+              onClick={runDiagnosis}
+              disabled={diagnosing}
+              className="ml-auto flex items-center gap-1 text-[10px] text-[#6e7681] hover:text-[#bc8cff] disabled:opacity-40 transition-colors"
+            >
+              <RefreshCw size={9} className={diagnosing ? 'animate-spin' : ''} />
+              {diagnosing ? 'Analyzing…' : 'Re-analyze'}
+            </button>
+          </div>
+
+          {diagnosing && !diagnosis && (
+            <p className="text-[11px] text-[#8b949e] animate-pulse">Reading pod state and logs…</p>
+          )}
+
+          {diagnosis && (
+            <div className="space-y-2">
+              <p className="text-[11px] text-[#e6edf3] leading-relaxed">{diagnosis.rootCause}</p>
+              {diagnosis.suggestions.length > 0 && (
+                <div className="space-y-1.5 mt-2">
+                  <p className="text-[9px] text-[#6e7681] uppercase tracking-wider">Suggested Actions</p>
+                  {diagnosis.suggestions.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2 text-[11px]">
+                      <span className="text-[#bc8cff] shrink-0 w-4">{['①','②','③','④'][i] ?? '•'}</span>
+                      <div className="flex-1">
+                        <span className="font-medium text-[#e6edf3]">{s.action}</span>
+                        <span className="text-[#8b949e]"> — {s.description}</span>
+                        {s.command === 'rebuild' && imagePullFailed && (
+                          <button onClick={openRebuild} className="ml-2 text-[10px] text-[#bc8cff] hover:underline">Do it →</button>
+                        )}
+                        {s.command === 'restart' && (
+                          <span className="ml-2 text-[9px] text-[#6e7681]">(use Restart button above)</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[9px] text-[#6e7681] mt-1">
+                Analyzed {new Date(diagnosis.analyzedAt).toLocaleTimeString()}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="p-4 space-y-4">
         {/* Node section */}

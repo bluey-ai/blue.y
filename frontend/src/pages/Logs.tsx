@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { Terminal, Download, Bot, Play, Square, Trash2, Search } from 'lucide-react';
-import { getLogPods, streamLogs, fetchLogs, analyzeLogs } from '../api';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { Terminal, Download, Bot, Play, Square, Trash2, Search, Sparkles, Layers, ChevronDown, ChevronRight } from 'lucide-react';
+import { getLogPods, streamLogs, fetchLogs, analyzeLogs, nlSearchLogs } from '../api';
 import type { LogAnalysis } from '../types';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
@@ -22,6 +22,9 @@ export default function Logs() {
   const [analysis, setAnalysis] = useState<LogAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [search, setSearch] = useState('');
+  const [nlMode, setNlMode] = useState(false);
+  const [nlLoading, setNlLoading] = useState(false);
+  const [showClusters, setShowClusters] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
   const esRef = useRef<EventSource | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -103,9 +106,44 @@ export default function Logs() {
 
   const clearLogs = () => { setLines([]); setAnalysis(null); };
 
+  const handleNlSearch = async () => {
+    if (!search.trim()) return;
+    setNlLoading(true);
+    try {
+      const r = await nlSearchLogs(search);
+      // Replace the search field with comma-joined keywords so LogLine highlights work
+      setSearch(r.keywords.join(' '));
+    } catch { /* keep as-is */ }
+    finally { setNlLoading(false); }
+  };
+
   const filteredLines = search
-    ? lines.filter(l => l.toLowerCase().includes(search.toLowerCase()))
+    ? lines.filter(l => search.split(' ').filter(Boolean).some(kw => l.toLowerCase().includes(kw.toLowerCase())))
     : lines;
+
+  // BLY-72: error clustering — group repeated error patterns (client-side)
+  const errorClusters = useMemo(() => {
+    if (lines.length === 0) return [];
+    const clusters: Record<string, { count: number; sample: string }> = {};
+    lines.forEach(line => {
+      if (!/error|exception|fatal|failed|panic|crash/i.test(line)) return;
+      const normalized = line
+        .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[\w.:+-]*/g, '')
+        .replace(/\b[0-9a-f-]{8,}\b/gi, '#id')
+        .replace(/:\d+\b/g, ':N')
+        .replace(/\s+/g, ' ')
+        .slice(0, 90)
+        .trim();
+      if (normalized.length < 8) return;
+      if (!clusters[normalized]) clusters[normalized] = { count: 0, sample: line.slice(0, 120) };
+      clusters[normalized].count++;
+    });
+    return Object.entries(clusters)
+      .map(([pattern, v]) => ({ pattern, ...v }))
+      .filter(c => c.count > 1)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  }, [lines]);
 
   const containers = pods.find(p => p.name === selectedPod)?.containers ?? [];
   const filteredPods = podFilter ? pods.filter(p => p.name.includes(podFilter)) : pods;
@@ -157,6 +195,15 @@ export default function Logs() {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-[#bc8cff]/20 text-[#bc8cff] hover:bg-[#bc8cff]/30 transition-colors disabled:opacity-40 border border-[#bc8cff]/30">
             <Bot size={11} /> {analyzing ? 'Analyzing…' : 'AI Analyze'}
           </button>
+          {/* BLY-72: NL search toggle */}
+          <button
+            onClick={() => { setNlMode(m => !m); setSearch(''); }}
+            title="Natural language search"
+            className={clsx('flex items-center gap-1 px-2.5 py-1.5 rounded text-xs border transition-colors',
+              nlMode ? 'bg-[#d29922]/20 text-[#d29922] border-[#d29922]/30' : 'bg-[#21262d] text-[#8b949e] hover:text-[#e6edf3] border-[#30363d]'
+            )}>
+            <Sparkles size={10} /> NL
+          </button>
 
           {lines.length > 0 && <>
             <button onClick={downloadLogs}
@@ -203,6 +250,45 @@ export default function Logs() {
 
         {/* Log output + AI panel */}
         <div className="flex-1 min-w-0 flex flex-col gap-3">
+          {/* BLY-72: NL search hint */}
+          {nlMode && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#d29922]/30 bg-[#d29922]/5 text-xs text-[#d29922]">
+              <Sparkles size={11} />
+              <span className="flex-1">Natural language mode — type a question and press Enter to search.</span>
+              <span className="text-[10px] text-[#6e7681]">e.g. "show redis errors", "auth failures", "what caused the crash"</span>
+            </div>
+          )}
+
+          {/* BLY-72: Error clusters panel */}
+          {errorClusters.length > 0 && (
+            <div className="rounded-lg border border-[#f85149]/20 bg-[#f85149]/5 overflow-hidden">
+              <button
+                onClick={() => setShowClusters(v => !v)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#f85149] hover:bg-[#f85149]/10 transition-colors"
+              >
+                <Layers size={11} />
+                <span className="font-semibold">Error Clusters</span>
+                <span className="text-[10px] text-[#f85149]/70 font-mono">{errorClusters.length} patterns</span>
+                <span className="ml-auto">{showClusters ? <ChevronDown size={10} /> : <ChevronRight size={10} />}</span>
+              </button>
+              {showClusters && (
+                <div className="divide-y divide-[#f85149]/10">
+                  {errorClusters.map((c, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setSearch(c.pattern.slice(0, 40).trim()); setNlMode(false); }}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#f85149]/10 transition-colors group"
+                    >
+                      <span className="text-[11px] font-bold text-[#f85149] w-10 shrink-0 tabular-nums">{c.count}×</span>
+                      <span className="text-[11px] text-[#8b949e] font-mono truncate flex-1 group-hover:text-[#e6edf3]">{c.sample}</span>
+                      <span className="text-[9px] text-[#6e7681] shrink-0">Filter →</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* AI analysis panel */}
           {(analysis || analyzing) && (
             <Card glow={analysis?.severity === 'critical' ? 'red' : analysis?.severity === 'warning' ? undefined : 'blue'}>
