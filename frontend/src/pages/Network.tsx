@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Fragment } from 'react';
 import {
   Network as NetworkIcon, RefreshCw, Plus, Edit3, Trash2, ChevronDown, ChevronRight,
   Shield, Globe, Server, AlertTriangle, CheckCircle, Clock, X, Save, Copy, ExternalLink,
-  Activity, Boxes,
+  Activity, Boxes, Zap, Brain, TrendingUp,
 } from 'lucide-react';
 import clsx from 'clsx';
 import Card from '../components/Card';
@@ -10,7 +10,9 @@ import Badge from '../components/Badge';
 import {
   getNetworkHealth, getIngresses, createIngress, updateIngress, deleteIngress,
   getServices, createService, updateService, deleteService, getNetworkPolicies,
+  getAlbInfo, diagnoseRoute,
   type IngressInfo, type ServiceInfo, type NetworkPolicyInfo, type RouteHealth, type RouteHealthSummary,
+  type AlbInfo, type RouteDiagnosis,
 } from '../api';
 import { ForbiddenError } from '../api';
 
@@ -202,23 +204,70 @@ function DeleteModal({ name, kind, onConfirm, onClose }: DeleteModalProps) {
 }
 
 // ── Health Tab ────────────────────────────────────────────────────────────────
-function HealthTab({ namespace }: { namespace: string }) {
+const CONFIDENCE_COLOR = { high: 'text-[#3fb950]', medium: 'text-[#d29922]', low: 'text-[#f85149]' } as const;
+const SEVERITY_BG = {
+  critical: 'bg-[#f85149]/10 border-[#f85149]/20',
+  warning:  'bg-[#d29922]/10 border-[#d29922]/20',
+  info:     'bg-[#2dd4bf]/10 border-[#2dd4bf]/20',
+} as const;
+
+function HealthTab({ namespace, isAdmin }: { namespace: string; isAdmin: boolean }) {
   const [routes, setRoutes] = useState<RouteHealth[]>([]);
   const [summary, setSummary] = useState<RouteHealthSummary | null>(null);
+  const [albs, setAlbs] = useState<AlbInfo[]>([]);
+  const [ingresses, setIngresses] = useState<IngressInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [diagnoses, setDiagnoses] = useState<Record<string, RouteDiagnosis>>({});
+  const [diagnosing, setDiagnosing] = useState<Set<string>>(new Set());
+  const [editModal, setEditModal] = useState<IngressInfo | null>(null);
+  const [deleteModal, setDeleteModal] = useState<IngressInfo | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const r = await getNetworkHealth(namespace);
-      setRoutes(r.routes);
-      setSummary(r.summary);
+      const [healthRes, albRes, ingressRes] = await Promise.all([
+        getNetworkHealth(namespace),
+        getAlbInfo(namespace).catch(() => ({ albs: [] as AlbInfo[], namespace })),
+        getIngresses(namespace).catch(() => ({ ingresses: [] as IngressInfo[] })),
+      ]);
+      setRoutes(healthRes.routes);
+      setSummary(healthRes.summary);
+      setAlbs(albRes.albs);
+      setIngresses(ingressRes.ingresses);
     } catch (e: any) { setError(e?.message || String(e)); }
     finally { setLoading(false); }
   }, [namespace]);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleDiagnose = async (ingressName: string) => {
+    const key = `${namespace}/${ingressName}`;
+    setDiagnosing(prev => new Set(prev).add(key));
+    try {
+      const res = await diagnoseRoute(ingressName, namespace);
+      setDiagnoses(prev => ({ ...prev, [key]: res.diagnosis }));
+    } catch (e: any) {
+      setDiagnoses(prev => ({
+        ...prev,
+        [key]: { rootCause: e?.message || 'Diagnosis failed', confidence: 'low', breakpoint: 'unknown', severity: 'warning', suggestions: [] },
+      }));
+    } finally {
+      setDiagnosing(prev => { const s = new Set(prev); s.delete(key); return s; });
+    }
+  };
+
+  const handleEditSave = async (body: object) => {
+    if (!editModal) return;
+    await updateIngress(editModal.namespace, editModal.name, body);
+    await load();
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteModal) return;
+    await deleteIngress(deleteModal.namespace, deleteModal.name);
+    await load();
+  };
 
   return (
     <div className="space-y-4">
@@ -229,6 +278,67 @@ function HealthTab({ namespace }: { namespace: string }) {
         </button>
       </div>
 
+      {/* ALB Panel */}
+      {albs.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[10px] font-semibold text-[#6e7681] uppercase tracking-wider flex items-center gap-1.5">
+            <TrendingUp size={10} /> AWS Load Balancer — CloudWatch metrics (last 1h)
+          </p>
+          {albs.map(alb => (
+            <div key={alb.hostname} className="bg-[#161b22] border border-[#30363d] rounded-lg p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2 flex-wrap">
+                <div>
+                  <span className="font-mono text-xs text-[#2dd4bf] font-semibold">{alb.lbName}</span>
+                  <span className="text-[#6e7681] text-[10px] ml-2">{alb.region}</span>
+                </div>
+                <span className="font-mono text-[10px] text-[#6e7681] truncate max-w-xs">{alb.hostname}</span>
+              </div>
+              {alb.usedBy.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {alb.usedBy.map(h => (
+                    <span key={h} className="text-[10px] bg-[#21262d] text-[#8b949e] border border-[#30363d] rounded px-1.5 py-0.5 font-mono">{h}</span>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                <div className="bg-[#0d1117] rounded p-2">
+                  <p className="text-[10px] text-[#6e7681]">Requests</p>
+                  <p className="text-sm font-bold text-[#e6edf3]">{alb.requestCount != null ? alb.requestCount.toLocaleString() : '—'}</p>
+                </div>
+                <div className="bg-[#0d1117] rounded p-2">
+                  <p className="text-[10px] text-[#6e7681]">5xx Errors</p>
+                  <p className={clsx('text-sm font-bold', (alb.errors5xx ?? 0) > 0 ? 'text-[#f85149]' : 'text-[#e6edf3]')}>{alb.errors5xx ?? '—'}</p>
+                </div>
+                <div className="bg-[#0d1117] rounded p-2">
+                  <p className="text-[10px] text-[#6e7681]">4xx Errors</p>
+                  <p className={clsx('text-sm font-bold', (alb.errors4xx ?? 0) > 100 ? 'text-[#d29922]' : 'text-[#e6edf3]')}>{alb.errors4xx ?? '—'}</p>
+                </div>
+                <div className="bg-[#0d1117] rounded p-2">
+                  <p className="text-[10px] text-[#6e7681]">Avg Latency</p>
+                  <p className={clsx('text-sm font-bold', (alb.latencyMs ?? 0) > 1000 ? 'text-[#d29922]' : 'text-[#e6edf3]')}>
+                    {alb.latencyMs != null ? `${Math.round(alb.latencyMs)}ms` : '—'}
+                  </p>
+                </div>
+              </div>
+              {alb.errorRate5xx != null && (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-1.5 bg-[#21262d] rounded-full overflow-hidden">
+                    <div
+                      className={clsx('h-full rounded-full transition-all', alb.errorRate5xx > 5 ? 'bg-[#f85149]' : alb.errorRate5xx > 1 ? 'bg-[#d29922]' : 'bg-[#3fb950]')}
+                      style={{ width: `${Math.min(alb.errorRate5xx, 100)}%` }}
+                    />
+                  </div>
+                  <span className={clsx('text-[10px] font-mono shrink-0', alb.errorRate5xx > 5 ? 'text-[#f85149]' : alb.errorRate5xx > 1 ? 'text-[#d29922]' : 'text-[#3fb950]')}>
+                    {alb.errorRate5xx.toFixed(2)}% 5xx rate
+                  </span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Summary cards */}
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <SummaryCard label="Total Routes" value={summary.total} />
@@ -255,42 +365,147 @@ function HealthTab({ namespace }: { namespace: string }) {
                 <th className="px-3 py-2.5 text-left text-[#6e7681] font-medium">Backend Service</th>
                 <th className="px-3 py-2.5 text-left text-[#6e7681] font-medium">Endpoints</th>
                 <th className="px-3 py-2.5 text-left text-[#6e7681] font-medium">Issue</th>
+                <th className="px-3 py-2.5 text-left text-[#6e7681] font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {routes.map((r, i) => (
-                <tr key={i} className="border-b border-[#21262d] hover:bg-[#21262d]/40 transition-colors">
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <HealthDot health={r.health} />
-                      <span className={clsx('font-medium', HEALTH_TEXT[r.health])}>{r.health}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 font-mono text-[#79c0ff]">{r.ingressName}</td>
-                  <td className="px-3 py-2.5">
-                    <span className="text-[#e6edf3]">{r.host}</span>
-                    <span className="text-[#6e7681] mx-1">→</span>
-                    <span className="font-mono text-[#8b949e]">{r.path}</span>
-                  </td>
-                  <td className="px-3 py-2.5 font-mono">
-                    <span className="text-[#e6edf3]">{r.serviceName}</span>
-                    <span className="text-[#6e7681]">:{r.servicePort}</span>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    {r.endpointsTotal > 0 ? (
-                      <span className={clsx(r.endpointsReady === r.endpointsTotal ? 'text-[#3fb950]' : 'text-[#d29922]')}>
-                        {r.endpointsReady}/{r.endpointsTotal}
-                      </span>
-                    ) : (
-                      <span className="text-[#6e7681]">—</span>
+              {routes.map((r, i) => {
+                const diagKey = `${namespace}/${r.ingressName}`;
+                const diag = diagnoses[diagKey];
+                const isDiagnosing = diagnosing.has(diagKey);
+                const ingressObj = ingresses.find(ing => ing.name === r.ingressName);
+                return (
+                  <Fragment key={i}>
+                    <tr className="border-b border-[#21262d] hover:bg-[#21262d]/40 transition-colors">
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <HealthDot health={r.health} />
+                          <span className={clsx('font-medium', HEALTH_TEXT[r.health])}>{r.health}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono text-[#79c0ff]">{r.ingressName}</td>
+                      <td className="px-3 py-2.5">
+                        <span className="text-[#e6edf3]">{r.host}</span>
+                        <span className="text-[#6e7681] mx-1">→</span>
+                        <span className="font-mono text-[#8b949e]">{r.path}</span>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono">
+                        <span className="text-[#e6edf3]">{r.serviceName}</span>
+                        <span className="text-[#6e7681]">:{r.servicePort}</span>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {r.endpointsTotal > 0 ? (
+                          <span className={clsx(r.endpointsReady === r.endpointsTotal ? 'text-[#3fb950]' : 'text-[#d29922]')}>
+                            {r.endpointsReady}/{r.endpointsTotal}
+                          </span>
+                        ) : (
+                          <span className="text-[#6e7681]">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 text-[#8b949e] max-w-xs truncate">{r.issue || '—'}</td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-1">
+                          {(r.health === 'red' || r.health === 'yellow') && (
+                            <button
+                              onClick={() => handleDiagnose(r.ingressName)}
+                              disabled={isDiagnosing}
+                              title="AI Diagnose"
+                              className={clsx(
+                                'flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors disabled:opacity-50',
+                                diag
+                                  ? 'bg-[#2dd4bf]/10 border border-[#2dd4bf]/20 text-[#2dd4bf] hover:bg-[#2dd4bf]/20'
+                                  : 'bg-[#d29922]/10 border border-[#d29922]/20 text-[#d29922] hover:bg-[#d29922]/20',
+                              )}
+                            >
+                              <Zap size={10} className={isDiagnosing ? 'animate-pulse' : ''} />
+                              {isDiagnosing ? 'Analysing…' : diag ? 'Re-diagnose' : 'Diagnose'}
+                            </button>
+                          )}
+                          {isAdmin && ingressObj && (
+                            <>
+                              <button
+                                onClick={() => setEditModal(ingressObj)}
+                                title="Edit Ingress"
+                                className="p-1.5 text-[#6e7681] hover:text-[#2dd4bf] transition-colors rounded"
+                              >
+                                <Edit3 size={11} />
+                              </button>
+                              <button
+                                onClick={() => setDeleteModal(ingressObj)}
+                                title="Delete Ingress"
+                                className="p-1.5 text-[#6e7681] hover:text-[#f85149] transition-colors rounded"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {diag && (
+                      <tr className="border-b border-[#21262d] bg-[#0d1117]">
+                        <td colSpan={7} className="px-3 py-3">
+                          <div className={clsx('rounded-lg border p-3 space-y-2', SEVERITY_BG[diag.severity])}>
+                            <div className="flex items-start gap-2">
+                              <Brain size={14} className="text-[#2dd4bf] shrink-0 mt-0.5" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs font-semibold text-[#e6edf3]">{diag.rootCause}</span>
+                                  <span className={clsx('text-[10px] font-mono font-medium', CONFIDENCE_COLOR[diag.confidence])}>
+                                    {diag.confidence} confidence
+                                  </span>
+                                  {diag.breakpoint && diag.breakpoint !== 'unknown' && (
+                                    <span className="text-[10px] bg-[#21262d] text-[#8b949e] border border-[#30363d] rounded px-1.5 py-0.5 font-mono">
+                                      breakpoint: {diag.breakpoint}
+                                    </span>
+                                  )}
+                                </div>
+                                {diag.suggestions.length > 0 && (
+                                  <div className="mt-2 space-y-1.5">
+                                    {diag.suggestions.map((s, si) => (
+                                      <div key={si} className="flex items-start gap-2">
+                                        <span className="text-[10px] text-[#6e7681] shrink-0 font-mono mt-0.5">{s.rank}.</span>
+                                        <div className="min-w-0">
+                                          <p className="text-[11px] text-[#8b949e]">{s.action}</p>
+                                          {s.command && (
+                                            <code className="block mt-0.5 text-[10px] font-mono text-[#79c0ff] bg-[#161b22] border border-[#21262d] rounded px-2 py-0.5 break-all">
+                                              {s.command}
+                                            </code>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className="px-3 py-2.5 text-[#8b949e] max-w-xs truncate">{r.issue || '—'}</td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
+      )}
+
+      {editModal && (
+        <EditModal
+          title={`Edit Ingress — ${editModal.name}`}
+          initial={JSON.stringify(editModal.raw, null, 2)}
+          onSave={handleEditSave}
+          onClose={() => setEditModal(null)}
+        />
+      )}
+      {deleteModal && (
+        <DeleteModal
+          name={deleteModal.name}
+          kind="Ingress"
+          onConfirm={handleDeleteConfirm}
+          onClose={() => setDeleteModal(null)}
+        />
       )}
     </div>
   );
@@ -956,7 +1171,7 @@ export default function Network() {
 
       {/* Tab content */}
       <Card>
-        {tab === 'health'    && <HealthTab    namespace={ns} />}
+        {tab === 'health'    && <HealthTab    namespace={ns} isAdmin={isAdmin} />}
         {tab === 'ingresses' && <IngressesTab namespace={ns} isAdmin={isAdmin} />}
         {tab === 'services'  && <ServicesTab  namespace={ns} isAdmin={isAdmin} />}
         {tab === 'policies'  && <PoliciesTab  namespace={ns} />}
