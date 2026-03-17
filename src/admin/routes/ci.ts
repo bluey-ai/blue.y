@@ -356,6 +356,26 @@ router.get('/pipelines', async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message ?? String(e) }); }
 });
 
+// GET /api/ci/deployments?repo= — pipeline→environment map (Bitbucket only)
+router.get('/deployments', async (req: Request, res: Response) => {
+  const { repo } = req.query as Record<string, string>;
+  if (!repo) { res.status(400).json({ error: 'repo is required' }); return; }
+  const ci = await resolveCiConfig();
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+  if (ci.provider !== 'bitbucket') { res.json({ deployments: [] }); return; }
+  try {
+    const data = await bbApi(ci.email ?? '', ci.token,
+      `/repositories/${ci.workspace}/${repo}/deployments/?sort=-created_on&pagelen=100`);
+    const deployments = (data.values ?? [])
+      .map((d: any) => ({
+        pipelineId: (d.pipeline?.uuid ?? '') as string,
+        environment: (d.environment?.name ?? '') as string,
+      }))
+      .filter((d: { pipelineId: string; environment: string }) => d.pipelineId && d.environment);
+    res.json({ deployments });
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? String(e) }); }
+});
+
 // GET /api/ci/steps?repo=&pipelineId= — steps for a specific pipeline
 router.get('/steps', async (req: Request, res: Response) => {
   const { repo, pipelineId } = req.query as Record<string, string>;

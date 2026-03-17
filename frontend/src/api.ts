@@ -268,6 +268,8 @@ export const getCiPipelines = (repo: string, page = 1, status?: string) => {
   if (status && status !== 'all') p.set('status', status);
   return get<{ pipelines: CiPipeline[]; page: number; hasMore: boolean; provider: string; workspace: string }>(`/ci/pipelines?${p}`);
 };
+export const getCiDeployments = (repo: string) =>
+  get<{ deployments: Array<{ pipelineId: string; environment: string }> }>(`/ci/deployments?repo=${encodeURIComponent(repo)}`);
 export const getCiSteps = (repo: string, pipelineId: string) =>
   get<{ steps: PipelineStep[] }>(`/ci/steps?repo=${encodeURIComponent(repo)}&pipelineId=${encodeURIComponent(pipelineId)}`);
 export const triggerCiPipeline = (repo: string, branch: string) =>

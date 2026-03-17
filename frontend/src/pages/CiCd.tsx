@@ -8,7 +8,7 @@ import {
   GitCommit, User, GitPullRequest, CalendarClock, Terminal, Zap, type LucideIcon,
 } from 'lucide-react';
 import {
-  getCiRepos, getCiBranches, getCiPipelines, getCiSteps,
+  getCiRepos, getCiBranches, getCiPipelines, getCiSteps, getCiDeployments,
   triggerCiPipeline, stopCiPipeline, getStepLog, getMe,
 } from '../api';
 import type { CiRepo, CiPipeline, PipelineStep, MeResponse } from '../api';
@@ -104,9 +104,22 @@ function StepLogViewer({ repo, pipelineId, step, provider }: {
 
 // ── PipelineRow ───────────────────────────────────────────────────────────────
 
-function PipelineRow({ pipeline, repo, provider, canAct, onStop }: {
+function envBadge(name: string) {
+  const n = name.toLowerCase();
+  const cls = n.includes('prod') ? 'text-[#f85149] border-[#f85149]/30 bg-[#f85149]/10'
+    : n.includes('stag') ? 'text-[#d29922] border-[#d29922]/30 bg-[#d29922]/10'
+    : n.includes('dev') || n.includes('test') ? 'text-[#3fb950] border-[#3fb950]/30 bg-[#3fb950]/10'
+    : 'text-[#8b949e] border-[#30363d] bg-[#21262d]';
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${cls}`}>
+      {name}
+    </span>
+  );
+}
+
+function PipelineRow({ pipeline, repo, provider, canAct, onStop, environment }: {
   pipeline: CiPipeline; repo: string; provider: string;
-  canAct: boolean; onStop: (p: CiPipeline) => void;
+  canAct: boolean; onStop: (p: CiPipeline) => void; environment?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [steps, setSteps] = useState<PipelineStep[] | null>(null);
@@ -189,7 +202,8 @@ function PipelineRow({ pipeline, repo, provider, canAct, onStop }: {
             <span className="text-[10px] text-[#8b949e]">{fmtDuration(pipeline.durationSeconds)}</span>
             <span className="text-[10px] text-[#8b949e]" title={new Date(pipeline.createdAt).toLocaleString()}>{timeAgo(pipeline.createdAt)}</span>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {environment && envBadge(environment)}
             <span className="flex items-center gap-1 text-[10px] text-[#6e7681] bg-[#21262d] border border-[#30363d] px-1.5 py-0.5 rounded">
               <TIcon size={9} />
               {tLabel}
@@ -364,6 +378,7 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
   const [reposError, setReposError] = useState('');
   const [error, setError] = useState('');
   const [showTrigger, setShowTrigger] = useState(false);
+  const [envMap, setEnvMap] = useState<Record<string, string>>({});
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const canAct = me?.role === 'admin' || me?.role === 'superadmin';
@@ -388,6 +403,19 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
   useEffect(() => {
     if (!selectedRepo) return;
     getCiBranches(selectedRepo).then(r => setBranches(r.branches)).catch(() => setBranches([]));
+  }, [selectedRepo]);
+
+  // Load deployment→environment map (Bitbucket only; no-ops for GitHub)
+  useEffect(() => {
+    if (!selectedRepo) return;
+    setEnvMap({});
+    getCiDeployments(selectedRepo)
+      .then(r => {
+        const map: Record<string, string> = {};
+        r.deployments.forEach(d => { map[d.pipelineId] = d.environment; });
+        setEnvMap(map);
+      })
+      .catch(() => {});
   }, [selectedRepo]);
 
   // Load pipelines
@@ -608,6 +636,7 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
             provider={provider}
             canAct={canAct}
             onStop={handleStop}
+            environment={envMap[p.pipelineId]}
           />
         ))}
         {loading && pipelines.length === 0 && (
