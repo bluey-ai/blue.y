@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X, Info, Server, Tag, Database, Hammer, AlertTriangle } from 'lucide-react';
-import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment, getPodDetail, parsePodImage, triggerRebuild } from '../api';
-import type { DeploymentRevision, PodDetail, ParsedImage } from '../api';
+import { Layers, RefreshCw, RotateCcw, Minus, Plus, CheckCircle, XCircle, Loader, Clock, ChevronDown, ChevronRight, Terminal as TerminalIcon, ScrollText, History, X, Info, Server, Tag, Database, Hammer, AlertTriangle, ExternalLink } from 'lucide-react';
+import { getDeployments, restartDeployment, scaleDeployment, waitForApprovalDecision, getDeploymentPods, getDeploymentHistory, rollbackDeployment, getPodDetail, parsePodImage, triggerRebuild, getPipelineStatus, getStepLog } from '../api';
+import type { DeploymentRevision, PodDetail, ParsedImage, PipelineStatus, PipelineStep } from '../api';
 import type { DeploymentInfo, PodInfo } from '../types';
 import PodTerminal from '../components/PodTerminal';
 import PodLogsViewer from '../components/PodLogsViewer';
@@ -805,6 +805,160 @@ function ResourceBar({ label, used, limit, request, unit }: {
   );
 }
 
+// BLY-74: Live Build Monitor — polls pipeline status after Smart Rebuild is triggered.
+function BuildMonitor({ repo, branch, provider, workspace }: {
+  repo: string; branch: string; provider: string; workspace: string;
+}) {
+  const [status, setStatus] = useState<PipelineStatus | null>(null);
+  const [pollError, setPollError] = useState('');
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
+  const [stepLogs, setStepLogs] = useState<Record<string, string>>({});
+  const [loadingLog, setLoadingLog] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isTerminal = (s: PipelineStatus) =>
+    s.found && (s.status === 'passed' || s.status === 'failed' || s.status === 'stopped');
+
+  const poll = useCallback(async () => {
+    try {
+      const s = await getPipelineStatus(repo, branch, provider);
+      setStatus(s);
+      setPollError('');
+      if (isTerminal(s)) {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      }
+    } catch (e: any) {
+      setPollError(e.message ?? 'Failed to fetch status');
+    }
+  }, [repo, branch, provider]);
+
+  useEffect(() => {
+    // Wait 8s before first poll — pipeline takes a few seconds to appear in API
+    initRef.current = setTimeout(() => {
+      poll();
+      pollRef.current = setInterval(poll, 5000);
+    }, 8000);
+    return () => {
+      if (initRef.current) clearTimeout(initRef.current);
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [poll]);
+
+  const loadLog = async (step: PipelineStep) => {
+    if (expandedStep === step.id && stepLogs[step.id] !== undefined) {
+      setExpandedStep(null); return;
+    }
+    setExpandedStep(step.id);
+    if (stepLogs[step.id] !== undefined) return;
+    if (!status?.pipelineId) return;
+    setLoadingLog(step.id);
+    try {
+      const r = await getStepLog(repo, status.pipelineId, step.id, provider);
+      setStepLogs(prev => ({ ...prev, [step.id]: r.log }));
+    } catch (e: any) {
+      setStepLogs(prev => ({ ...prev, [step.id]: `Error: ${e.message ?? 'Failed to load log'}` }));
+    } finally { setLoadingLog(null); }
+  };
+
+  const COLOR: Record<string, string> = {
+    passed: '#3fb950', failed: '#f85149', running: '#d29922', stopped: '#8b949e', pending: '#6e7681',
+  };
+  const LABEL: Record<string, string> = {
+    passed: 'Passed', failed: 'Failed', running: 'Running…', stopped: 'Stopped', pending: 'Pending',
+  };
+  const fmtDur = (s: number) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+
+  const stepIcon = (s: string) => {
+    if (s === 'passed') return <CheckCircle size={11} className="text-[#3fb950] shrink-0" />;
+    if (s === 'failed')  return <XCircle size={11} className="text-[#f85149] shrink-0" />;
+    if (s === 'running') return <Loader size={11} className="animate-spin text-[#d29922] shrink-0" />;
+    if (s === 'stopped') return <XCircle size={11} className="text-[#8b949e] shrink-0" />;
+    return <Clock size={11} className="text-[#6e7681] shrink-0" />;
+  };
+
+  const elapsed = status?.createdAt
+    ? Math.round((Date.now() - new Date(status.createdAt).getTime()) / 1000)
+    : null;
+
+  return (
+    <div className="px-4 py-3 border-b border-[#21262d] bg-[#0d1117]">
+      {/* Header row */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <span className="text-[10px] font-semibold text-[#6e7681] uppercase tracking-wider">Live Build Monitor</span>
+        {!status && !pollError && (
+          <span className="flex items-center gap-1 text-[10px] text-[#6e7681]">
+            <Loader size={9} className="animate-spin" /> Waiting for pipeline…
+          </span>
+        )}
+        {status && !status.found && !pollError && (
+          <span className="flex items-center gap-1 text-[10px] text-[#6e7681]">
+            <Loader size={9} className="animate-spin" /> Pipeline starting…
+          </span>
+        )}
+        {status?.found && status.status && (
+          <>
+            <span className="text-[10px] font-mono font-semibold" style={{ color: COLOR[status.status] ?? '#8b949e' }}>
+              #{status.buildNumber} — {LABEL[status.status] ?? status.status}
+            </span>
+            {elapsed !== null && !isTerminal(status) && (
+              <span className="text-[10px] text-[#6e7681]">{fmtDur(elapsed)}</span>
+            )}
+            {status.url && (
+              <a
+                href={status.url} target="_blank" rel="noopener noreferrer"
+                className="ml-auto flex items-center gap-1 text-[10px] text-[#58a6ff] hover:underline shrink-0"
+              >
+                Open in {provider === 'github' ? 'GitHub' : 'Bitbucket'} <ExternalLink size={9} />
+              </a>
+            )}
+          </>
+        )}
+        {pollError && <span className="text-[10px] text-[#f85149]">{pollError}</span>}
+      </div>
+
+      {/* Step list */}
+      {status?.found && status.steps && status.steps.length > 0 && (
+        <div className="space-y-0.5">
+          {status.steps.map(step => (
+            <div key={step.id}>
+              <button
+                onClick={() => loadLog(step)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#161b22] transition-colors text-left group"
+              >
+                {stepIcon(step.status)}
+                <span className="flex-1 text-[11px] text-[#e6edf3] truncate">{step.name}</span>
+                {step.durationSeconds !== null && (
+                  <span className="text-[10px] text-[#6e7681] font-mono shrink-0">{fmtDur(step.durationSeconds)}</span>
+                )}
+                {loadingLog === step.id
+                  ? <Loader size={9} className="animate-spin text-[#6e7681] shrink-0" />
+                  : expandedStep === step.id
+                    ? <ChevronDown size={10} className="text-[#6e7681] shrink-0" />
+                    : <ChevronRight size={10} className="text-[#6e7681] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                }
+              </button>
+              {expandedStep === step.id && stepLogs[step.id] !== undefined && (
+                <pre className="mt-1 mx-2 p-2 bg-[#010409] border border-[#21262d] rounded text-[9px] font-mono text-[#8b949e] overflow-x-auto max-h-52 overflow-y-auto whitespace-pre-wrap break-all leading-relaxed">
+                  {stepLogs[step.id] || '(no log output yet)'}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Provider/branch attribution */}
+      <div className="mt-2 text-[9px] text-[#6e7681] font-mono">
+        {provider === 'github' ? 'GitHub Actions' : 'Bitbucket Pipelines'} · {workspace}/{repo}@{branch}
+        {!status?.found && (
+          <span className="ml-2 text-[#58a6ff]">polling every 5s</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; namespace: string; onClose: () => void }) {
   const { pod, containers, node } = detail;
   const qosColor = pod.qosClass === 'Guaranteed' ? '#3fb950' : pod.qosClass === 'Burstable' ? '#d29922' : '#8b949e';
@@ -815,11 +969,12 @@ function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; nam
     c.reason === 'ImagePullBackOff' || c.reason === 'ErrImagePull' || c.state === 'waiting' && (c.reason ?? '').toLowerCase().includes('image')
   );
 
-  // Rebuild state
+  // Rebuild state (BLY-70 / BLY-74)
   const [rebuildModal, setRebuildModal] = useState<{ parsed: ParsedImage; branchOverride: string } | null>(null);
   const [loadingParse, setLoadingParse]   = useState(false);
   const [rebuildPhase, setRebuildPhase]   = useState<'idle' | 'building' | 'done' | 'error'>('idle');
   const [rebuildMsg, setRebuildMsg]       = useState('');
+  const [buildInfo, setBuildInfo] = useState<{ repo: string; branch: string; provider: string; workspace: string } | null>(null);
 
   const openRebuild = async () => {
     setLoadingParse(true);
@@ -839,14 +994,16 @@ function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; nam
     setRebuildModal(null);
     setRebuildPhase('building');
     setRebuildMsg(`Pushing empty commit to trigger ${providerLabel}…`);
+    setBuildInfo(null);
     try {
-      await triggerRebuild({
+      const result = await triggerRebuild({
         repo: parsed.repo,
         branch: branchOverride || (parsed.branch ?? ''),
         ...(parsed.ciProvider ? { provider: parsed.ciProvider } : {}),
       });
       setRebuildPhase('done');
-      setRebuildMsg(`${providerLabel} triggered on ${parsed.repo}@${branchOverride || parsed.branch}. Build takes ~8-12 min.`);
+      setRebuildMsg(`${providerLabel} triggered on ${result.repo}@${result.branch}. Build takes ~8-12 min.`);
+      setBuildInfo({ repo: result.repo, branch: result.branch, provider: result.provider, workspace: result.workspace });
     } catch (e: any) {
       setRebuildPhase('error');
       setRebuildMsg(e.message ?? 'Rebuild failed');
@@ -908,11 +1065,13 @@ function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; nam
           )}
         </div>
       )}
-      {(rebuildPhase === 'done' || rebuildPhase === 'error') && rebuildMsg && (
+      {rebuildPhase === 'done' && buildInfo ? (
+        <BuildMonitor {...buildInfo} />
+      ) : (rebuildPhase === 'done' || rebuildPhase === 'error') && rebuildMsg ? (
         <div className={clsx('px-4 py-2 text-[10px] border-b', rebuildPhase === 'done' ? 'text-[#3fb950] border-[#3fb950]/20 bg-[#3fb950]/5' : 'text-[#f85149] border-[#f85149]/20 bg-[#f85149]/5')}>
           {rebuildMsg}
         </div>
-      )}
+      ) : null}
 
       {/* Rebuild confirmation modal */}
       {rebuildModal && (

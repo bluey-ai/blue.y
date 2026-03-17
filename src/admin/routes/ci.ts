@@ -227,4 +227,179 @@ router.post('/rebuild', async (req: Request, res: Response) => {
   }
 });
 
+// ── BLY-74: Live Build Monitor ────────────────────────────────────────────────
+
+async function bbApi(token: string, path: string): Promise<any> {
+  const res = await fetch(`https://api.bitbucket.org/2.0${path}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  if (!res.ok) {
+    const text = await (res as any).text().catch(() => '');
+    throw new Error(`Bitbucket API ${res.status}: ${String(text).slice(0, 200)}`);
+  }
+  return (res as any).json();
+}
+
+async function ghApi(token: string, path: string, followRedirect = false): Promise<any> {
+  const res = await fetch(`https://api.github.com${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: followRedirect ? 'application/vnd.github+json' : 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+    redirect: followRedirect ? 'follow' : 'manual',
+  } as any);
+  if (!followRedirect && res.status === 302) return { redirectUrl: res.headers.get('location') };
+  if (!res.ok) {
+    const text = await (res as any).text().catch(() => '');
+    throw new Error(`GitHub API ${res.status}: ${String(text).slice(0, 200)}`);
+  }
+  return (res as any).json();
+}
+
+function mapBbState(state: any): string {
+  const s = state?.name?.toLowerCase() ?? '';
+  const r = state?.result?.name?.toLowerCase() ?? '';
+  if (s === 'completed') {
+    if (r === 'successful') return 'passed';
+    if (r === 'stopped') return 'stopped';
+    return 'failed';
+  }
+  if (s === 'in_progress') return 'running';
+  return 'pending';
+}
+
+function mapGhStatus(status: string, conclusion: string | null): string {
+  if (status === 'completed') {
+    if (conclusion === 'success') return 'passed';
+    if (conclusion === 'cancelled') return 'stopped';
+    return 'failed';
+  }
+  if (status === 'in_progress') return 'running';
+  return 'pending';
+}
+
+// GET /api/ci/pipeline?repo=&branch=&provider=
+// Returns latest pipeline status + steps for the Live Build Monitor.
+router.get('/pipeline', async (req: Request, res: Response) => {
+  const { repo, branch, provider: preferredProvider } = req.query as Record<string, string>;
+  if (!repo || !branch) { res.status(400).json({ error: 'repo and branch are required' }); return; }
+
+  const ci = await resolveCiConfig(preferredProvider);
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+
+  try {
+    if (ci.provider === 'bitbucket') {
+      const data = await bbApi(ci.token,
+        `/repositories/${ci.workspace}/${repo}/pipelines/?sort=-created_on&pagelen=1&target.branch=${encodeURIComponent(branch)}`);
+      const pipeline = data.values?.[0];
+      if (!pipeline) { res.json({ found: false }); return; }
+
+      const uuid = pipeline.uuid as string;
+      const stepsData = await bbApi(ci.token,
+        `/repositories/${ci.workspace}/${repo}/pipelines/${encodeURIComponent(uuid)}/steps/`);
+
+      const steps = (stepsData.values ?? []).map((s: any) => ({
+        id: s.uuid as string,
+        name: (s.name ?? s.type ?? 'Step') as string,
+        status: mapBbState(s.state),
+        durationSeconds: (s.duration_in_seconds ?? null) as number | null,
+        startedAt: (s.started_on ?? null) as string | null,
+      }));
+
+      res.json({
+        found: true,
+        pipelineId: uuid,
+        provider: 'bitbucket',
+        buildNumber: pipeline.build_number as number,
+        status: mapBbState(pipeline.state),
+        branch: (pipeline.target?.ref_name ?? branch) as string,
+        repo,
+        createdAt: pipeline.created_on as string,
+        completedAt: (pipeline.completed_on ?? null) as string | null,
+        url: `https://bitbucket.org/${ci.workspace}/${repo}/pipelines/${pipeline.build_number as number}`,
+        steps,
+      });
+    } else {
+      // GitHub Actions
+      const runsData = await ghApi(ci.token,
+        `/repos/${ci.workspace}/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&per_page=1`);
+      const run = runsData.workflow_runs?.[0];
+      if (!run) { res.json({ found: false }); return; }
+
+      const jobsData = await ghApi(ci.token, `/repos/${ci.workspace}/${repo}/actions/runs/${run.id as number}/jobs`);
+      const steps = (jobsData.jobs ?? []).map((j: any) => {
+        const dur = j.started_at && j.completed_at
+          ? Math.round((new Date(j.completed_at as string).getTime() - new Date(j.started_at as string).getTime()) / 1000)
+          : null;
+        return {
+          id: String(j.id as number),
+          name: j.name as string,
+          status: mapGhStatus(j.status as string, j.conclusion as string | null),
+          durationSeconds: dur,
+          startedAt: (j.started_at ?? null) as string | null,
+        };
+      });
+
+      res.json({
+        found: true,
+        pipelineId: String(run.id as number),
+        provider: 'github',
+        buildNumber: run.run_number as number,
+        status: mapGhStatus(run.status as string, run.conclusion as string | null),
+        branch: run.head_branch as string,
+        repo,
+        createdAt: run.created_at as string,
+        completedAt: (run.updated_at ?? null) as string | null,
+        url: run.html_url as string,
+        steps,
+      });
+    }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? String(e) });
+  }
+});
+
+// GET /api/ci/step-log?repo=&pipelineId=&stepId=&provider=
+// Returns last 300 lines of a step/job log.
+router.get('/step-log', async (req: Request, res: Response) => {
+  const { repo, pipelineId, stepId, provider: preferredProvider } = req.query as Record<string, string>;
+  if (!repo || !pipelineId || !stepId) {
+    res.status(400).json({ error: 'repo, pipelineId, and stepId are required' }); return;
+  }
+  const ci = await resolveCiConfig(preferredProvider);
+  if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
+
+  try {
+    let text: string;
+    if (ci.provider === 'bitbucket') {
+      const logRes = await fetch(
+        `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${repo}/pipelines/${encodeURIComponent(pipelineId)}/steps/${encodeURIComponent(stepId)}/log`,
+        { headers: { Authorization: `Bearer ${ci.token}`, Accept: 'text/plain' } },
+      );
+      if (!logRes.ok) { res.status(logRes.status).json({ error: `Log unavailable (${logRes.status})` }); return; }
+      text = await (logRes as any).text();
+    } else {
+      // GitHub: GET /actions/jobs/{job_id}/logs → 302 redirect to signed URL
+      const logRes = await fetch(
+        `https://api.github.com/repos/${ci.workspace}/${repo}/actions/jobs/${encodeURIComponent(stepId)}/logs`,
+        {
+          headers: {
+            Authorization: `Bearer ${ci.token}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+          redirect: 'follow',
+        } as any,
+      );
+      if (!logRes.ok) { res.status(logRes.status).json({ error: `Log unavailable (${logRes.status})` }); return; }
+      text = await (logRes as any).text();
+    }
+    const lines = text.split('\n');
+    res.json({ log: lines.slice(-300).join('\n'), total: lines.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? String(e) });
+  }
+});
+
 export default router;
