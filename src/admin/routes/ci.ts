@@ -509,10 +509,11 @@ function mapBbState(state: any): string {
   const r = state?.result?.name?.toLowerCase() ?? '';
   if (s === 'completed') {
     if (r === 'successful') return 'passed';
-    if (r === 'stopped') return 'stopped';
+    if (r === 'stopped' || r === 'halted') return 'stopped';
     return 'failed';
   }
   if (s === 'in_progress') return 'running';
+  if (s === 'halted' || s === 'paused') return 'stopped';
   return 'pending';
 }
 
