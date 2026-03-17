@@ -24,6 +24,8 @@ export default function Logs() {
   const [search, setSearch] = useState('');
   const [nlMode, setNlMode] = useState(false);
   const [nlLoading, setNlLoading] = useState(false);
+  const [nlQuery, setNlQuery] = useState('');
+  const [nlKeywords, setNlKeywords] = useState<string[]>([]);
   const [showClusters, setShowClusters] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
   const esRef = useRef<EventSource | null>(null);
@@ -107,11 +109,12 @@ export default function Logs() {
   const clearLogs = () => { setLines([]); setAnalysis(null); };
 
   const handleNlSearch = async () => {
-    if (!search.trim()) return;
+    if (!nlQuery.trim()) return;
     setNlLoading(true);
+    setNlKeywords([]);
     try {
-      const r = await nlSearchLogs(search);
-      // Replace the search field with comma-joined keywords so LogLine highlights work
+      const r = await nlSearchLogs(nlQuery);
+      setNlKeywords(r.keywords);
       setSearch(r.keywords.join(' '));
     } catch { /* keep as-is */ }
     finally { setNlLoading(false); }
@@ -197,7 +200,7 @@ export default function Logs() {
           </button>
           {/* BLY-72: NL search toggle */}
           <button
-            onClick={() => { setNlMode(m => !m); setSearch(''); }}
+            onClick={() => { setNlMode(m => !m); setSearch(''); setNlQuery(''); setNlKeywords([]); }}
             title="Natural language search"
             className={clsx('flex items-center gap-1 px-2.5 py-1.5 rounded text-xs border transition-colors',
               nlMode ? 'bg-[#d29922]/20 text-[#d29922] border-[#d29922]/30' : 'bg-[#21262d] text-[#8b949e] hover:text-[#e6edf3] border-[#30363d]'
@@ -250,12 +253,52 @@ export default function Logs() {
 
         {/* Log output + AI panel */}
         <div className="flex-1 min-w-0 flex flex-col gap-3">
-          {/* BLY-72: NL search hint */}
+          {/* BLY-72: NL search input panel */}
           {nlMode && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#d29922]/30 bg-[#d29922]/5 text-xs text-[#d29922]">
-              <Sparkles size={11} />
-              <span className="flex-1">Natural language mode — type a question and press Enter to search.</span>
-              <span className="text-[10px] text-[#6e7681]">e.g. "show redis errors", "auth failures", "what caused the crash"</span>
+            <div className="rounded-lg border border-[#d29922]/30 bg-[#d29922]/5 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <Sparkles size={13} className="text-[#d29922] shrink-0" />
+                <span className="text-xs font-semibold text-[#d29922]">Natural Language Search</span>
+                <span className="text-[10px] text-[#6e7681] ml-auto">AI translates your question into log filter keywords</span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={nlQuery}
+                  onChange={e => setNlQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleNlSearch()}
+                  placeholder='e.g. "show redis errors", "auth failures", "what caused the crash"'
+                  autoFocus
+                  className="flex-1 bg-[#0d1117] border border-[#d29922]/40 focus:border-[#d29922] rounded px-3 py-2 text-sm text-[#e6edf3] placeholder:text-[#6e7681] outline-none transition-colors font-mono"
+                />
+                <button
+                  onClick={handleNlSearch}
+                  disabled={!nlQuery.trim() || nlLoading}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded text-xs bg-[#d29922]/20 text-[#d29922] hover:bg-[#d29922]/30 disabled:opacity-40 transition-colors border border-[#d29922]/30 font-semibold whitespace-nowrap"
+                >
+                  {nlLoading ? (
+                    <><span className="w-3 h-3 rounded-full border-2 border-[#d29922]/40 border-t-[#d29922] animate-spin" />Thinking…</>
+                  ) : (
+                    <><Sparkles size={11} />Search</>
+                  )}
+                </button>
+              </div>
+              {nlKeywords.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-[#6e7681]">Filtering by:</span>
+                  {nlKeywords.map(kw => (
+                    <span key={kw} className="inline-flex items-center gap-1 px-2 py-px rounded text-[10px] font-mono bg-[#d29922]/15 text-[#d29922] border border-[#d29922]/25">
+                      {kw}
+                    </span>
+                  ))}
+                  <button
+                    onClick={() => { setSearch(''); setNlKeywords([]); setNlQuery(''); }}
+                    className="text-[10px] text-[#6e7681] hover:text-[#f85149] transition-colors ml-1"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
