@@ -115,7 +115,6 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
   },
   bitbucket: {
     steps: [
-      '⚠ App passwords were deprecated on Sep 9, 2025 — use API tokens instead (disabled June 9, 2026).',
       '1. Go to id.atlassian.com → Manage profile → Security → API tokens (or click the link below)',
       '2. Click "Create API token with scope" — give it a name (e.g. "BLUE.Y Dashboard") and set an expiry',
       '3. On the Select scopes page, search "repository" → tick write:repository:bitbucket (includes read)',
