@@ -110,6 +110,24 @@ const INTEGRATIONS = [
       { key: 'sso.google.client_secret', label: 'Client Secret', type: 'password' },
     ],
   },
+  {
+    id: 'bitbucket',
+    label: 'Bitbucket',
+    icon: 'bitbucket',
+    fields: [
+      { key: 'ci.bitbucket.token',     label: 'API Token (repository:write)',  type: 'password' },
+      { key: 'ci.bitbucket.workspace', label: 'Workspace slug',                type: 'text'     },
+    ],
+  },
+  {
+    id: 'github',
+    label: 'GitHub',
+    icon: 'github',
+    fields: [
+      { key: 'ci.github.token', label: 'Personal Access Token (repo scope)', type: 'password' },
+      { key: 'ci.github.org',   label: 'Organisation / User',                type: 'text'     },
+    ],
+  },
 ];
 
 // GET /api/integrations — returns integration status with masked secrets for non-superadmin
@@ -321,6 +339,38 @@ async function testIntegration(id: string, cfg: Record<string, string>): Promise
     const r = await fetch('https://accounts.google.com/.well-known/openid-configuration', fetchOpts);
     if (r.ok) return { ok: true, status: 'connected', message: 'Google credentials saved — SSO ready' };
     return { ok: false, status: 'failed', message: 'Could not reach Google OIDC discovery endpoint' };
+  }
+
+  if (id === 'bitbucket') {
+    const token     = cfg['ci.bitbucket.token'];
+    const workspace = cfg['ci.bitbucket.workspace'];
+    if (!token) return { ok: false, status: 'not_configured', message: 'API Token not set' };
+    const r = await fetch('https://api.bitbucket.org/2.0/user', {
+      ...fetchOpts,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (r.ok) {
+      const json = await r.json() as { display_name?: string; username?: string };
+      const who = json.display_name ?? json.username ?? '–';
+      return { ok: true, status: 'connected', message: `Authenticated as ${who}${workspace ? ` — workspace: ${workspace}` : ''}` };
+    }
+    return { ok: false, status: 'failed', message: `HTTP ${r.status} — check token (needs repository:write scope)` };
+  }
+
+  if (id === 'github') {
+    const token = cfg['ci.github.token'];
+    const org   = cfg['ci.github.org'];
+    if (!token) return { ok: false, status: 'not_configured', message: 'Personal Access Token not set' };
+    const r = await fetch('https://api.github.com/user', {
+      ...fetchOpts,
+      headers: { Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'BLUE.Y' },
+    });
+    if (r.ok) {
+      const json = await r.json() as { login?: string; name?: string };
+      const who = json.name ?? json.login ?? '–';
+      return { ok: true, status: 'connected', message: `Authenticated as ${who}${org ? ` — org: ${org}` : ''}` };
+    }
+    return { ok: false, status: 'failed', message: `HTTP ${r.status} — check token (needs repo scope)` };
   }
 
   return { ok: false, status: 'failed', message: 'Unknown integration' };

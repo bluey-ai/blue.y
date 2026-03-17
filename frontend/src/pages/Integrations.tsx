@@ -16,11 +16,14 @@ const PLATFORM_COLOR: Record<string, string> = {
   email:          'text-[#ff9900] bg-[#ff9900]/10 border-[#ff9900]/20',
   'microsoft-sso': 'text-[#00a4ef] bg-[#00a4ef]/10 border-[#00a4ef]/20',
   'google-sso':    'text-[#ea4335] bg-[#ea4335]/10 border-[#ea4335]/20',
+  bitbucket:      'text-[#0052cc] bg-[#0052cc]/10 border-[#0052cc]/20',
+  github:         'text-[#e6edf3] bg-[#30363d] border-[#484f58]',
 };
 
 const PLATFORM_LABEL: Record<string, string> = {
   telegram: 'TG', slack: 'SL', microsoft: 'MS', whatsapp: 'WA', email: 'SES',
   'microsoft-sso': 'MS', 'google-sso': 'G',
+  bitbucket: 'BB', github: 'GH',
 };
 
 const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; url: string }[] }> = {
@@ -108,6 +111,35 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
     links: [
       { label: 'Google Cloud Console', url: 'https://console.cloud.google.com/apis/credentials' },
       { label: 'Google OAuth Docs', url: 'https://developers.google.com/identity/openid-connect/openid-connect' },
+    ],
+  },
+  bitbucket: {
+    steps: [
+      '1. Go to Bitbucket → Your profile avatar (bottom-left) → Personal settings → App passwords',
+      '2. Click "Create app password" — give it a label (e.g. "BLUE.Y Dashboard")',
+      '3. Under Permissions → Repositories → tick Read and Write → Create',
+      '4. Copy the generated password immediately (shown only once) → paste as API Token above',
+      '5. Set Workspace slug to your Bitbucket workspace URL slug (e.g. "blue-onion")',
+      '6. Once saved, the Smart Rebuild button on pod detail panels will push an empty commit to trigger your pipeline',
+    ],
+    links: [
+      { label: 'Bitbucket App Passwords', url: 'https://bitbucket.org/account/settings/app-passwords/' },
+      { label: 'Bitbucket Pipelines Docs', url: 'https://support.atlassian.com/bitbucket-cloud/docs/get-started-with-bitbucket-pipelines/' },
+    ],
+  },
+  github: {
+    steps: [
+      '1. Go to GitHub → Settings (top-right avatar) → Developer settings → Personal access tokens → Tokens (classic)',
+      '2. Click "Generate new token (classic)" — give it a Note (e.g. "BLUE.Y Dashboard")',
+      '3. Set an expiration → under Select scopes, tick "repo" (full control of private repositories)',
+      '4. Click Generate token → copy immediately (shown only once) → paste as Personal Access Token above',
+      '5. Set Organisation / User to your GitHub org slug or username (e.g. "bluey-ai")',
+      '6. Once saved, the Smart Rebuild button will push an empty commit to trigger your GitHub Actions workflow',
+      'ℹ Fine-grained tokens also work: grant Contents: Read and write on the target repositories',
+    ],
+    links: [
+      { label: 'GitHub Token Settings', url: 'https://github.com/settings/tokens' },
+      { label: 'GitHub Actions Docs', url: 'https://docs.github.com/en/actions/using-workflows/triggering-a-workflow' },
     ],
   },
 };
@@ -353,6 +385,17 @@ export default function Integrations() {
             <p className="text-xs text-[#8b949e] mb-3">Configure identity providers so invited users can sign in. Changes take effect immediately — no restart needed.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {integrations.filter(i => i.id.endsWith('-sso')).map(intg => renderCard(intg))}
+            </div>
+          </div>
+          {/* CI/CD integrations */}
+          <div>
+            <h2 className="text-xs font-semibold text-[#6e7681] uppercase tracking-wider mb-3">CI/CD Providers</h2>
+            <p className="text-xs text-[#8b949e] mb-3">
+              Connect a CI provider so the <strong className="text-[#e6edf3]">Smart Rebuild</strong> button can trigger a fresh image build directly from a pod's detail panel.
+              Configure Bitbucket or GitHub (or both — Bitbucket takes priority). Jenkins support coming soon.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {integrations.filter(i => i.id === 'bitbucket' || i.id === 'github').map(intg => renderCard(intg))}
             </div>
           </div>
         </>

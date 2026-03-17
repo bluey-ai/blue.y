@@ -200,11 +200,13 @@ export const testEmailTemplate  = (id: string, to: string, fields: Record<string
 export interface ParsedImage {
   image: string; repo: string; tagPrefix: string;
   branch: string | null; environment: string;
+  ciProvider: 'bitbucket' | 'github' | null;
+  ciWorkspace: string | null;
 }
 export const parsePodImage = (namespace: string, podName: string) =>
   get<ParsedImage>(`/ci/parse-image?namespace=${encodeURIComponent(namespace)}&podName=${encodeURIComponent(podName)}`);
-export const triggerRebuild = (body: { namespace?: string; podName?: string; repo?: string; branch?: string }) =>
-  post<{ ok: boolean; repo: string; branch: string; workspace: string }>('/ci/rebuild', body);
+export const triggerRebuild = (body: { namespace?: string; podName?: string; repo?: string; branch?: string; provider?: string }) =>
+  post<{ ok: boolean; repo: string; branch: string; workspace: string; provider: string }>('/ci/rebuild', body);
 
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {

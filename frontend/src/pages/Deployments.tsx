@@ -835,13 +835,18 @@ function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; nam
   const doRebuild = async () => {
     if (!rebuildModal) return;
     const { parsed, branchOverride } = rebuildModal;
+    const providerLabel = parsed.ciProvider === 'github' ? 'GitHub Actions' : 'Bitbucket pipeline';
     setRebuildModal(null);
     setRebuildPhase('building');
-    setRebuildMsg('Pushing empty commit to trigger Bitbucket pipeline…');
+    setRebuildMsg(`Pushing empty commit to trigger ${providerLabel}…`);
     try {
-      await triggerRebuild({ repo: parsed.repo, branch: branchOverride || (parsed.branch ?? '') });
+      await triggerRebuild({
+        repo: parsed.repo,
+        branch: branchOverride || (parsed.branch ?? ''),
+        ...(parsed.ciProvider ? { provider: parsed.ciProvider } : {}),
+      });
       setRebuildPhase('done');
-      setRebuildMsg(`Pipeline triggered on ${parsed.repo}@${branchOverride || parsed.branch}. Build takes ~8-12 min.`);
+      setRebuildMsg(`${providerLabel} triggered on ${parsed.repo}@${branchOverride || parsed.branch}. Build takes ~8-12 min.`);
     } catch (e: any) {
       setRebuildPhase('error');
       setRebuildMsg(e.message ?? 'Rebuild failed');
@@ -922,9 +927,29 @@ function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; nam
             </div>
             <div className="p-5 space-y-4">
               <p className="text-xs text-[#8b949e]">
-                An empty commit will be pushed to trigger a Bitbucket pipeline build. The pod will recover automatically once the new image is pushed to ECR (~8-12 min).
+                An empty commit will be pushed to trigger a{' '}
+                <strong className="text-[#e6edf3]">
+                  {rebuildModal.parsed.ciProvider === 'github' ? 'GitHub Actions' : 'Bitbucket pipeline'}
+                </strong>{' '}
+                build. The pod will recover automatically once the new image is pushed to ECR (~8-12 min).
+                {!rebuildModal.parsed.ciProvider && (
+                  <span className="block mt-1 text-[#f85149]">⚠ No CI provider configured — go to Integrations → CI/CD Providers first.</span>
+                )}
               </p>
               <div className="bg-[#0d1117] rounded-lg p-3 space-y-2 text-[11px] font-mono">
+                <div className="flex gap-2">
+                  <span className="text-[#6e7681] w-20 shrink-0">Provider</span>
+                  {rebuildModal.parsed.ciProvider ? (
+                    <span className={clsx('px-1.5 py-0.5 rounded text-[10px] font-semibold',
+                      rebuildModal.parsed.ciProvider === 'github' ? 'bg-[#30363d] text-[#e6edf3]' : 'bg-[#0052cc]/15 text-[#58a6ff]'
+                    )}>
+                      {rebuildModal.parsed.ciProvider === 'github' ? 'GitHub' : 'Bitbucket'}
+                      {rebuildModal.parsed.ciWorkspace && ` / ${rebuildModal.parsed.ciWorkspace}`}
+                    </span>
+                  ) : (
+                    <span className="text-[#f85149] text-[10px]">not configured</span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <span className="text-[#6e7681] w-20 shrink-0">Repo</span>
                   <span className="text-[#e6edf3]">{rebuildModal.parsed.repo}</span>
@@ -950,7 +975,7 @@ function PodDetailPanel({ detail, namespace, onClose }: { detail: PodDetail; nam
                 </button>
                 <button
                   onClick={doRebuild}
-                  disabled={!rebuildModal.branchOverride.trim()}
+                  disabled={!rebuildModal.branchOverride.trim() || !rebuildModal.parsed.ciProvider}
                   className="px-4 py-2 rounded text-xs font-semibold bg-[#bc8cff] text-[#0d1117] hover:bg-[#bc8cff]/90 transition-colors disabled:opacity-40"
                 >
                   Confirm Rebuild
