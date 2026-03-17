@@ -370,6 +370,24 @@ export const deleteService = (namespace: string, name: string) =>
 export const getNetworkPolicies = (namespace = 'prod') =>
   get<{ policies: NetworkPolicyInfo[]; namespace: string }>(`/network/policies?namespace=${encodeURIComponent(namespace)}`);
 
+export interface AlbInfo {
+  hostname: string; lbName: string; region: string; usedBy: string[];
+  requestCount: number | null; errors5xx: number | null; errors4xx: number | null;
+  latencyMs: number | null; errorRate5xx: number | null;
+}
+export const getAlbInfo = (namespace = 'prod') =>
+  get<{ albs: AlbInfo[]; namespace: string }>(`/network/alb?namespace=${encodeURIComponent(namespace)}`);
+
+export interface RouteDiagnosis {
+  rootCause: string; confidence: 'high' | 'medium' | 'low';
+  breakpoint: string; severity: 'critical' | 'warning' | 'info';
+  suggestions: Array<{ rank: number; action: string; command?: string }>;
+}
+export const diagnoseRoute = (ingressName: string, namespace: string) =>
+  post<{ ok: boolean; diagnosis: RouteDiagnosis; ingressName: string; namespace: string }>(
+    '/network/ai/diagnose-route', { ingressName, namespace },
+  );
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });
