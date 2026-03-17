@@ -26,6 +26,7 @@ import emailTemplatesRoutes from './routes/email-templates';
 import licenseRoutes from './routes/license';
 import ciRoutes from './routes/ci';
 import recipientsRoutes from './routes/recipients';
+import aiRoutes from './routes/ai';
 import { ipEnforcementMiddleware } from './middleware/ipEnforcement';
 import { KubeClient } from '../clients/kube';
 import { config } from '../config';
@@ -347,6 +348,7 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
   router.use('/api/license',      requireSession, requireRole('viewer'), licenseRoutes);
   router.use('/api/ci',           requireSession, requireRole('superadmin'), ciRoutes); // BLY-70
   router.use('/api/recipients',   requireSession, requireRole('admin'),      recipientsRoutes); // BLY-73
+  router.use('/api/ai',           requireSession, requireRole('viewer'),     aiRoutes);         // BLY-76 (PUT enforced inside route)
 
   // API: current session info + build version
   router.get('/api/me', requireSession, (req: Request, res: Response) => {

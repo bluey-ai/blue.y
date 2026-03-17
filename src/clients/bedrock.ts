@@ -1,7 +1,50 @@
 import axios from 'axios';
+import * as k8s from '@kubernetes/client-node';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { sanitizeForAI } from '../utils/sanitize';
+
+// ── ConfigMap hot-reload (BLY-76) ─────────────────────────────────────────────
+// Checks blue-y-config ConfigMap for ai.* keys every 60s.
+// Falls back to process.env / config.ai if not configured in ConfigMap.
+
+interface AiRuntimeConfig {
+  baseUrl: string; apiKey: string;
+  routineModel: string; incidentModel: string; maxTokens: number;
+}
+
+let _cmAiCache: AiRuntimeConfig | null = null;
+let _cmAiFetchedAt = 0;
+const CM_TTL_MS = 60_000;
+
+async function loadAiFromCm(): Promise<AiRuntimeConfig | null> {
+  if (!process.env.KUBE_IN_CLUSTER) return null;
+  try {
+    const kc = new k8s.KubeConfig();
+    kc.loadFromDefault();
+    const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+    const namespace = process.env.POD_NAMESPACE ?? config.kube.namespaces[0] ?? 'prod';
+    const cm = await coreApi.readNamespacedConfigMap({ name: 'blue-y-config', namespace });
+    const d = cm.data ?? {};
+    if (!d['ai.api_key'] && !d['ai.base_url']) return null; // not configured in CM yet
+    return {
+      baseUrl:       d['ai.base_url']       || config.ai.baseUrl,
+      apiKey:        d['ai.api_key']        || config.ai.apiKey,
+      routineModel:  d['ai.routine_model']  || config.ai.routineModel,
+      incidentModel: d['ai.incident_model'] || config.ai.incidentModel,
+      maxTokens:     config.ai.maxTokens,
+    };
+  } catch { return null; }
+}
+
+async function getAiConfig(): Promise<AiRuntimeConfig> {
+  const now = Date.now();
+  if (_cmAiCache && now - _cmAiFetchedAt < CM_TTL_MS) return _cmAiCache;
+  const cm = await loadAiFromCm();
+  _cmAiFetchedAt = now;
+  _cmAiCache = cm;
+  return cm ?? { ...config.ai };
+}
 
 interface AnalysisRequest {
   type: 'pod_issue' | 'node_issue' | 'cert_issue' | 'user_command' | 'incident' | 'user_report' | 'db_query' | 'jira_query' | 'security_threat';
@@ -81,50 +124,45 @@ const SYSTEM_PROMPT = `${SYSTEM_PROMPT_CORE}
 ${CLUSTER_CONTEXT}`;
 
 export class BedrockClient {
-  private apiKey: string;
-  private baseUrl: string;
-
-  constructor() {
-    this.apiKey = config.ai.apiKey;
-    this.baseUrl = config.ai.baseUrl;
-  }
-
   /**
    * Send a raw prompt and return the text response (for scanner, etc.)
    */
   async analyzeRaw(prompt: string): Promise<string> {
+    const ai = await getAiConfig();
     const response = await axios.post(
-      `${this.baseUrl}/chat/completions`,
+      `${ai.baseUrl}/chat/completions`,
       {
-        model: config.ai.routineModel,
+        model: ai.routineModel,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 1500,
         temperature: 0.1,
       },
-      { headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' }, timeout: 60000 },
+      { headers: { Authorization: `Bearer ${ai.apiKey}`, 'Content-Type': 'application/json' }, timeout: 60000 },
     );
     return response.data.choices?.[0]?.message?.content || '';
   }
 
   async analyze(request: AnalysisRequest): Promise<AnalysisResponse> {
+    const ai = await getAiConfig();
+
     // Use reasoning model for incidents/commands/security, fast model for routine checks
     const model = request.type === 'incident' || request.type === 'user_command' || request.type === 'security_threat'
-      ? config.ai.incidentModel
-      : config.ai.routineModel;
+      ? ai.incidentModel
+      : ai.routineModel;
 
     logger.info(`AI request: type=${request.type}, model=${model}`);
 
     // R1 (reasoner) needs longer timeout — it thinks before answering
-    const timeout = model === config.ai.incidentModel ? 90000 : 45000;
+    const timeout = model === ai.incidentModel ? 90000 : 45000;
     const maxRetries = 2;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const response = await axios.post(
-          `${this.baseUrl}/chat/completions`,
+          `${ai.baseUrl}/chat/completions`,
           {
             model,
-            max_tokens: config.ai.maxTokens,
+            max_tokens: ai.maxTokens,
             messages: [
               { role: 'system', content: SYSTEM_PROMPT },
               { role: 'user', content: this.buildPrompt(request) },
@@ -132,7 +170,7 @@ export class BedrockClient {
           },
           {
             headers: {
-              'Authorization': `Bearer ${this.apiKey}`,
+              'Authorization': `Bearer ${ai.apiKey}`,
               'Content-Type': 'application/json',
             },
             timeout,
@@ -173,10 +211,10 @@ export class BedrockClient {
           logger.info(`Retrying AI request with fast model after timeout...`);
           // Fall back to fast model on timeout retry
           const retryResponse = await axios.post(
-            `${this.baseUrl}/chat/completions`,
+            `${ai.baseUrl}/chat/completions`,
             {
-              model: config.ai.routineModel, // Use fast model for retry
-              max_tokens: config.ai.maxTokens,
+              model: ai.routineModel, // Use fast model for retry
+              max_tokens: ai.maxTokens,
               messages: [
                 { role: 'system', content: SYSTEM_PROMPT },
                 { role: 'user', content: this.buildPrompt(request) },
@@ -184,7 +222,7 @@ export class BedrockClient {
             },
             {
               headers: {
-                'Authorization': `Bearer ${this.apiKey}`,
+                'Authorization': `Bearer ${ai.apiKey}`,
                 'Content-Type': 'application/json',
               },
               timeout: 45000,

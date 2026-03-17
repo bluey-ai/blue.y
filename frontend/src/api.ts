@@ -277,6 +277,17 @@ export const triggerCiPipeline = (repo: string, branch: string) =>
 export const stopCiPipeline = (repo: string, pipelineId: string) =>
   post<{ ok: boolean }>('/ci/stop', { repo, pipelineId });
 
+// AI Provider (BLY-76)
+export interface AiProvider {
+  id: string; label: string; description: string; baseUrl: string;
+  requiresKey: boolean; suggestedModels: { routine: string[]; incident: string[] };
+}
+export const getAiProviders = () => get<{ providers: AiProvider[] }>('/ai/providers');
+export const getAiConfig = () => get<{ config: Record<string, string>; hasKey: boolean; source: string }>('/ai/config');
+export const saveAiConfig = (fields: Record<string, string>) => put<{ ok: boolean }>('/ai/config', fields);
+export const testAiConnection = (payload: { baseUrl?: string; apiKey?: string; model?: string }) =>
+  post<{ ok: boolean; latency?: number; reply?: string; model?: string; error?: string }>('/ai/test', payload);
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });
