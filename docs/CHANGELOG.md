@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.10.0] — 2026-03-17 — Alert Notification Templates + Recipient Directory (BLY-73)
+**Branch:** `main` | **Jira:** BLY-73
+
+### Added
+- **Alert Recipients** — new sidebar page with a universal contact directory for alert emails.
+  - Add/edit/remove contacts with Name, Email, Type (Internal / Client), and Tags.
+  - Stored as JSON in `blue-y-config` ConfigMap under key `alert.recipients`.
+  - Type badges: Internal (blue) = staff/engineers, Client (green) = external contacts (PwC, ICBC, etc.).
+  - Filter view by type; inline row editing.
+  - Backend: `GET/POST/PATCH/DELETE /api/recipients` — accessible to admin+ roles.
+- **Email Template: Service Alert — Triggered** (`alert-triggered`)
+  - Triggered when a pod enters CrashLoopBackOff / ImagePullBackOff, or health checks fail N times.
+  - Editable subject, from name, body text, footer. Variables: `{{monitor_name}}`, `{{fail_count}}`, `{{alert_description}}`, `{{triggered_at}}`.
+  - Test Send button sends a sample alert to any address.
+- **Email Template: Service Alert — Resolved** (`alert-resolved`)
+  - Triggered when pod recovers or health checks pass consecutively.
+  - Same editable fields. Variables: `{{monitor_name}}`, `{{pass_count}}`, `{{resolved_at}}`.
+  - Test Send with green-theme resolved email.
+- `EmailClient.buildAlertHtml()` — produces clean branded HTML email matching triggered/resolved style
+  with monitor name, description, condition checklist (✅/❌), and configurable body/footer.
+
+---
+
 ## [1.9.0] — 2026-03-17 — Smart Rebuild + CI/CD Provider Integration (BLY-70)
 **Branch:** `main` | **Commits:** `b5b3ced`, `4cab12f`
 

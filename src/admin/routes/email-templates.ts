@@ -36,6 +36,41 @@ interface TemplateDef {
 }
 
 const TEMPLATE_DEFS: Record<string, TemplateDef> = {
+  'alert-triggered': {
+    id: 'alert-triggered',
+    label: 'Service Alert — Triggered',
+    description: 'Sent to alert recipients when a service or pod fails health checks consecutively or enters a crash state (CrashLoopBackOff, ImagePullBackOff).',
+    trigger: 'Pod enters crash state OR health check fails N times in a row',
+    fields: [
+      { key: 'email.template.alert-triggered.subject',   label: 'Subject',       type: 'text',     default: '[{{monitor_name}}] Alert triggered', hint: 'Supports {{monitor_name}}.' },
+      { key: 'email.template.alert-triggered.from_name', label: 'From Name',     type: 'text',     default: 'BLUE.Y Alerts', hint: 'Sender display name.' },
+      { key: 'email.template.alert-triggered.body_text', label: 'Body Text',     type: 'textarea', default: 'An alert for {{monitor_name}} has been triggered due to having failed {{fail_count}} time(s) in a row.', hint: 'Main paragraph. Supports all variables.' },
+      { key: 'email.template.alert-triggered.footer_msg',label: 'Footer Message',type: 'textarea', default: '', hint: 'Optional footer line. Leave blank to omit.' },
+    ],
+    variables: [
+      { name: '{{monitor_name}}',     desc: 'Service or monitor name (e.g. "Core Services/BlueConnect")' },
+      { name: '{{fail_count}}',       desc: 'Number of consecutive failures' },
+      { name: '{{alert_description}}',desc: 'Alert description (e.g. "Health check failed")' },
+      { name: '{{triggered_at}}',     desc: 'Timestamp when alert was triggered' },
+    ],
+  },
+  'alert-resolved': {
+    id: 'alert-resolved',
+    label: 'Service Alert — Resolved',
+    description: 'Sent when a service recovers after an alert state — pod returns to Running or health checks pass consecutively.',
+    trigger: 'Pod returns to Running / health checks pass consecutively after alert',
+    fields: [
+      { key: 'email.template.alert-resolved.subject',   label: 'Subject',       type: 'text',     default: '[{{monitor_name}}] Alert resolved', hint: 'Supports {{monitor_name}}.' },
+      { key: 'email.template.alert-resolved.from_name', label: 'From Name',     type: 'text',     default: 'BLUE.Y Alerts' },
+      { key: 'email.template.alert-resolved.body_text', label: 'Body Text',     type: 'textarea', default: 'An alert for {{monitor_name}} has been resolved after passing successfully {{pass_count}} time(s) in a row.' },
+      { key: 'email.template.alert-resolved.footer_msg',label: 'Footer Message',type: 'textarea', default: '' },
+    ],
+    variables: [
+      { name: '{{monitor_name}}', desc: 'Service or monitor name' },
+      { name: '{{pass_count}}',   desc: 'Number of consecutive successful checks before resolve' },
+      { name: '{{resolved_at}}',  desc: 'Timestamp when alert was resolved' },
+    ],
+  },
   invite: {
     id: 'invite',
     label: 'User Invitation',
@@ -206,6 +241,49 @@ router.post('/:id/test', async (req: Request, res: Response) => {
     const merged: Record<string, string> = {};
     for (const f of def.fields) {
       merged[f.key] = (typeof fields?.[f.key] === 'string' ? fields[f.key] : cfg[f.key]) ?? f.default;
+    }
+
+    if (def.id === 'alert-triggered' || def.id === 'alert-resolved') {
+      const isTriggered = def.id === 'alert-triggered';
+      const orgName     = cfg['email.org_name'] || 'BLUE.Y';
+      const fromName    = (isTriggered ? merged['email.template.alert-triggered.from_name'] : merged['email.template.alert-resolved.from_name']) || 'BLUE.Y Alerts';
+      const rawSubject  = (isTriggered ? merged['email.template.alert-triggered.subject'] : merged['email.template.alert-resolved.subject'])
+        || def.fields.find(f => f.key.endsWith('.subject'))!.default;
+      const rawBodyText = (isTriggered ? merged['email.template.alert-triggered.body_text'] : merged['email.template.alert-resolved.body_text'])
+        || def.fields.find(f => f.key.endsWith('.body_text'))!.default;
+      const footerMsg   = (isTriggered ? merged['email.template.alert-triggered.footer_msg'] : merged['email.template.alert-resolved.footer_msg']) || '';
+
+      const sampleMonitor = 'Core Services/BlueConnect';
+      const subject = rawSubject.replace(/\{\{monitor_name\}\}/g, sampleMonitor) + ' [TEST]';
+      const bodyText = rawBodyText
+        .replace(/\{\{monitor_name\}\}/g, sampleMonitor)
+        .replace(/\{\{fail_count\}\}/g, '3')
+        .replace(/\{\{pass_count\}\}/g, '2')
+        .replace(/\{\{triggered_at\}\}/g, new Date().toISOString())
+        .replace(/\{\{resolved_at\}\}/g, new Date().toISOString());
+
+      const sampleConditions = isTriggered
+        ? [{ label: '[STATUS] (503) < 500', passed: false }, { label: '[RESPONSE_TIME] < 10000', passed: true }]
+        : [{ label: '[STATUS] < 500', passed: true }, { label: '[RESPONSE_TIME] < 10000', passed: true }];
+
+      const html = emailClient.buildAlertHtml({
+        type: isTriggered ? 'triggered' : 'resolved',
+        monitorName: sampleMonitor,
+        bodyText,
+        alertDescription: isTriggered ? 'Health check failed' : undefined,
+        count: isTriggered ? 3 : 2,
+        conditions: sampleConditions,
+        footerMsg,
+        timestamp: new Date().toLocaleString('en-GB', { timeZone: 'Asia/Singapore' }) + ' SGT',
+        orgName,
+      });
+      const sent = await emailClient.send(to, fromName, subject, html);
+      if (sent) {
+        res.json({ ok: true, message: `Test alert email sent to ${to}` });
+      } else {
+        res.status(500).json({ ok: false, message: 'Email delivery failed — check SES/SMTP config.' });
+      }
+      return;
     }
 
     if (def.id === 'invite') {

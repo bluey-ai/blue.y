@@ -9,8 +9,9 @@ import Logs from './pages/Logs';
 import Deployments from './pages/Deployments';
 import Integrations from './pages/Integrations';
 import EmailTemplates from './pages/EmailTemplates';
+import AlertRecipients from './pages/AlertRecipients';
 
-export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'users' | 'integrations' | 'config' | 'email-templates';
+export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'users' | 'integrations' | 'config' | 'email-templates' | 'alert-recipients';
 
 export default function App() {
   const [page, setPage] = useState<Page>('overview');
@@ -24,7 +25,8 @@ export default function App() {
     users:             <Users />,
     integrations:      <Integrations />,
     config:            <Config />,
-    'email-templates': <EmailTemplates />,
+    'email-templates':   <EmailTemplates />,
+    'alert-recipients':  <AlertRecipients />,
   }[page];
 
   return (

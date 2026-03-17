@@ -196,6 +196,19 @@ export const resetEmailTemplate = (id: string) => del(`/email-templates/${encode
 export const testEmailTemplate  = (id: string, to: string, fields: Record<string, string>) =>
   post<{ ok: boolean; message?: string }>(`/email-templates/${encodeURIComponent(id)}/test`, { to, fields });
 
+// Alert Recipients (BLY-73)
+export interface AlertRecipient { id: string; name: string; email: string; type: 'internal' | 'client'; tags: string; }
+export const getRecipients = () => get<{ recipients: AlertRecipient[]; count: number }>('/recipients');
+export const addRecipient = (r: { name: string; email: string; type: string; tags: string }) => post<{ ok: boolean; recipient: AlertRecipient }>('/recipients', r);
+export const updateRecipient = (id: string, r: { name?: string; type?: string; tags?: string }) => {
+  return fetch(`${BASE}/recipients/${encodeURIComponent(id)}`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(r),
+  }).then(res => { if (!res.ok) throw new Error(res.statusText); return res.json(); });
+};
+export const deleteRecipient = (id: string) => del(`/recipients/${encodeURIComponent(id)}`);
+
 // CI / Smart Rebuild (BLY-70)
 export interface ParsedImage {
   image: string; repo: string; tagPrefix: string;

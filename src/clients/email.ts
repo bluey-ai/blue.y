@@ -167,6 +167,77 @@ export class EmailClient {
 </body></html>`;
   }
 
+  // Build service alert HTML — triggered or resolved (BLY-73)
+  buildAlertHtml(vars: {
+    type: 'triggered' | 'resolved';
+    monitorName: string;
+    bodyText: string;
+    alertDescription?: string;
+    count: number;       // fail_count (triggered) or pass_count (resolved)
+    conditions: { label: string; value?: string; passed: boolean }[];
+    footerMsg: string;
+    timestamp: string;
+    orgName: string;
+  }): string {
+    const isTriggered = vars.type === 'triggered';
+    const accentColor = isTriggered ? '#f85149' : '#3fb950';
+    const accentBg    = isTriggered ? '#ffeef0' : '#e6ffed';
+    const accentBorder = isTriggered ? '#ffc1c0' : '#a2cfb5';
+    const statusLabel  = isTriggered ? 'ALERT TRIGGERED' : 'ALERT RESOLVED';
+    const countLabel   = isTriggered
+      ? `Failed ${vars.count} time(s) in a row`
+      : `Passed successfully ${vars.count} time(s) in a row`;
+    const conditionsHtml = vars.conditions.length > 0
+      ? vars.conditions.map(c => {
+          const icon = c.passed ? '✅' : '❌';
+          const detail = c.value ? ` (${escHtml(c.value)})` : '';
+          return `<tr><td style="padding:5px 0;font-size:14px;">${icon} <strong>${escHtml(c.label)}</strong>${detail}</td></tr>`;
+        }).join('')
+      : '';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>BLUE.Y Alert</title></head>
+<body style="margin:0;padding:0;background:#f6f8fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f6f8fa;padding:40px 20px;">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #d0d7de;max-width:560px;">
+  <tr>
+    <td style="background:#0d1117;padding:24px 40px;text-align:center;">
+      <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:${accentColor};">${statusLabel}</p>
+      <p style="margin:6px 0 0;font-size:20px;font-weight:700;color:#e6edf3;">${escHtml(vars.monitorName)}</p>
+      <p style="margin:4px 0 0;font-size:12px;color:#8b949e;">${escHtml(vars.timestamp)}</p>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:28px 40px 20px;">
+      <p style="margin:0 0 16px;color:#24292f;font-size:15px;line-height:1.6;">${escHtml(vars.bodyText)}</p>
+      ${vars.alertDescription ? `
+      <div style="margin:0 0 20px;padding:12px 16px;background:${accentBg};border:1px solid ${accentBorder};border-radius:8px;">
+        <p style="margin:0;font-size:13px;color:#24292f;"><strong>Alert description:</strong> ${escHtml(vars.alertDescription)}</p>
+        <p style="margin:4px 0 0;font-size:12px;color:#57606a;">${escHtml(countLabel)}</p>
+      </div>` : ''}
+      ${conditionsHtml ? `
+      <div style="margin:0 0 20px;">
+        <p style="margin:0 0 8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#57606a;">Condition results:</p>
+        <table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;">${conditionsHtml}</table>
+      </div>` : ''}
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:16px 40px 20px;background:#f6f8fa;border-top:1px solid #e1e4e8;">
+      <p style="margin:0;font-size:12px;color:#8b949e;line-height:1.6;">
+        ${vars.footerMsg ? escHtml(vars.footerMsg) + '<br>' : ''}
+        Powered by <strong>BLUE.Y</strong> &middot; ${escHtml(vars.orgName)}
+      </p>
+    </td>
+  </tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
+  }
+
   async sendIncidentReport(to: string[], subject: string, body: string): Promise<boolean> {
     try {
       if (useSmtp && this.smtpTransport) {
