@@ -312,7 +312,7 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
     if (!repo) return;
     setLoading(true); setError('');
     try {
-      const r = await getCiPipelines(repo, pg, filter === 'all' ? undefined : filter);
+      const r = await getCiPipelines(repo, pg, undefined);
       setProvider(r.provider); setWorkspace(r.workspace);
       setPipelines(prev => append ? [...prev, ...r.pipelines] : r.pipelines);
       setHasMore(r.hasMore);
@@ -401,6 +401,10 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
       </div>
     );
   }
+
+  const displayPipelines = statusFilter === 'all'
+    ? pipelines
+    : pipelines.filter(p => p.status === statusFilter);
 
   const STATUS_TABS: { id: StatusFilter; label: string }[] = [
     { id: 'all', label: 'All' },
@@ -491,10 +495,10 @@ export default function CiCd({ onNavigate }: { onNavigate?: (p: Page) => void })
 
       {/* Pipeline list */}
       <div className="space-y-2">
-        {!loading && pipelines.length === 0 && !error && selectedRepo && (
+        {!loading && displayPipelines.length === 0 && !error && selectedRepo && (
           <div className="text-center py-12 text-sm text-[#8b949e]">No pipelines found</div>
         )}
-        {pipelines.map(p => (
+        {displayPipelines.map(p => (
           <PipelineRow
             key={p.pipelineId}
             pipeline={p}

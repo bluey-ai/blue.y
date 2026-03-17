@@ -317,11 +317,7 @@ router.get('/pipelines', async (req: Request, res: Response) => {
   if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
   try {
     if (ci.provider === 'bitbucket') {
-      let url = `/repositories/${ci.workspace}/${repo}/pipelines/?sort=-created_on&pagelen=20&page=${page}`;
-      if (status && status !== 'all') {
-        const stateMap: Record<string, string> = { running: 'IN_PROGRESS', pending: 'PENDING', passed: 'COMPLETED', failed: 'COMPLETED', stopped: 'COMPLETED' };
-        if (stateMap[status]) url += `&status=${stateMap[status]}`;
-      }
+      const url = `/repositories/${ci.workspace}/${repo}/pipelines/?sort=-created_on&pagelen=20&page=${page}`;
       const data = await bbApi(ci.email ?? '', ci.token, url);
       const pipelines = (data.values ?? []).map((p: any) => ({
         pipelineId: p.uuid as string,
@@ -623,7 +619,7 @@ router.get('/step-log', async (req: Request, res: Response) => {
     if (ci.provider === 'bitbucket') {
       const logRes = await fetch(
         `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${repo}/pipelines/${encodeURIComponent(pipelineId)}/steps/${encodeURIComponent(stepId)}/log`,
-        { headers: { Authorization: `Bearer ${ci.token}`, Accept: 'text/plain' } },
+        { headers: { Authorization: bbBasicAuth(ci.email ?? '', ci.token), Accept: 'text/plain' } },
       );
       if (!logRes.ok) { res.status(logRes.status).json({ error: `Log unavailable (${logRes.status})` }); return; }
       text = await (logRes as any).text();
