@@ -115,8 +115,9 @@ const INTEGRATIONS = [
     label: 'Bitbucket',
     icon: 'bitbucket',
     fields: [
-      { key: 'ci.bitbucket.token',     label: 'API Token',  type: 'password' },
-      { key: 'ci.bitbucket.workspace', label: 'Workspace slug',                type: 'text'     },
+      { key: 'ci.bitbucket.email',     label: 'Atlassian Email',  type: 'text'     },
+      { key: 'ci.bitbucket.token',     label: 'API Token',        type: 'password' },
+      { key: 'ci.bitbucket.workspace', label: 'Workspace slug',   type: 'text'     },
     ],
   },
   {
@@ -342,23 +343,26 @@ async function testIntegration(id: string, cfg: Record<string, string>): Promise
   }
 
   if (id === 'bitbucket') {
+    const email     = cfg['ci.bitbucket.email'];
     const token     = cfg['ci.bitbucket.token'];
     const workspace = cfg['ci.bitbucket.workspace'];
+    if (!email) return { ok: false, status: 'not_configured', message: 'Atlassian Email not set' };
     if (!token) return { ok: false, status: 'not_configured', message: 'API Token not set' };
-    // Test with read:repository:bitbucket scope (doesn't need account scope unlike /user)
+    // Bitbucket uses Basic auth: email:token (not Bearer — that returns 401)
+    const credentials = Buffer.from(`${email}:${token}`).toString('base64');
     const testUrl = workspace
       ? `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}?pagelen=1`
       : 'https://api.bitbucket.org/2.0/repositories?role=member&pagelen=1';
     const r = await fetch(testUrl, {
       ...fetchOpts,
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Basic ${credentials}` },
     });
     if (r.ok) {
       const json = await r.json() as { values?: { full_name?: string }[] };
       const count = json.values?.length ?? 0;
-      return { ok: true, status: 'connected', message: `Connected${workspace ? ` — workspace: ${workspace}` : ''} (${count} repo${count !== 1 ? 's' : ''} visible)` };
+      return { ok: true, status: 'connected', message: `Connected — workspace: ${workspace ?? '(all)'} (${count} repo${count !== 1 ? 's' : ''} visible)` };
     }
-    return { ok: false, status: 'failed', message: `HTTP ${r.status} — check token has all 3 scopes: read:repository:bitbucket, write:pipeline:bitbucket, read:pipeline:bitbucket` };
+    return { ok: false, status: 'failed', message: `HTTP ${r.status} — verify email and token scopes: read:repository:bitbucket, write:pipeline:bitbucket, read:pipeline:bitbucket` };
   }
 
   if (id === 'github') {

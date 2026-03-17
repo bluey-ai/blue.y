@@ -115,12 +115,13 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
   },
   bitbucket: {
     steps: [
-      '1. Go to id.atlassian.com → Manage profile → Security → API tokens (or click the link below)',
-      '2. Click "Create API token with scope" — give it a name (e.g. "BLUE.Y Dashboard") and set an expiry',
-      '3. On the Select scopes page, add all 3 required scopes — search "repository" → tick read:repository:bitbucket, then search "pipeline" → tick write:pipeline:bitbucket and read:pipeline:bitbucket',
-      '4. Click Next → Create token — copy it immediately (shown only once) → paste as API Token above',
-      '5. Set Workspace slug to your Bitbucket workspace URL slug (e.g. "blue-onion")',
-      '6. Once saved, the CI/CD Pipelines page will list all repos, show live build status, and let you trigger or stop pipelines directly from the dashboard',
+      '1. Enter your Atlassian account email above (the one you use to log in to Bitbucket)',
+      '2. Go to id.atlassian.com → Manage profile → Security → API tokens (or click the link below)',
+      '3. Click "Create API token with scope" — give it a name (e.g. "BLUE.Y Dashboard") and set an expiry',
+      '4. On the Select scopes page, add all 3 required scopes — search "repository" → tick read:repository:bitbucket, then search "pipeline" → tick write:pipeline:bitbucket and read:pipeline:bitbucket',
+      '5. Click Next → Create token — copy it immediately (shown only once) → paste as API Token above',
+      '6. Set Workspace slug to your Bitbucket workspace URL slug (e.g. "blue-onion")',
+      '7. Click Save then Test — a successful connection confirms all 3 scopes are active',
     ],
     links: [
       { label: 'Bitbucket API Tokens', url: 'https://id.atlassian.com/manage-profile/security/api-tokens' },

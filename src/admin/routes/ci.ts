@@ -20,6 +20,7 @@ interface CiProviderConfig {
   provider: 'bitbucket' | 'github';
   token: string;
   workspace: string; // bitbucket workspace slug OR github org/user
+  email?: string;   // bitbucket: Atlassian account email for Basic auth (email:token)
 }
 
 /** Read CI provider config from ConfigMap, falling back to env vars. */
@@ -37,6 +38,7 @@ async function resolveCiConfig(preferredProvider?: string): Promise<CiProviderCo
 
   const bbToken     = data['ci.bitbucket.token']     || process.env.BB_TOKEN || '';
   const bbWorkspace = data['ci.bitbucket.workspace']  || FALLBACK_WORKSPACE;
+  const bbEmail     = data['ci.bitbucket.email']      || process.env.BB_EMAIL || '';
   const ghToken     = data['ci.github.token']         || '';
   const ghOrg       = data['ci.github.org']           || '';
 
@@ -44,10 +46,10 @@ async function resolveCiConfig(preferredProvider?: string): Promise<CiProviderCo
     return { provider: 'github', token: ghToken, workspace: ghOrg };
   }
   if (preferredProvider === 'bitbucket' && bbToken) {
-    return { provider: 'bitbucket', token: bbToken, workspace: bbWorkspace };
+    return { provider: 'bitbucket', token: bbToken, workspace: bbWorkspace, email: bbEmail };
   }
   // Auto-detect: Bitbucket first (existing deployments), then GitHub
-  if (bbToken) return { provider: 'bitbucket', token: bbToken, workspace: bbWorkspace };
+  if (bbToken) return { provider: 'bitbucket', token: bbToken, workspace: bbWorkspace, email: bbEmail };
   if (ghToken && ghOrg) return { provider: 'github', token: ghToken, workspace: ghOrg };
   return null;
 }
@@ -194,7 +196,7 @@ router.post('/rebuild', async (req: Request, res: Response) => {
         {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${ci.token}`,
+            Authorization: bbBasicAuth(ci.email ?? '', ci.token),
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
@@ -267,7 +269,7 @@ router.get('/repos', async (req: Request, res: Response) => {
   if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
   try {
     if (ci.provider === 'bitbucket') {
-      const data = await bbApi(ci.token,
+      const data = await bbApi(ci.email ?? '', ci.token,
         `/repositories/${ci.workspace}?role=member&pagelen=50&fields=values.slug,values.name,values.full_name,values.is_private,values.updated_on`);
       const repos = (data.values ?? []).map((r: any) => ({
         slug: r.slug as string, name: r.name as string,
@@ -296,7 +298,7 @@ router.get('/branches', async (req: Request, res: Response) => {
   try {
     let branches: string[];
     if (ci.provider === 'bitbucket') {
-      const data = await bbApi(ci.token,
+      const data = await bbApi(ci.email ?? '', ci.token,
         `/repositories/${ci.workspace}/${repo}/refs/branches?pagelen=50&fields=values.name&sort=-target.date`);
       branches = (data.values ?? []).map((b: any) => b.name as string);
     } else {
@@ -320,7 +322,7 @@ router.get('/pipelines', async (req: Request, res: Response) => {
         const stateMap: Record<string, string> = { running: 'IN_PROGRESS', pending: 'PENDING', passed: 'COMPLETED', failed: 'COMPLETED', stopped: 'COMPLETED' };
         if (stateMap[status]) url += `&status=${stateMap[status]}`;
       }
-      const data = await bbApi(ci.token, url);
+      const data = await bbApi(ci.email ?? '', ci.token, url);
       const pipelines = (data.values ?? []).map((p: any) => ({
         pipelineId: p.uuid as string,
         buildNumber: p.build_number as number,
@@ -360,7 +362,7 @@ router.get('/steps', async (req: Request, res: Response) => {
   if (!ci) { res.status(503).json({ error: 'No CI provider configured' }); return; }
   try {
     if (ci.provider === 'bitbucket') {
-      const data = await bbApi(ci.token,
+      const data = await bbApi(ci.email ?? '', ci.token,
         `/repositories/${ci.workspace}/${repo}/pipelines/${encodeURIComponent(pipelineId)}/steps/`);
       const steps = (data.values ?? []).map((s: any) => ({
         id: s.uuid as string,
@@ -405,7 +407,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
         `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${String(repo)}/pipelines/`,
         {
           method: 'POST',
-          headers: { Authorization: `Bearer ${ci.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+          headers: { Authorization: bbBasicAuth(ci.email ?? '', ci.token), 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({ target: { type: 'pipeline_ref_target', ref_type: 'branch', ref_name: String(branch), selector: { type: 'default' } } }),
         },
       );
@@ -448,7 +450,7 @@ router.post('/stop', async (req: Request, res: Response) => {
     if (ci.provider === 'bitbucket') {
       const stopRes = await fetch(
         `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${String(repo)}/pipelines/${encodeURIComponent(String(pipelineId))}/stopPipeline`,
-        { method: 'POST', headers: { Authorization: `Bearer ${ci.token}`, 'Content-Type': 'application/json' }, body: '{}' },
+        { method: 'POST', headers: { Authorization: bbBasicAuth(ci.email ?? '', ci.token), 'Content-Type': 'application/json' }, body: '{}' },
       );
       if (!stopRes.ok && stopRes.status !== 204) {
         const errText = await (stopRes as any).text().catch(() => '');
@@ -470,9 +472,13 @@ router.post('/stop', async (req: Request, res: Response) => {
 
 // ── BLY-74: Live Build Monitor ────────────────────────────────────────────────
 
-async function bbApi(token: string, path: string): Promise<any> {
+function bbBasicAuth(email: string, token: string): string {
+  return 'Basic ' + Buffer.from(`${email}:${token}`).toString('base64');
+}
+
+async function bbApi(email: string, token: string, path: string): Promise<any> {
   const res = await fetch(`https://api.bitbucket.org/2.0${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    headers: { Authorization: bbBasicAuth(email, token), Accept: 'application/json' },
   });
   if (!res.ok) {
     const text = await (res as any).text().catch(() => '');
@@ -531,13 +537,13 @@ router.get('/pipeline', async (req: Request, res: Response) => {
 
   try {
     if (ci.provider === 'bitbucket') {
-      const data = await bbApi(ci.token,
+      const data = await bbApi(ci.email ?? '', ci.token,
         `/repositories/${ci.workspace}/${repo}/pipelines/?sort=-created_on&pagelen=1&target.branch=${encodeURIComponent(branch)}`);
       const pipeline = data.values?.[0];
       if (!pipeline) { res.json({ found: false }); return; }
 
       const uuid = pipeline.uuid as string;
-      const stepsData = await bbApi(ci.token,
+      const stepsData = await bbApi(ci.email ?? '', ci.token,
         `/repositories/${ci.workspace}/${repo}/pipelines/${encodeURIComponent(uuid)}/steps/`);
 
       const steps = (stepsData.values ?? []).map((s: any) => ({
