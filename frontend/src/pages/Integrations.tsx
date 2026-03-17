@@ -377,7 +377,7 @@ export default function Integrations() {
           <div>
             <h2 className="text-xs font-semibold text-[#6e7681] uppercase tracking-wider mb-3">Messaging Platforms</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {integrations.filter(i => !i.id.endsWith('-sso')).map(intg => renderCard(intg))}
+              {integrations.filter(i => !i.id.endsWith('-sso') && i.id !== 'bitbucket' && i.id !== 'github').map(intg => renderCard(intg))}
             </div>
           </div>
           {/* SSO integrations */}
