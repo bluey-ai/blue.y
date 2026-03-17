@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.9.0] — 2026-03-17 — Smart Rebuild + CI/CD Provider Integration (BLY-70)
+**Branch:** `main` | **Commits:** `b5b3ced`, `4cab12f`
+
+### Added
+- **Smart Rebuild** — when a pod's container is in `ImagePullBackOff` or `ErrImagePull`,
+  a red banner appears in the Pod Detail panel with a "Rebuild Image" button.
+- Rebuild modal shows detected repo, branch (editable), environment badge, and active CI provider.
+- Backend `GET /api/ci/parse-image` — parses ECR image URL to repo + branch using tag format
+  `{PRODUCT}-{ENV}-{40-char-SHA}` → derives branch as `ENV-PRODUCT` (e.g. `production-fund-bloconnect`).
+- Backend `POST /api/ci/rebuild` — clones repo (depth 1), pushes an empty commit to trigger
+  the CI pipeline. Superadmin only. Accepts `{namespace, podName}` (auto-detect) or `{repo, branch}` (manual override).
+- **CI/CD Providers** — new section on the Integrations page with Bitbucket and GitHub cards.
+  - Tokens + workspace/org stored in `blue-y-config` ConfigMap alongside SSO credentials.
+  - `Test` button verifies token via Bitbucket `/2.0/user` or GitHub `/user` API.
+  - Step-by-step setup guides for both providers.
+- Supports **Bitbucket** (`x-token-auth` scheme) and **GitHub** (PAT). Auto-selects configured
+  provider (Bitbucket preferred); accepts optional `provider` override in rebuild request.
+- Falls back to `BB_TOKEN` env var for backward compatibility with existing deployments.
+- Rebuild modal disables Confirm and shows a warning if no CI provider is configured yet.
+- `Dockerfile`: added `apk add --no-cache git` to Alpine production stage (required for git push).
+- Jenkins support planned for a future release.
+
+---
+
 ## [1.8.0] — 2026-03-16 — Admin Backend — ChatOps magic-link auth (BLY-37)
 **Branch:** `feat/bly-37-admin-backend`
 
