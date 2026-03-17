@@ -221,6 +221,33 @@ export const parsePodImage = (namespace: string, podName: string) =>
 export const triggerRebuild = (body: { namespace?: string; podName?: string; repo?: string; branch?: string; provider?: string }) =>
   post<{ ok: boolean; repo: string; branch: string; workspace: string; provider: string }>('/ci/rebuild', body);
 
+// CI Pipeline Monitor (BLY-74)
+export interface PipelineStep {
+  id: string; name: string;
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'stopped';
+  durationSeconds: number | null; startedAt: string | null;
+}
+export interface PipelineStatus {
+  found: boolean;
+  pipelineId?: string;
+  provider?: 'bitbucket' | 'github';
+  buildNumber?: number;
+  status?: 'pending' | 'running' | 'passed' | 'failed' | 'stopped';
+  branch?: string; repo?: string;
+  createdAt?: string; completedAt?: string | null;
+  url?: string | null; steps?: PipelineStep[];
+}
+export const getPipelineStatus = (repo: string, branch: string, provider?: string) => {
+  const p = new URLSearchParams({ repo, branch });
+  if (provider) p.set('provider', provider);
+  return get<PipelineStatus>(`/ci/pipeline?${p}`);
+};
+export const getStepLog = (repo: string, pipelineId: string, stepId: string, provider?: string) => {
+  const p = new URLSearchParams({ repo, pipelineId, stepId });
+  if (provider) p.set('provider', provider);
+  return get<{ log: string; total: number }>(`/ci/step-log?${p}`);
+};
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });

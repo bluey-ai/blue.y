@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.11.0] — 2026-03-17 — Live Build Monitor (BLY-74)
+**Branch:** `feat/bly-74-live-build-monitor` | **Jira:** BLY-74
+
+### Added
+- **Live Build Monitor** — after Smart Rebuild triggers a pipeline, a live status panel replaces
+  the static "Pipeline queued" message inside the Pod Detail panel.
+  - Polls pipeline status every 5s (8s initial delay to allow pipeline to appear).
+  - Shows: build number, status badge (Pending / Running / Passed / Failed / Stopped), elapsed time.
+  - Step-by-step list with live status icons (⏳ pending, 🔄 running, ✅ passed, ❌ failed).
+  - Click any step to expand its last 300 lines of log output inline — no need to open Bitbucket.
+  - "Open in Bitbucket / GitHub" link for the full pipeline view.
+  - Auto-stops polling when pipeline reaches a terminal state (passed / failed / stopped).
+  - Provider attribution footer: shows provider, workspace, repo, and branch.
+- Backend `GET /api/ci/pipeline?repo=&branch=&provider=` — fetches latest pipeline run for a branch.
+  - Bitbucket: `/2.0/repositories/{workspace}/{repo}/pipelines/` filtered by branch + steps.
+  - GitHub: `/repos/{org}/{repo}/actions/runs?branch={branch}` + jobs endpoint.
+  - Normalised response: `{ found, pipelineId, buildNumber, status, steps, url, ... }`.
+- Backend `GET /api/ci/step-log?repo=&pipelineId=&stepId=&provider=` — fetches last 300 lines of
+  a Bitbucket step log or GitHub Actions job log.
+- Frontend `getPipelineStatus()` and `getStepLog()` API helpers + `PipelineStatus`/`PipelineStep` types.
+
+---
+
 ## [1.10.0] — 2026-03-17 — Alert Notification Templates + Recipient Directory (BLY-73)
 **Branch:** `main` | **Jira:** BLY-73
 
