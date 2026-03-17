@@ -116,7 +116,7 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
   bitbucket: {
     steps: [
       '⚠ App passwords were deprecated on Sep 9, 2025 — use API tokens instead (disabled June 9, 2026).',
-      '1. Go to Bitbucket → Your profile avatar (top-right) → Personal settings → API tokens',
+      '1. Go to id.atlassian.com → Manage profile → Security → API tokens (or click the link below)',
       '2. Click "Create API token" — give it a name (e.g. "BLUE.Y Dashboard") and set an expiry',
       '3. Under Scopes → Repositories → tick Read and Write → Create token',
       '4. Copy the token immediately (shown only once) → paste as API Token above',
@@ -124,7 +124,7 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
       '6. Once saved, the Smart Rebuild button on pod detail panels will push an empty commit to trigger your pipeline',
     ],
     links: [
-      { label: 'Bitbucket API Tokens', url: 'https://bitbucket.org/account/settings/api-tokens/' },
+      { label: 'Bitbucket API Tokens', url: 'https://id.atlassian.com/manage-profile/security/api-tokens' },
       { label: 'Bitbucket Pipelines Docs', url: 'https://support.atlassian.com/bitbucket-cloud/docs/get-started-with-bitbucket-pipelines/' },
     ],
   },
