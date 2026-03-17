@@ -107,8 +107,8 @@ export const AI_PROVIDERS = [
   {
     id: 'anthropic',
     label: 'Anthropic Claude',
-    description: 'Claude Sonnet & Opus. Requires a LiteLLM proxy for OpenAI-compatible format.',
-    baseUrl: 'http://localhost:4000/v1',
+    description: 'Claude Haiku, Sonnet & Opus. Native Anthropic API — no proxy needed.',
+    baseUrl: 'https://api.anthropic.com/v1',
     requiresKey: true,
     suggestedModels: {
       routine:  ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],
@@ -225,23 +225,47 @@ router.post('/test', async (req: Request, res: Response) => {
     if (d['ai.routine_model']) savedModel = d['ai.routine_model'];
   } catch { /* use env defaults */ }
 
-  const testUrl  = body.baseUrl || savedBase;
-  const testKey  = body.apiKey  || savedKey;
-  const testModel = body.model  || savedModel;
+  const testUrl   = body.baseUrl || savedBase;
+  const testKey   = body.apiKey  || savedKey;
+  const testModel = body.model   || savedModel;
+  const useAnthropic = testUrl.includes('anthropic.com');
 
   const start = Date.now();
   try {
-    const response = await axios.post(
-      `${testUrl}/chat/completions`,
-      { model: testModel, messages: [{ role: 'user', content: 'Reply with exactly the word: OK' }], max_tokens: 10, temperature: 0 },
-      {
-        headers: { Authorization: testKey ? `Bearer ${testKey}` : 'Bearer none', 'Content-Type': 'application/json' },
-        timeout: 15000,
-      },
-    );
+    let reply: string;
+    let modelUsed: string;
+
+    if (useAnthropic) {
+      // Anthropic Messages API
+      const response = await axios.post(
+        `${testUrl}/messages`,
+        { model: testModel, max_tokens: 10, messages: [{ role: 'user', content: 'Reply with exactly the word: OK' }] },
+        {
+          headers: {
+            'x-api-key': testKey,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        },
+      );
+      reply     = (response.data.content?.[0]?.text ?? '').trim();
+      modelUsed = response.data.model ?? testModel;
+    } else {
+      // OpenAI-compatible API
+      const response = await axios.post(
+        `${testUrl}/chat/completions`,
+        { model: testModel, messages: [{ role: 'user', content: 'Reply with exactly the word: OK' }], max_tokens: 10, temperature: 0 },
+        {
+          headers: { Authorization: testKey ? `Bearer ${testKey}` : 'Bearer none', 'Content-Type': 'application/json' },
+          timeout: 15000,
+        },
+      );
+      reply     = (response.data.choices?.[0]?.message?.content ?? '').trim();
+      modelUsed = response.data.model ?? testModel;
+    }
+
     const latency = Date.now() - start;
-    const reply = (response.data.choices?.[0]?.message?.content ?? '').trim();
-    const modelUsed = response.data.model ?? testModel;
     res.json({ ok: true, latency, reply, model: modelUsed });
   } catch (e: any) {
     const latency = Date.now() - start;

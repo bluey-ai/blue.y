@@ -9,6 +9,7 @@ import { sanitizeForAI } from '../utils/sanitize';
 // Falls back to process.env / config.ai if not configured in ConfigMap.
 
 interface AiRuntimeConfig {
+  provider: string; // 'deepseek' | 'openai' | 'google' | 'ollama' | 'anthropic' | 'custom'
   baseUrl: string; apiKey: string;
   routineModel: string; incidentModel: string; maxTokens: number;
 }
@@ -28,6 +29,7 @@ async function loadAiFromCm(): Promise<AiRuntimeConfig | null> {
     const d = cm.data ?? {};
     if (!d['ai.api_key'] && !d['ai.base_url']) return null; // not configured in CM yet
     return {
+      provider:      d['ai.provider']       || 'custom',
       baseUrl:       d['ai.base_url']       || config.ai.baseUrl,
       apiKey:        d['ai.api_key']        || config.ai.apiKey,
       routineModel:  d['ai.routine_model']  || config.ai.routineModel,
@@ -43,7 +45,86 @@ async function getAiConfig(): Promise<AiRuntimeConfig> {
   const cm = await loadAiFromCm();
   _cmAiFetchedAt = now;
   _cmAiCache = cm;
-  return cm ?? { ...config.ai };
+  return cm ?? { provider: 'deepseek', ...config.ai };
+}
+
+// ── Provider routing ──────────────────────────────────────────────────────────
+
+function isAnthropic(ai: AiRuntimeConfig): boolean {
+  return ai.provider === 'anthropic' || ai.baseUrl.includes('anthropic.com');
+}
+
+/** Call Anthropic Messages API (native format). */
+async function callAnthropic(
+  ai: AiRuntimeConfig,
+  model: string,
+  systemPrompt: string,
+  userMessage: string,
+  maxTokens: number,
+  timeout: number,
+): Promise<string> {
+  const response = await axios.post(
+    `${ai.baseUrl}/messages`,
+    {
+      model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    },
+    {
+      headers: {
+        'x-api-key': ai.apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      timeout,
+    },
+  );
+  return response.data.content?.[0]?.text || '';
+}
+
+/** Call any OpenAI-compatible API (/chat/completions). */
+async function callOpenAI(
+  ai: AiRuntimeConfig,
+  model: string,
+  systemPrompt: string,
+  userMessage: string,
+  maxTokens: number,
+  timeout: number,
+): Promise<string> {
+  const response = await axios.post(
+    `${ai.baseUrl}/chat/completions`,
+    {
+      model,
+      max_tokens: maxTokens,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${ai.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      timeout,
+    },
+  );
+  return response.data.choices?.[0]?.message?.content || '';
+}
+
+/** Route to the correct provider and return the text response. */
+async function callProvider(
+  ai: AiRuntimeConfig,
+  model: string,
+  systemPrompt: string,
+  userMessage: string,
+  maxTokens: number,
+  timeout: number,
+): Promise<string> {
+  return isAnthropic(ai)
+    ? callAnthropic(ai, model, systemPrompt, userMessage, maxTokens, timeout)
+    : callOpenAI(ai, model, systemPrompt, userMessage, maxTokens, timeout);
 }
 
 interface AnalysisRequest {
@@ -129,17 +210,7 @@ export class BedrockClient {
    */
   async analyzeRaw(prompt: string): Promise<string> {
     const ai = await getAiConfig();
-    const response = await axios.post(
-      `${ai.baseUrl}/chat/completions`,
-      {
-        model: ai.routineModel,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1500,
-        temperature: 0.1,
-      },
-      { headers: { Authorization: `Bearer ${ai.apiKey}`, 'Content-Type': 'application/json' }, timeout: 60000 },
-    );
-    return response.data.choices?.[0]?.message?.content || '';
+    return callProvider(ai, ai.routineModel, SYSTEM_PROMPT, prompt, 1500, 60000);
   }
 
   async analyze(request: AnalysisRequest): Promise<AnalysisResponse> {
@@ -150,98 +221,47 @@ export class BedrockClient {
       ? ai.incidentModel
       : ai.routineModel;
 
-    logger.info(`AI request: type=${request.type}, model=${model}`);
+    logger.info(`AI request: type=${request.type}, model=${model}, provider=${ai.provider}`);
 
-    // R1 (reasoner) needs longer timeout — it thinks before answering
+    // Reasoning models need longer timeout — they think before answering
     const timeout = model === ai.incidentModel ? 90000 : 45000;
     const maxRetries = 2;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await axios.post(
-          `${ai.baseUrl}/chat/completions`,
-          {
-            model,
-            max_tokens: ai.maxTokens,
-            messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
-              { role: 'user', content: this.buildPrompt(request) },
-            ],
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${ai.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            timeout,
-          },
-        );
-
-        const text = response.data.choices?.[0]?.message?.content || '';
+        const text = await callProvider(ai, model, SYSTEM_PROMPT, this.buildPrompt(request), ai.maxTokens, timeout);
 
         // For jira_query and db_query, return raw text — callers parse JSON themselves
         if (request.type === 'jira_query' || request.type === 'db_query') {
-          return {
-            analysis: text,
-            severity: 'info',
-            requiresAction: false,
-          };
+          return { analysis: text, severity: 'info', requiresAction: false };
         }
 
         // Try to parse structured JSON response
         try {
           const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
-          }
-        } catch {
-          // Fall back to unstructured response
-        }
+          if (jsonMatch) return JSON.parse(jsonMatch[0]);
+        } catch { /* fall through */ }
 
-        return {
-          analysis: text,
-          severity: 'info',
-          requiresAction: false,
-        };
+        return { analysis: text, severity: 'info', requiresAction: false };
+
       } catch (err) {
         const isTimeout = axios.isAxiosError(err) && (err.code === 'ECONNABORTED' || err.message?.includes('aborted'));
         logger.error(`AI invocation failed (attempt ${attempt}/${maxRetries}): ${err}`);
 
         if (isTimeout && attempt < maxRetries) {
-          logger.info(`Retrying AI request with fast model after timeout...`);
-          // Fall back to fast model on timeout retry
-          const retryResponse = await axios.post(
-            `${ai.baseUrl}/chat/completions`,
-            {
-              model: ai.routineModel, // Use fast model for retry
-              max_tokens: ai.maxTokens,
-              messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: this.buildPrompt(request) },
-              ],
-            },
-            {
-              headers: {
-                'Authorization': `Bearer ${ai.apiKey}`,
-                'Content-Type': 'application/json',
-              },
-              timeout: 45000,
-            },
-          );
-
-          const text = retryResponse.data.choices?.[0]?.message?.content || '';
-
-          // For jira_query and db_query, return raw text — callers parse JSON themselves
-          if (request.type === 'jira_query' || request.type === 'db_query') {
-            return { analysis: text, severity: 'info' as const, requiresAction: false };
-          }
-
+          logger.info(`Retrying AI request with routine model after timeout...`);
           try {
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) return JSON.parse(jsonMatch[0]);
-          } catch { /* fall through */ }
+            const text = await callProvider(ai, ai.routineModel, SYSTEM_PROMPT, this.buildPrompt(request), ai.maxTokens, 45000);
 
-          return { analysis: text, severity: 'info' as const, requiresAction: false };
+            if (request.type === 'jira_query' || request.type === 'db_query') {
+              return { analysis: text, severity: 'info' as const, requiresAction: false };
+            }
+            try {
+              const jsonMatch = text.match(/\{[\s\S]*\}/);
+              if (jsonMatch) return JSON.parse(jsonMatch[0]);
+            } catch { /* fall through */ }
+            return { analysis: text, severity: 'info' as const, requiresAction: false };
+          } catch { /* fall through to error response */ }
         }
 
         return {
