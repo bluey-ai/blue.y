@@ -255,6 +255,19 @@ function PipelineRow({ pipeline, repo, provider, canAct, onStop }: {
   );
 }
 
+// ── Environment inference ─────────────────────────────────────────────────────
+
+function branchToEnv(branch: string): { label: string; color: string; dot: string } {
+  const b = branch.toLowerCase();
+  if (b === 'main' || b === 'master') return { label: 'Production', color: 'text-[#f85149]', dot: 'bg-[#f85149]' };
+  if (b.startsWith('release/') || b.startsWith('release-')) return { label: 'Release', color: 'text-[#d29922]', dot: 'bg-[#d29922]' };
+  if (b === 'staging' || b === 'stage' || b.startsWith('staging/')) return { label: 'Staging', color: 'text-[#d29922]', dot: 'bg-[#d29922]' };
+  if (b === 'develop' || b === 'dev' || b === 'development' || b.startsWith('dev/')) return { label: 'Development', color: 'text-[#3fb950]', dot: 'bg-[#3fb950]' };
+  if (b.startsWith('feat/') || b.startsWith('feature/')) return { label: 'Feature branch', color: 'text-[#bc8cff]', dot: 'bg-[#bc8cff]' };
+  if (b.startsWith('fix/') || b.startsWith('hotfix/')) return { label: 'Hotfix', color: 'text-[#ff7b72]', dot: 'bg-[#ff7b72]' };
+  return { label: 'Custom', color: 'text-[#8b949e]', dot: 'bg-[#8b949e]' };
+}
+
 // ── TriggerModal ──────────────────────────────────────────────────────────────
 
 function TriggerModal({ repo, branches, onClose, onTriggered }: {
@@ -301,6 +314,19 @@ function TriggerModal({ repo, branches, onClose, onTriggered }: {
               className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-sm text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff]"
             />
           )}
+          {/* Environment inference */}
+          {branch && (() => {
+            const env = branchToEnv(branch);
+            return (
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[10px] text-[#6e7681]">Deploys to</span>
+                <span className={`flex items-center gap-1.5 text-[11px] font-medium ${env.color}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${env.dot} animate-pulse`} />
+                  {env.label}
+                </span>
+              </div>
+            );
+          })()}
         </div>
         {err && <div className="text-xs text-[#f85149] bg-[#f85149]/5 border border-[#f85149]/20 rounded-lg px-3 py-2">{err}</div>}
         <div className="flex gap-2 pt-1">
