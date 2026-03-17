@@ -1,0 +1,19 @@
+# Gitleaks configuration for BLUE.Y
+# https://github.com/gitleaks/gitleaks#configuration
+
+[allowlist]
+  description = "Known false positives in BLUE.Y codebase"
+
+  # src/admin/license.ts — RSA public key *placeholder* (not a real key).
+  # The comment "RS256-signed JWT" triggers generic-api-key rule.
+  # The private key (for signing) is never committed and never ships.
+  # The public key in this file is a placeholder with literal "000..." zeroes.
+  commits = ["88ccaea8f300643e53789a852a75f8b7d53c6a9d"]
+
+  # Also allowlist the admin license path by regex — catches future commits
+  # if the placeholder changes but remains clearly a template public key.
+  regexes = [
+    "RS256-signed JWT with seats",
+    "placeholder000",
+    "BEGIN PUBLIC KEY.*placeholder",
+  ]
