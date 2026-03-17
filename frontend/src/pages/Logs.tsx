@@ -88,7 +88,10 @@ export default function Logs() {
     setAnalyzing(true);
     setAnalysis(null);
     try {
-      const logText = lines.slice(-300).join('\n');
+      const activeLines = search
+        ? lines.filter(l => search.split(' ').filter(Boolean).some(kw => l.toLowerCase().includes(kw.toLowerCase())))
+        : lines;
+      const logText = activeLines.slice(-300).join('\n');
       const r = await analyzeLogs(selectedPod, ns, logText);
       setAnalysis(r.analysis);
     } catch (e: any) {
