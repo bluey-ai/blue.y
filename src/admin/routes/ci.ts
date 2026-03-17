@@ -619,7 +619,7 @@ router.get('/step-log', async (req: Request, res: Response) => {
     if (ci.provider === 'bitbucket') {
       const logRes = await fetch(
         `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${repo}/pipelines/${encodeURIComponent(pipelineId)}/steps/${encodeURIComponent(stepId)}/log`,
-        { headers: { Authorization: bbBasicAuth(ci.email ?? '', ci.token), Accept: 'text/plain' } },
+        { headers: { Authorization: bbBasicAuth(ci.email ?? '', ci.token), Accept: 'application/octet-stream, text/plain, */*' } },
       );
       if (!logRes.ok) { res.status(logRes.status).json({ error: `Log unavailable (${logRes.status})` }); return; }
       text = await (logRes as any).text();
