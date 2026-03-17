@@ -117,11 +117,10 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
     steps: [
       '1. Go to id.atlassian.com → Manage profile → Security → API tokens (or click the link below)',
       '2. Click "Create API token with scope" — give it a name (e.g. "BLUE.Y Dashboard") and set an expiry',
-      '3. On the Select scopes page, search "repository" → tick write:repository:bitbucket (includes read)',
-      '4. Also search "pipeline" → tick read:pipeline:bitbucket (needed for Live Build Monitor)',
-      '5. Click Next → Create token — copy it immediately (shown only once) → paste as API Token above',
-      '6. Set Workspace slug to your Bitbucket workspace URL slug (e.g. "blue-onion")',
-      '7. Once saved, Smart Rebuild will push an empty commit to trigger your pipeline, and the Live Build Monitor will poll status live',
+      '3. On the Select scopes page, search "pipeline" → tick write:pipeline:bitbucket and read:pipeline:bitbucket',
+      '4. Click Next → Create token — copy it immediately (shown only once) → paste as API Token above',
+      '5. Set Workspace slug to your Bitbucket workspace URL slug (e.g. "blue-onion")',
+      '6. Once saved, Smart Rebuild will trigger your pipeline via the Bitbucket API, and the Live Build Monitor will poll status live',
     ],
     links: [
       { label: 'Bitbucket API Tokens', url: 'https://id.atlassian.com/manage-profile/security/api-tokens' },

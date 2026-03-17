@@ -184,46 +184,78 @@ router.post('/rebuild', async (req: Request, res: Response) => {
     return;
   }
 
-  const tmpDir = `/tmp/bluey-rebuild-${Date.now()}`;
-
   try {
     logger.info(`[ci] Rebuild triggered by ${caller} via ${ci.provider}: ${repo}@${branch}`);
 
-    const repoUrl = buildRepoUrl(ci, repo);
-    await execFileAsync('git', [
-      'clone', '--depth', '1', '--branch', branch, '--single-branch',
-      repoUrl, tmpDir,
-    ], { timeout: 60000 });
-
-    // Configure git identity for the commit
-    await execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', 'bluey@blueonion.today']);
-    await execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', 'BLUE.Y Dashboard']);
-
-    // Empty commit to trigger the pipeline
-    await execFileAsync('git', [
-      '-C', tmpDir, 'commit', '--allow-empty',
-      '-m', `ci: rebuild triggered from BLUE.Y dashboard by ${caller} [BLY-70]`,
-    ]);
-
-    // Push back (authenticated URL already embedded in remote)
-    await execFileAsync('git', ['-C', tmpDir, 'push', 'origin', branch], { timeout: 30000 });
-
-    logger.info(`[ci] Rebuild push OK: ${repo}@${branch} by ${caller} (${ci.provider})`);
-    res.json({ ok: true, repo, branch, workspace: ci.workspace, provider: ci.provider });
-  } catch (e: any) {
-    const msg = e?.stderr ?? e?.message ?? String(e);
-    logger.error(`[ci] Rebuild failed for ${repo}@${branch}: ${msg}`);
-    if (msg.includes('Authentication failed') || msg.includes('could not read Username')) {
-      res.status(503).json({
-        error: `${ci.provider === 'github' ? 'GitHub' : 'Bitbucket'} authentication failed — check your token in Integrations → CI/CD Providers`,
-      });
-    } else if (msg.includes("couldn't find remote ref")) {
-      res.status(404).json({ error: `Branch "${branch}" not found in ${repo}. Override with {repo, branch} in the request body.` });
+    if (ci.provider === 'bitbucket') {
+      // Bitbucket: trigger pipeline via API (write:pipeline:bitbucket scope only — no repo write needed)
+      const triggerRes = await fetch(
+        `https://api.bitbucket.org/2.0/repositories/${ci.workspace}/${repo}/pipelines/`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${ci.token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            target: {
+              type: 'pipeline_ref_target',
+              ref_type: 'branch',
+              ref_name: branch,
+              selector: { type: 'default' },
+            },
+          }),
+        },
+      );
+      if (!triggerRes.ok) {
+        const errText = await (triggerRes as any).text().catch(() => '');
+        if (triggerRes.status === 401) {
+          res.status(503).json({ error: 'Bitbucket authentication failed — check token in Integrations (needs write:pipeline:bitbucket scope)' }); return;
+        }
+        if (triggerRes.status === 404) {
+          res.status(404).json({ error: `Repo or branch "${branch}" not found in ${ci.workspace}/${repo}` }); return;
+        }
+        res.status(500).json({ error: `Bitbucket pipeline trigger failed (${triggerRes.status}): ${String(errText).slice(0, 200)}` }); return;
+      }
+      logger.info(`[ci] Bitbucket pipeline triggered: ${repo}@${branch} by ${caller}`);
+      res.json({ ok: true, repo, branch, workspace: ci.workspace, provider: ci.provider });
     } else {
-      res.status(500).json({ error: msg });
+      // GitHub: push empty commit to trigger Actions workflow
+      const tmpDir = `/tmp/bluey-rebuild-${Date.now()}`;
+      try {
+        const repoUrl = buildRepoUrl(ci, repo);
+        await execFileAsync('git', [
+          'clone', '--depth', '1', '--branch', branch, '--single-branch',
+          repoUrl, tmpDir,
+        ], { timeout: 60000 });
+        await execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', 'bluey@blueonion.today']);
+        await execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', 'BLUE.Y Dashboard']);
+        await execFileAsync('git', [
+          '-C', tmpDir, 'commit', '--allow-empty',
+          '-m', `ci: rebuild triggered from BLUE.Y dashboard by ${caller} [BLY-70]`,
+        ]);
+        await execFileAsync('git', ['-C', tmpDir, 'push', 'origin', branch], { timeout: 30000 });
+        logger.info(`[ci] GitHub rebuild push OK: ${repo}@${branch} by ${caller}`);
+        res.json({ ok: true, repo, branch, workspace: ci.workspace, provider: ci.provider });
+      } catch (e: any) {
+        const msg = e?.stderr ?? e?.message ?? String(e);
+        logger.error(`[ci] GitHub rebuild failed for ${repo}@${branch}: ${msg}`);
+        if (msg.includes('Authentication failed') || msg.includes('could not read Username')) {
+          res.status(503).json({ error: 'GitHub authentication failed — check your token in Integrations → CI/CD Providers' });
+        } else if (msg.includes("couldn't find remote ref")) {
+          res.status(404).json({ error: `Branch "${branch}" not found in ${repo}` });
+        } else {
+          res.status(500).json({ error: msg });
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     }
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch (e: any) {
+    const msg = e?.message ?? String(e);
+    logger.error(`[ci] Rebuild failed for ${repo}@${branch}: ${msg}`);
+    res.status(500).json({ error: msg });
   }
 });
 
