@@ -1,6 +1,6 @@
 # BLUE.Y — Premium Architecture & Build Separation
 
-> Version: 1.6.0+ | BLY-41
+> Version: 1.12.0+ | BLY-41
 
 ---
 
@@ -13,7 +13,18 @@ BLUE.Y ships as **two separate Docker images** built from the same Bitbucket rep
 | **Source** | Bitbucket (stripped) → GitHub | Bitbucket (full) |
 | **Image** | `ghcr.io/bluey-ai/blue.y` | Private ECR (BlueOnion customers) |
 | **Helm chart** | `helm/blue-y/` (ArtifactHub, public) | `helm/blue-y-premium/` (private) |
-| **Admin panel** | ❌ Code does not exist | ✅ `admin.enabled: true` |
+| **Admin panel** | ❌ Code does not exist | ✅ Full React dashboard — 11 pages |
+| **CI/CD page** | ❌ | ✅ Pipeline list, trigger, stop, inline logs |
+| **SSO login** | ❌ | ✅ Microsoft Azure AD + Google Workspace |
+| **RBAC** | ❌ | ✅ SuperAdmin / Admin / Viewer roles |
+| **IP Allowlist** | ❌ | ✅ CIDR-based dashboard access control |
+| **Integrations UI** | ❌ | ✅ All credentials managed from browser |
+| **Email Templates** | ❌ | ✅ Custom transactional email editor |
+| **Alert Recipients** | ❌ | ✅ Internal/client contact directory |
+| **Pod Terminal** | ❌ | ✅ Web-based kubectl exec in browser |
+| **Deployment Rollback** | ❌ | ✅ Revision history + one-click rollback |
+| **Smart Rebuild** | ❌ | ✅ One-click pipeline trigger from pod |
+| **Live Build Monitor** | ❌ | ✅ Live CI status panel in pod detail |
 | **Cost** | Free, open-source | Paid |
 
 ---
@@ -63,10 +74,10 @@ Defined in `.github-sync-ignore` at the repo root. Current premium paths:
 
 | Path | Feature | Ticket |
 |------|---------|--------|
-| `src/admin/` | Admin backend — magic link auth, REST API, config editor, SQLite | BLY-37 |
-| `frontend/` | React admin dashboard — cluster topology, real-time monitoring | BLY-36 |
-| `helm/blue-y-premium/` | Premium Helm chart (includes ingress, admin config) | BLY-37 |
-| `docs/premium/` | Premium documentation (setup guides, skip-reference) | BLY-40 |
+| `src/admin/` | Admin backend — magic link auth, REST API, SQLite, SSO, RBAC, IP allowlist, all API routes | BLY-37 |
+| `frontend/` | React admin dashboard — 11 pages: Overview, Incidents, Cluster, Deployments, Log Explorer, CI/CD, Alert Recipients, Email Templates, Users, Integrations, Config | BLY-36 |
+| `helm/blue-y-premium/` | Premium Helm chart (includes ingress, admin config, access modes) | BLY-37 |
+| `docs/premium/` | Premium documentation (setup guides, architecture, skip-reference) | BLY-40 |
 | `docs/CHANGELOG-premium.md` | Premium release notes | BLY-40 |
 
 ---
