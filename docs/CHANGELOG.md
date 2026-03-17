@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.12.1] — 2026-03-17 — Container security hardening (BLY-35)
+**Branch:** `main` | **Jira:** BLY-35
+
+### Fixed
+- Added container-level `securityContext` to `deployment_production.yaml` — completes BLY-35 security hardening.
+  - `allowPrivilegeEscalation: false` — process cannot gain more privileges than its parent
+  - `runAsNonRoot: true` + `runAsUser/Group: 1001` — enforces the `USER bluey` set in Dockerfile at K8s level
+  - `capabilities: drop: [ALL]` — drops all Linux capabilities from the container
+
+---
+
 ## [1.12.0] — 2026-03-17 — CI/CD Pipelines Page (BLY-75)
 **Branch:** `feat/bly-74-live-build-monitor` | **Jira:** BLY-75
 

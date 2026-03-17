@@ -227,6 +227,14 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1001          # matches USER bluey in Dockerfile
+            runAsGroup: 1001
+            capabilities:
+              drop:
+                - ALL
           volumeMounts:
             - name: blue-y-data
               mountPath: /data
