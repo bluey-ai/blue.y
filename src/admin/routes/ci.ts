@@ -205,7 +205,7 @@ router.post('/rebuild', async (req: Request, res: Response) => {
               type: 'pipeline_ref_target',
               ref_type: 'branch',
               ref_name: branch,
-              selector: { type: 'default' },
+              selector: { type: 'branches', pattern: branch },
             },
           }),
         },
@@ -331,7 +331,7 @@ router.get('/pipelines', async (req: Request, res: Response) => {
         createdAt: p.created_on as string,
         completedAt: (p.completed_on ?? null) as string | null,
         durationSeconds: (p.duration_in_seconds ?? null) as number | null,
-        url: `https://bitbucket.org/${ci.workspace}/${repo}/pipelines/${p.build_number as number}`,
+        url: (p.links?.html?.href as string | undefined) ?? `https://bitbucket.org/${ci.workspace}/${repo}/pipelines/results/${p.build_number as number}`,
         triggeredBy: (p.trigger?.name ?? p.trigger?.type ?? 'manual') as string,
       }));
       res.json({ pipelines, page: Number(page), hasMore: !!data.next, provider: 'bitbucket', workspace: ci.workspace });
@@ -408,7 +408,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
         {
           method: 'POST',
           headers: { Authorization: bbBasicAuth(ci.email ?? '', ci.token), 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ target: { type: 'pipeline_ref_target', ref_type: 'branch', ref_name: String(branch), selector: { type: 'default' } } }),
+          body: JSON.stringify({ target: { type: 'pipeline_ref_target', ref_type: 'branch', ref_name: String(branch), selector: { type: 'branches', pattern: String(branch) } } }),
         },
       );
       if (!triggerRes.ok) {
