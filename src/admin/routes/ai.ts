@@ -105,6 +105,17 @@ export const AI_PROVIDERS = [
     },
   },
   {
+    id: 'anthropic',
+    label: 'Anthropic Claude',
+    description: 'Claude Sonnet & Opus. Requires a LiteLLM proxy for OpenAI-compatible format.',
+    baseUrl: 'http://localhost:4000/v1',
+    requiresKey: true,
+    suggestedModels: {
+      routine:  ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],
+      incident: ['claude-sonnet-4-6', 'claude-opus-4-6'],
+    },
+  },
+  {
     id: 'custom',
     label: 'Custom',
     description: 'Any OpenAI-compatible endpoint (vLLM, LM Studio, Together AI…)',

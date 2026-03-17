@@ -27,15 +27,16 @@ const PLATFORM_LABEL: Record<string, string> = {
 };
 
 const AI_PROVIDER_COLOR: Record<string, string> = {
-  deepseek: 'text-[#4d6bfe] bg-[#4d6bfe]/10 border-[#4d6bfe]/20',
-  openai:   'text-[#10a37f] bg-[#10a37f]/10 border-[#10a37f]/20',
-  google:   'text-[#ea4335] bg-[#ea4335]/10 border-[#ea4335]/20',
-  ollama:   'text-[#7c3aed] bg-[#7c3aed]/10 border-[#7c3aed]/20',
-  custom:   'text-[#8b949e] bg-[#21262d] border-[#30363d]',
+  deepseek:  'text-[#4d6bfe] bg-[#4d6bfe]/10 border-[#4d6bfe]/20',
+  openai:    'text-[#10a37f] bg-[#10a37f]/10 border-[#10a37f]/20',
+  google:    'text-[#ea4335] bg-[#ea4335]/10 border-[#ea4335]/20',
+  ollama:    'text-[#7c3aed] bg-[#7c3aed]/10 border-[#7c3aed]/20',
+  anthropic: 'text-[#d97757] bg-[#d97757]/10 border-[#d97757]/20',
+  custom:    'text-[#8b949e] bg-[#21262d] border-[#30363d]',
 };
 
 const AI_PROVIDER_LABEL: Record<string, string> = {
-  deepseek: 'DS', openai: 'AI', google: 'G', ollama: 'OL', custom: '∞',
+  deepseek: 'DS', openai: 'AI', google: 'G', ollama: 'OL', anthropic: 'AN', custom: '∞',
 };
 
 const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; url: string }[] }> = {
