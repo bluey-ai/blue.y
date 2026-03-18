@@ -226,29 +226,34 @@ helm install blue-y bluey/blue-y --namespace prod
 
 | Feature | Community | Premium |
 |---|---|---|
-| Multi-platform chat (Telegram, WhatsApp, Slack, Teams) | Yes | Yes |
-| AI auto-diagnosis (pod crashes, OOMKill, ImagePull) | Yes | Yes |
-| 24/7 monitoring — pods, nodes, HPA, TLS | Yes | Yes |
-| Chat command reference (all /commands) | Yes | Yes |
-| Admin dashboard (web UI) | — | Yes |
-| Log Explorer (live tail, error clustering, AI analyze, NL search) | — | Yes |
-| Network Explorer (route health, AI diagnose, ALB metrics) | — | Yes |
-| CI/CD Pipelines (Bitbucket + GitHub, trigger + smart rebuild) | — | Yes |
-| Incident log + AI postmortem + Jira integration | — | Yes |
-| SSO — Google, Microsoft, GitHub OAuth | — | Yes |
-| Multi-user RBAC (Viewer / Admin / Super Admin) | — | Yes |
-| Signed container images + SBOM (Cosign) | — | Yes |
-| IP allowlist / VPN mode | — | Yes |
-| Audit log | — | Yes |
-| Priority support + SLA | — | Yes |
+| Multi-platform chat (Telegram, WhatsApp, Slack, Teams) | ✓ | ✓ |
+| AI auto-diagnosis (pod crashes, OOMKill, ImagePull) | ✓ | ✓ |
+| 24/7 monitoring — pods, nodes, HPA, TLS certs | ✓ | ✓ |
+| All chat /commands (status, logs, restart, scale, diagnose…) | ✓ | ✓ |
+| AI /diagnose and /postmortem via chat | ✓ | ✓ |
+| Jira & email notifications via chat | ✓ | ✓ |
+| Sleep/wake for maintenance windows | ✓ | ✓ |
+| Self-hosted — data stays in your cluster | ✓ | ✓ |
+| **Admin Dashboard (web UI)** | — | ✓ |
+| Log Explorer (live tail, error clustering, AI analyze, NL search) | — | ✓ |
+| Network Explorer (route health, AI diagnose, ALB metrics, CRUD) | — | ✓ |
+| CI/CD Pipelines (Bitbucket + GitHub, logs, trigger, smart rebuild) | — | ✓ |
+| Incident log + AI postmortem dashboard + Jira integration | — | ✓ |
+| Cluster & Deployments view (pods, nodes, HPA, rollouts) | — | ✓ |
+| SSO — Google, Microsoft, GitHub OAuth | — | ✓ |
+| Multi-user RBAC (Viewer / Admin / Super Admin) | — | ✓ |
+| Signed container images + SBOM (Cosign) | — | ✓ |
+| IP allowlist / VPN mode | — | ✓ |
+| Audit log | — | ✓ |
+| Priority support + SLA | — | ✓ |
 
 ---
 
 ## Get Started
 
-**Community** is fully open source and production-ready. Includes full chat operations and AI auto-diagnosis across all 4 platforms. No credit card, no account, no expiry.
+**Community** is fully open source and production-ready. You get every feature — all 4 chat platforms, AI auto-diagnosis, 24/7 monitoring, the full command set, Jira & email integrations. Everything. Free, forever, no credit card.
 
-**Premium** unlocks the full Admin Dashboard (Log Explorer, Network Explorer, CI/CD, Incidents) plus SSO, RBAC, signed images, IP allowlisting, and priority support — for teams that need a complete ops platform with compliance and auditability.
+**Premium** adds one thing on top: the full web Admin Dashboard — Log Explorer, Network Explorer, CI/CD Pipelines, Incident Management, Cluster view — plus SSO, RBAC, signed images, IP allowlisting, and priority support. For teams that want a complete browser-based ops platform alongside their chat workflow.
 
 [**Get Community on GitHub →**](https://github.com/bluey-ai/blue.y) &nbsp;&nbsp; [**Talk to Us about Premium →**](mailto:hello@blueonion.today)
 

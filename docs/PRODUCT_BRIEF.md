@@ -59,19 +59,21 @@ DeepSeek AI &nbsp;·&nbsp; AWS Bedrock &nbsp;·&nbsp; AWS CloudWatch &nbsp;·&nb
 
 | Feature | Community | Premium |
 |---|---|---|
-| All 4 chat platforms | Yes | Yes |
-| AI auto-diagnosis | Yes | Yes |
-| 24/7 monitoring (pods, nodes, HPA, TLS) | Yes | Yes |
-| All chat /commands | Yes | Yes |
-| Admin dashboard (web UI — all 6 modules) | — | Yes |
-| Log Explorer, Network Explorer, CI/CD | — | Yes |
-| Incident log + AI postmortem + Jira | — | Yes |
-| SSO (Google / Microsoft / GitHub) | — | Yes |
-| Multi-user RBAC | — | Yes |
-| Signed images + SBOM (Cosign) | — | Yes |
-| IP allowlist / VPN mode | — | Yes |
-| Audit log | — | Yes |
-| Priority support + SLA | — | Yes |
+| All 4 chat platforms | ✓ | ✓ |
+| AI auto-diagnosis | ✓ | ✓ |
+| 24/7 monitoring (pods, nodes, HPA, TLS) | ✓ | ✓ |
+| All chat /commands incl. /diagnose, /postmortem | ✓ | ✓ |
+| Jira & email notifications | ✓ | ✓ |
+| Self-hosted — data stays in your cluster | ✓ | ✓ |
+| **Admin Dashboard (web UI — all 6 modules)** | — | ✓ |
+| Log Explorer, Network Explorer, CI/CD | — | ✓ |
+| Incident log + AI postmortem + Jira dashboard | — | ✓ |
+| SSO (Google / Microsoft / GitHub) | — | ✓ |
+| Multi-user RBAC | — | ✓ |
+| Signed images + SBOM (Cosign) | — | ✓ |
+| IP allowlist / VPN mode | — | ✓ |
+| Audit log | — | ✓ |
+| Priority support + SLA | — | ✓ |
 
 ---
 
