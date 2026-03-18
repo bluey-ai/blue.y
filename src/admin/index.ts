@@ -349,7 +349,7 @@ export async function createAdminApp(opts: AdminModuleOptions = {}): Promise<exp
 
   // license — GET: all roles (show plan/seats), POST /verify: superadmin only
   router.use('/api/license',      requireSession, requireRole('viewer'), licenseRoutes);
-  router.use('/api/ci',           requireSession, requireRole('superadmin'), ciRoutes); // BLY-70
+  router.use('/api/ci',           requireSession, requireRole('viewer'),     ciRoutes); // BLY-70 (write ops enforced per-route)
   router.use('/api/recipients',   requireSession, requireRole('admin'),      recipientsRoutes); // BLY-73
   router.use('/api/ai',           requireSession, requireRole('viewer'),     aiRoutes);         // BLY-76 (PUT enforced inside route)
   router.use('/api/network',      requireSession, requireRole('viewer'),     networkRoutes);    // BLY-77 (write ops enforced inside route)
