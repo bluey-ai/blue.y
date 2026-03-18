@@ -166,12 +166,15 @@ export const deleteAllowlistEntry = (id: number) => del(`/allowlist/${id}`);
 
 // Integrations (BLY-59)
 export interface IntegrationField { key: string; label: string; type: string; value: string; hasValue: boolean; }
-export interface Integration { id: string; label: string; icon: string; enabled: boolean; fields: IntegrationField[]; }
+export interface Integration { id: string; label: string; icon: string; description?: string; enabled: boolean; fields: IntegrationField[]; }
 export const getIntegrations = () => get<{ integrations: Integration[]; readOnly: boolean }>('/integrations');
 export const saveIntegration = (id: string, fields: Record<string, string>) =>
   put<{ ok: boolean; integration: string }>(`/integrations/${encodeURIComponent(id)}`, { fields });
 export const testIntegration = (id: string) =>
   post<{ ok: boolean; status: 'connected' | 'failed' | 'not_configured'; message: string }>(`/integrations/${encodeURIComponent(id)}/test`, {});
+export const getEnabledPlugins = () => get<Record<string, boolean>>('/integrations/enabled');
+export const enablePlugin  = (id: string) => post<{ ok: boolean; enabled: boolean }>(`/integrations/${encodeURIComponent(id)}/enable`, {});
+export const disablePlugin = (id: string) => post<{ ok: boolean; enabled: boolean }>(`/integrations/${encodeURIComponent(id)}/disable`, {});
 
 // Pod terminal — BLY-63
 export const getDeploymentPods = (namespace: string, deployment: string) =>

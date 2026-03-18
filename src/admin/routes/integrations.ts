@@ -1,10 +1,11 @@
 // @premium — BlueOnion internal only. (BLY-59)
-// Integrations config — Telegram, Slack, Teams, WhatsApp, Email/SES.
+// Integrations config — Telegram, Slack, Teams, WhatsApp, Email/SES, Jira, CloudWatch.
 // Read: all roles (secrets masked for non-superadmin).
-// Write: superadmin only (handled via requireRole in index.ts).
+// Write/Enable/Disable: superadmin only.
 import { Router, Request, Response } from 'express';
 import * as k8s from '@kubernetes/client-node';
 import { SESClient, GetSendQuotaCommand } from '@aws-sdk/client-ses';
+import { CloudWatchClient, ListMetricsCommand } from '@aws-sdk/client-cloudwatch';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
 
@@ -37,6 +38,33 @@ function maskValue(val: string): string {
   if (!val) return '';
   if (val.length <= 8) return '••••••••';
   return val.slice(0, 4) + '•'.repeat(val.length - 8) + val.slice(-4);
+}
+
+// Read-modify-write a single key in the ConfigMap (BLY-85)
+async function setConfigKey(key: string, value: string): Promise<void> {
+  const coreApi = getCoreApi();
+  const namespace = getNamespace();
+  let currentData: Record<string, string> = {};
+  try {
+    const cm = await coreApi.readNamespacedConfigMap({ name: CONFIG_MAP_NAME, namespace });
+    currentData = cm.data ?? {};
+  } catch (e: any) {
+    if (e?.response?.statusCode !== 404) throw e;
+  }
+  currentData[key] = value;
+  try {
+    await coreApi.replaceNamespacedConfigMap({
+      name: CONFIG_MAP_NAME, namespace,
+      body: { metadata: { name: CONFIG_MAP_NAME, namespace }, data: currentData },
+    });
+  } catch (e: any) {
+    if (isK8sNotFound(e)) {
+      await coreApi.createNamespacedConfigMap({
+        namespace,
+        body: { metadata: { name: CONFIG_MAP_NAME, namespace }, data: currentData },
+      });
+    } else { throw e; }
+  }
 }
 
 // Integration definitions — keys stored in ConfigMap under these names
@@ -129,6 +157,28 @@ const INTEGRATIONS = [
       { key: 'ci.github.org',   label: 'Organisation / User',                type: 'text'     },
     ],
   },
+  {
+    id: 'jira',
+    label: 'Jira',
+    icon: 'jira',
+    description: 'Create and track ops issues in your Jira project.',
+    fields: [
+      { key: 'jira.base_url',    label: 'Jira Base URL',   type: 'text'     },
+      { key: 'jira.email',       label: 'Atlassian Email', type: 'text'     },
+      { key: 'jira.api_token',   label: 'API Token',       type: 'password' },
+      { key: 'jira.project_key', label: 'Project Key',     type: 'text'     },
+    ],
+  },
+  {
+    id: 'cloudwatch',
+    label: 'AWS CloudWatch',
+    icon: 'cloudwatch',
+    description: 'Pull ALB metrics (requests, errors, latency) via IRSA — no API key needed.',
+    fields: [
+      { key: 'cloudwatch.region', label: 'AWS Region',                type: 'text' },
+      { key: 'cloudwatch.lb_arn', label: 'ALB ARN Suffix (optional)', type: 'text' },
+    ],
+  },
 ];
 
 // GET /api/integrations — returns integration status with masked secrets for non-superadmin
@@ -152,11 +202,61 @@ router.get('/', async (req: Request, res: Response) => {
       const value = (isSuperAdmin || !isSensitive(f.key)) ? raw : maskValue(raw);
       return { ...f, value, hasValue: !!raw };
     });
-    const enabled = fields.some(f => f.hasValue);
+    const pluginFlag = configData[`${intg.id}.plugin_enabled`];
+    const hasFields  = fields.some(f => f.hasValue);
+    const enabled    = pluginFlag === 'true' || (pluginFlag === undefined && hasFields);
     return { ...intg, enabled, fields };
   });
 
   res.json({ integrations: result, readOnly: !isSuperAdmin });
+});
+
+// GET /api/integrations/enabled — quick plugin-enabled map for nav gating (BLY-85)
+router.get('/enabled', async (_req: Request, res: Response) => {
+  const coreApi = getCoreApi();
+  const namespace = getNamespace();
+  let configData: Record<string, string> = {};
+  try {
+    const cm = await coreApi.readNamespacedConfigMap({ name: CONFIG_MAP_NAME, namespace });
+    configData = cm.data ?? {};
+  } catch (e: any) {
+    if (!isK8sNotFound(e)) { res.status(500).json({ error: e?.message ?? String(e) }); return; }
+  }
+  const result: Record<string, boolean> = {};
+  for (const intg of INTEGRATIONS) {
+    const flag = configData[`${intg.id}.plugin_enabled`];
+    const hasFields = intg.fields.some(f => !!configData[f.key]);
+    result[intg.id] = flag === 'true' || (flag === undefined && hasFields);
+  }
+  res.json(result);
+});
+
+// POST /api/integrations/:id/enable — activate plugin (superadmin only, BLY-85)
+router.post('/:id/enable', async (req: Request, res: Response) => {
+  if ((req as any).adminUser?.role !== 'superadmin') { res.status(403).json({ error: 'Requires superadmin' }); return; }
+  const intgId = req.params.id as string;
+  if (!INTEGRATIONS.find(i => i.id === intgId)) { res.status(404).json({ error: `Unknown integration: ${intgId}` }); return; }
+  try {
+    await setConfigKey(`${intgId}.plugin_enabled`, 'true');
+    logger.info(`[admin] Plugin '${intgId}' enabled by ${(req as any).adminUser?.name ?? 'unknown'}`);
+    res.json({ ok: true, integration: intgId, enabled: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? String(e) });
+  }
+});
+
+// POST /api/integrations/:id/disable — deactivate plugin (superadmin only, BLY-85)
+router.post('/:id/disable', async (req: Request, res: Response) => {
+  if ((req as any).adminUser?.role !== 'superadmin') { res.status(403).json({ error: 'Requires superadmin' }); return; }
+  const intgId = req.params.id as string;
+  if (!INTEGRATIONS.find(i => i.id === intgId)) { res.status(404).json({ error: `Unknown integration: ${intgId}` }); return; }
+  try {
+    await setConfigKey(`${intgId}.plugin_enabled`, 'false');
+    logger.info(`[admin] Plugin '${intgId}' disabled by ${(req as any).adminUser?.name ?? 'unknown'}`);
+    res.json({ ok: true, integration: intgId, enabled: false });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? String(e) });
+  }
 });
 
 // PUT /api/integrations/:id — update an integration (superadmin only, enforced in index.ts)
@@ -379,6 +479,35 @@ async function testIntegration(id: string, cfg: Record<string, string>): Promise
       return { ok: true, status: 'connected', message: `Authenticated as ${who}${org ? ` — org: ${org}` : ''}` };
     }
     return { ok: false, status: 'failed', message: `HTTP ${r.status} — check token (needs repo scope)` };
+  }
+
+  if (id === 'jira') {
+    const baseUrl  = cfg['jira.base_url']  || process.env.JIRA_BASE_URL  || '';
+    const email    = cfg['jira.email']     || process.env.JIRA_EMAIL     || '';
+    const apiToken = cfg['jira.api_token'] || process.env.JIRA_API_TOKEN || '';
+    if (!baseUrl || !email || !apiToken) return { ok: false, status: 'not_configured', message: 'Base URL / Email / API Token not set' };
+    const creds = Buffer.from(`${email}:${apiToken}`).toString('base64');
+    const r = await fetch(`${baseUrl.replace(/\/$/, '')}/rest/api/3/myself`, {
+      ...fetchOpts,
+      headers: { Authorization: `Basic ${creds}`, Accept: 'application/json' },
+    });
+    if (r.ok) {
+      const json = await r.json() as { displayName?: string; emailAddress?: string };
+      return { ok: true, status: 'connected', message: `Connected as ${json.displayName ?? json.emailAddress ?? email}` };
+    }
+    return { ok: false, status: 'failed', message: `HTTP ${r.status} — verify Base URL, email and API token` };
+  }
+
+  if (id === 'cloudwatch') {
+    const region = cfg['cloudwatch.region'] || 'ap-southeast-1';
+    try {
+      const cw = new CloudWatchClient({ region });
+      const result = await cw.send(new ListMetricsCommand({ Namespace: 'AWS/ApplicationELB', MetricName: 'RequestCount' }));
+      const count = result.Metrics?.length ?? 0;
+      return { ok: true, status: 'connected', message: `CloudWatch reachable (${region}) — ${count} ALB metric series found` };
+    } catch (e: any) {
+      return { ok: false, status: 'failed', message: e?.message ?? 'CloudWatch connection failed — check IAM/IRSA permissions' };
+    }
   }
 
   return { ok: false, status: 'failed', message: 'Unknown integration' };

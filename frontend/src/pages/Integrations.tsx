@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, CheckCircle, XCircle, Edit2, Save, X, HelpCircle, ChevronDown, ChevronRight, ExternalLink, Zap, Loader2, Settings } from 'lucide-react';
-import { getIntegrations, saveIntegration, testIntegration, getAiProviders, getAiConfig, saveAiConfig, testAiConnection } from '../api';
+import { RefreshCw, CheckCircle, XCircle, Edit2, Save, X, HelpCircle, ChevronDown, ChevronRight, ExternalLink, Zap, Loader2, Settings, Power } from 'lucide-react';
+import { getIntegrations, saveIntegration, testIntegration, enablePlugin, disablePlugin, getAiProviders, getAiConfig, saveAiConfig, testAiConnection } from '../api';
 import type { Integration, AiProvider } from '../api';
 
 type TestStatus = 'connected' | 'failed' | 'not_configured';
@@ -18,12 +18,14 @@ const PLATFORM_COLOR: Record<string, string> = {
   'google-sso':    'text-[#ea4335] bg-[#ea4335]/10 border-[#ea4335]/20',
   bitbucket:      'text-[#0052cc] bg-[#0052cc]/10 border-[#0052cc]/20',
   github:         'text-[#e6edf3] bg-[#30363d] border-[#484f58]',
+  jira:           'text-[#0052cc] bg-[#0052cc]/10 border-[#0052cc]/20',
+  cloudwatch:     'text-[#ff9900] bg-[#ff9900]/10 border-[#ff9900]/20',
 };
 
 const PLATFORM_LABEL: Record<string, string> = {
   telegram: 'TG', slack: 'SL', microsoft: 'MS', whatsapp: 'WA', email: 'SES',
   'microsoft-sso': 'MS', 'google-sso': 'G',
-  bitbucket: 'BB', github: 'GH',
+  bitbucket: 'BB', github: 'GH', jira: 'JR', cloudwatch: 'CW',
 };
 
 const AI_PROVIDER_COLOR: Record<string, string> = {
@@ -156,6 +158,33 @@ const SETUP_GUIDES: Record<string, { steps: string[]; links: { label: string; ur
       { label: 'GitHub Actions Docs', url: 'https://docs.github.com/en/actions/using-workflows/triggering-a-workflow' },
     ],
   },
+  jira: {
+    steps: [
+      '1. In your Jira instance, go to your profile → Manage account → Security → API tokens',
+      '2. Click "Create API token" — give it a name (e.g. "BLUE.Y") and copy the token immediately',
+      '3. Set Jira Base URL to your Atlassian URL (e.g. https://your-org.atlassian.net)',
+      '4. Set Atlassian Email to the email you use to log into Jira',
+      '5. Set Project Key to the short key of the project where issues will be created (e.g. OPS, BLY)',
+      '6. Enable the plugin and click Test to verify the connection',
+    ],
+    links: [
+      { label: 'Atlassian API Tokens', url: 'https://id.atlassian.com/manage-profile/security/api-tokens' },
+      { label: 'Jira REST API Docs', url: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/' },
+    ],
+  },
+  cloudwatch: {
+    steps: [
+      '1. No API key needed — BLUE.Y uses the pod\'s IAM role (IRSA) to call CloudWatch',
+      '2. Ensure the pod\'s IRSA role has cloudwatch:GetMetricData and cloudwatch:ListMetrics permissions',
+      '3. Set AWS Region to the region where your ALB lives (e.g. ap-southeast-1)',
+      '4. ALB ARN Suffix is optional — leave blank to auto-detect ALBs from your ingress controllers',
+      '5. Enable the plugin and click Test — it will list available ALB metric series',
+      '6. Once connected, Network Explorer shows real request counts, 5xx/4xx errors, and latency',
+    ],
+    links: [
+      { label: 'CloudWatch Metrics Docs', url: 'https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/using-metric-math.html' },
+    ],
+  },
 };
 
 interface AiTestState {
@@ -177,6 +206,7 @@ export default function Integrations() {
   const [msg, setMsg] = useState<{ id: string; type: 'ok' | 'err'; text: string } | null>(null);
   const [showGuide, setShowGuide] = useState<string | null>(null);
   const [testStates, setTestStates] = useState<Record<string, TestState>>({});
+  const [toggling, setToggling] = useState<Record<string, boolean>>({});
 
   // AI Provider state (BLY-76)
   const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
@@ -290,6 +320,22 @@ export default function Integrations() {
     } finally { setSaving(false); }
   };
 
+  const handleToggle = async (intg: Integration) => {
+    setToggling(prev => ({ ...prev, [intg.id]: true }));
+    try {
+      if (intg.enabled) {
+        await disablePlugin(intg.id);
+      } else {
+        await enablePlugin(intg.id);
+      }
+      setIntegrations(prev => prev.map(i => i.id === intg.id ? { ...i, enabled: !intg.enabled } : i));
+    } catch (e: any) {
+      setMsg({ id: intg.id, type: 'err', text: e.message ?? 'Toggle failed' });
+    } finally {
+      setToggling(prev => ({ ...prev, [intg.id]: false }));
+    }
+  };
+
   const renderCard = (intg: Integration) => {
     const isEditing = editing === intg.id;
     const colorClass = PLATFORM_COLOR[intg.icon] ?? 'text-[#8b949e] bg-[#21262d] border-[#30363d]';
@@ -333,6 +379,19 @@ export default function Integrations() {
           </div>
           {!readOnly && !isEditing && (
             <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => handleToggle(intg)}
+                disabled={toggling[intg.id]}
+                title={intg.enabled ? 'Disable plugin' : 'Enable plugin'}
+                className={clsx(
+                  'p-1.5 rounded-lg border transition-colors disabled:opacity-40',
+                  intg.enabled
+                    ? 'bg-[#3fb950]/10 border-[#3fb950]/30 text-[#3fb950] hover:bg-[#f85149]/10 hover:border-[#f85149]/30 hover:text-[#f85149]'
+                    : 'bg-[#21262d] border-[#30363d] text-[#6e7681] hover:text-[#3fb950] hover:border-[#3fb950]/30',
+                )}
+              >
+                {toggling[intg.id] ? <Loader2 size={11} className="animate-spin" /> : <Power size={11} />}
+              </button>
               <button
                 onClick={() => handleTest(intg.id)}
                 disabled={ts?.loading}
@@ -470,7 +529,7 @@ export default function Integrations() {
           <div>
             <h2 className="text-xs font-semibold text-[#6e7681] uppercase tracking-wider mb-3">Messaging Platforms</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {integrations.filter(i => !i.id.endsWith('-sso') && i.id !== 'bitbucket' && i.id !== 'github').map(intg => renderCard(intg))}
+              {integrations.filter(i => !i.id.endsWith('-sso') && !['bitbucket', 'github', 'jira', 'cloudwatch'].includes(i.id)).map(intg => renderCard(intg))}
             </div>
           </div>
           {/* SSO integrations */}
@@ -490,6 +549,18 @@ export default function Integrations() {
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {integrations.filter(i => i.id === 'bitbucket' || i.id === 'github').map(intg => renderCard(intg))}
+            </div>
+          </div>
+
+          {/* Ops Tools (BLY-85) */}
+          <div>
+            <h2 className="text-xs font-semibold text-[#6e7681] uppercase tracking-wider mb-3">Ops Tools</h2>
+            <p className="text-xs text-[#8b949e] mb-3">
+              Connect Jira to create trackable tickets from ops issues, and CloudWatch to pull live ALB metrics in Network Explorer.
+              Enable each plugin once credentials are configured.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {integrations.filter(i => i.id === 'jira' || i.id === 'cloudwatch').map(intg => renderCard(intg))}
             </div>
           </div>
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { LayoutDashboard, AlertTriangle, Server, Layers, Terminal, Users, Settings, LogOut, Wifi, WifiOff, Menu, X, Plug, Mail, BookUser, Workflow, Network } from 'lucide-react';
 import type { Page } from '../App';
 import Logo from './Logo';
-import { getMe, getLicense } from '../api';
+import { getMe, getLicense, getEnabledPlugins } from '../api';
 import type { MeResponse, LicenseInfo } from '../api';
 import clsx from 'clsx';
 
@@ -15,13 +15,13 @@ interface Props {
 // BLY-83: role hierarchy for nav filtering (superadmin > admin > developer > viewer)
 const ROLE_RANK: Record<string, number> = { superadmin: 3, admin: 2, developer: 1.5, viewer: 1 };
 
-const NAV: { id: Page; label: string; Icon: React.ElementType; minRole?: string }[] = [
+const NAV: { id: Page; label: string; Icon: React.ElementType; minRole?: string; requirePlugin?: string[] }[] = [
   { id: 'overview',    label: 'Overview',     Icon: LayoutDashboard },
   { id: 'incidents',   label: 'Incidents',    Icon: AlertTriangle },
   { id: 'cluster',     label: 'Cluster',      Icon: Server },
   { id: 'deployments', label: 'Deployments',  Icon: Layers },
   { id: 'logs',        label: 'Log Explorer', Icon: Terminal },
-  { id: 'cicd',        label: 'CI/CD',        Icon: Workflow,   minRole: 'developer'   },
+  { id: 'cicd',        label: 'CI/CD',        Icon: Workflow,   minRole: 'developer', requirePlugin: ['bitbucket', 'github'] },
   { id: 'network',     label: 'Network',      Icon: Network },
   { id: 'issues',      label: 'Ops Issues',   Icon: AlertTriangle, minRole: 'viewer'  },
   { id: 'users',           label: 'Users',            Icon: Users,    minRole: 'superadmin' },
@@ -55,10 +55,12 @@ export default function Layout({ page, onNavigate, children }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   // Mobile: sidebar hidden by default, shown as overlay
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [enabledPlugins, setEnabledPlugins] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     getMe().then(setMe).catch(() => {});
     getLicense().then(setLicense).catch(() => {});
+    getEnabledPlugins().then(setEnabledPlugins).catch(() => {});
   }, []);
 
   const handleLogout = async () => {
@@ -126,7 +128,7 @@ export default function Layout({ page, onNavigate, children }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 py-3 space-y-0.5 px-1.5 overflow-y-auto">
-        {NAV.filter(({ minRole }) => !minRole || (ROLE_RANK[me?.role ?? ''] ?? 0) >= (ROLE_RANK[minRole] ?? 99)).map(({ id, label, Icon }) => (
+        {NAV.filter(({ minRole, requirePlugin }) => (!minRole || (ROLE_RANK[me?.role ?? ''] ?? 0) >= (ROLE_RANK[minRole] ?? 99)) && (!requirePlugin?.length || requirePlugin.some(p => enabledPlugins[p]))).map(({ id, label, Icon }) => (
           <button
             key={id}
             onClick={() => navigate(id)}
