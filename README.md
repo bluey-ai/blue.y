@@ -3,7 +3,7 @@
 > **BLUE.Y asks _why_, so you don't have to.**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-22-brightgreen.svg)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-24-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org)
 [![Helm](https://img.shields.io/badge/Helm-3-0F1689.svg)](https://artifacthub.io/packages/helm/blue-y/blue-y)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/blue-y)](https://artifacthub.io/packages/helm/blue-y/blue-y)
@@ -298,14 +298,11 @@ blue.y/
 │   ├── scheduler.ts               # Cron engine, auto-diagnose, incident timeline
 │   ├── slack-bot.ts               # Slack Socket Mode bot
 │   ├── clients/
-│   │   ├── kube.ts                # Kubernetes API (pods, nodes, HPA, metrics)
+│   │   ├── kube.ts                # Kubernetes API (pods, nodes, HPA, ingresses, metrics)
 │   │   ├── bedrock.ts             # AI client (DeepSeek / OpenAI-compatible)
+│   │   ├── bitbucket.ts           # Bitbucket Pipelines API
 │   │   ├── email.ts               # AWS SES
 │   │   ├── jira.ts                # Jira REST API
-│   │   ├── loki.ts                # Loki log queries
-│   │   ├── database.ts            # Read-only DB access (MySQL/PostgreSQL)
-│   │   ├── db-agents.ts           # Multi-agent SQL pipeline (generate → validate → verify)
-│   │   ├── waf.ts                 # AWS WAF
 │   │   └── notifiers/
 │   │       ├── interface.ts       # Notifier interface
 │   │       ├── telegram.ts        # Telegram notifier
@@ -318,13 +315,31 @@ blue.y/
 │   │   ├── nodes.ts               # Node health
 │   │   ├── certs.ts               # TLS certificate expiry
 │   │   ├── hpa.ts                 # HPA utilization
-│   │   ├── load.ts                # Load + node group auto-scaling
-│   │   └── security.ts            # WAF + auth failure monitoring
+│   │   └── load.ts                # Load + node group auto-scaling
+│   ├── admin/                     # Premium — Admin Dashboard (web UI)
+│   │   ├── index.ts               # Express app, auth middleware, route mounting
+│   │   ├── db.ts                  # SQLite — incident log, admin users
+│   │   ├── routes/
+│   │   │   ├── cluster.ts         # Pods, nodes, HPA, deployments
+│   │   │   ├── logs.ts            # Live tail, snapshot, error clustering, AI analyze
+│   │   │   ├── network.ts         # Ingresses, services, policies, ALB metrics, AI diagnose
+│   │   │   ├── ci.ts              # CI/CD pipelines (Bitbucket + GitHub)
+│   │   │   ├── incidents.ts       # Incident history + postmortem
+│   │   │   ├── integrations.ts    # Integration config (tokens, workspaces)
+│   │   │   └── users.ts           # Admin user management (Super Admin only)
+│   │   └── middleware/
+│   │       └── ipEnforcement.ts   # IP allowlist / VPN mode
 │   └── utils/
-│       └── logger.ts              # Winston logger
-├── helm/blue-y/                   # Helm chart
+│       ├── logger.ts              # Winston logger
+│       └── sanitize.ts            # AI prompt sanitization (strips credentials/IPs)
+├── frontend/                      # Premium — React dashboard (Vite + Tailwind)
+├── helm/blue-y/                   # Community Helm chart (ArtifactHub)
+├── helm/blue-y-premium/           # Premium Helm chart (private)
 ├── deploy/                        # Raw K8s manifests
-├── docs/CHANGELOG.md              # Release history
+├── docs/
+│   ├── CHANGELOG.md               # Release history
+│   ├── FEATURES.md                # Full feature reference
+│   └── PRODUCT_BRIEF.md           # One-page PDF brief
 ├── .env.example                   # Full environment variable reference
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -340,17 +355,38 @@ BLUE.Y uses a minimal ClusterRole (`blue-y-readonly`) with read-only access plus
 ```yaml
 rules:
   - apiGroups: [""]
-    resources: [pods, nodes, events, namespaces, secrets, services, endpoints]
+    resources: [pods, pods/log, pods/exec, nodes, services, endpoints, secrets, events, namespaces, configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [get, create]           # web terminal (BLY-63)
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, patch, update]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets]
     verbs: [get, list, watch]
   - apiGroups: [apps]
-    resources: [deployments, replicasets, statefulsets, daemonsets]
-    verbs: [get, list, watch, patch]
+    resources: [deployments, deployments/scale]
+    verbs: [patch, update]         # restart + scale
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]
   - apiGroups: [metrics.k8s.io]
     resources: [pods, nodes]
     verbs: [get, list]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]   # admin write — Network Explorer
+    resources: [ingresses]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [""]                  # admin write — Network Explorer
+    resources: [services]
+    verbs: [create, update, patch, delete]
 ```
 
 Restart and scale actions use `kubectl patch` (not `kubectl exec`). `kubectl delete` is blocked at the application layer.
@@ -380,29 +416,36 @@ Restart and scale actions use `kubectl patch` (not `kubectl exec`). `kubectl del
 
 ## Community vs Premium
 
-BLUE.Y is open-source and free forever. A premium edition exists for teams that need an admin dashboard.
+BLUE.Y Community is open-source and free forever — no feature flags, no expiry, no seat limits. Premium adds the full web Admin Dashboard for teams that want browser-based cluster operations alongside their chat workflow.
 
 | Feature | Community | Premium |
 |---------|:---------:|:-------:|
-| Pod / Node / Cert / HPA / Load / Security monitors | ✅ | ✅ |
-| Telegram, Slack, WhatsApp, MS Teams | ✅ | ✅ |
-| AI auto-diagnosis (DeepSeek / any OpenAI endpoint) | ✅ | ✅ |
-| Jira, Grafana, Loki, AWS WAF, SES, SMTP | ✅ | ✅ |
+| All 4 chat platforms — Telegram, Slack, WhatsApp, Teams | ✅ | ✅ |
+| AI auto-diagnosis — pod crashes, OOMKill, ImagePull | ✅ | ✅ |
+| 24/7 monitors — pods, nodes, HPA, TLS certs | ✅ | ✅ |
+| Full command set — `/status` `/logs` `/restart` `/scale` `/diagnose` `/postmortem` … | ✅ | ✅ |
+| Jira ticket creation + SES email reports | ✅ | ✅ |
+| Sleep/wake for maintenance windows | ✅ | ✅ |
 | Helm chart (ArtifactHub) | ✅ | ✅ |
-| `/restart`, `/scale`, `/diagnose`, all chat commands | ✅ | ✅ |
 | Docker image | `ghcr.io/bluey-ai/blue.y` (public) | Private ECR |
-| **Admin web dashboard** (cluster topology, real-time monitoring) | ❌ | ✅ |
-| **ChatOps magic-link auth** (`/admin` → magic link → click → dashboard) | ❌ | ✅ |
-| **Dynamic IP access mode** (no VPN required) | ❌ | ✅ |
-| **Incident log UI** (searchable SQLite timeline) | ❌ | ✅ |
-| **Config editor** (hot-reload without pod restart) | ❌ | ✅ |
-| **Premium Helm chart** (private, includes ingress + admin config) | ❌ | ✅ |
+| **Admin Dashboard (web UI)** | ❌ | ✅ |
+| **Log Explorer** — live tail, error clustering, AI analyze, NL search | ❌ | ✅ |
+| **Network Explorer** — route health, AI diagnose, ALB metrics, ingress CRUD | ❌ | ✅ |
+| **CI/CD Pipelines** — Bitbucket + GitHub, logs, trigger, smart rebuild | ❌ | ✅ |
+| **Incident log** — searchable history, AI postmortem dashboard, Jira integration | ❌ | ✅ |
+| **Cluster & Deployments** — pods, nodes, HPA, rollouts in browser | ❌ | ✅ |
+| **SSO** — Google, Microsoft, GitHub OAuth | ❌ | ✅ |
+| **Multi-user RBAC** — Viewer / Admin / Super Admin | ❌ | ✅ |
+| **Signed images + SBOM** (Cosign) | ❌ | ✅ |
+| **IP allowlist / VPN mode** | ❌ | ✅ |
+| **Audit log** | ❌ | ✅ |
+| **Priority support + SLA** | ❌ | ✅ |
 
 ### How licensing works
 
-**Community**: the admin code does not exist in the community image — there is no feature flag to flip, nothing to crack. You get the full monitoring and chat experience forever, free.
+**Community**: the admin dashboard code does not exist in the community image — there is no feature flag to flip, nothing to crack. You get the full monitoring and chat experience forever, free.
 
-**Premium**: contact [hello@bluey.ai](mailto:hello@bluey.ai) to receive ECR pull credentials + the premium Helm chart.
+**Premium**: contact [hello@blueonion.today](mailto:hello@blueonion.today) to receive ECR pull credentials + the premium Helm chart.
 
 ---
 
