@@ -16,7 +16,7 @@ Built for DevOps and platform engineering teams running production EKS, GKE, or 
 
 | 2 min | 4 | 6 | 5 min |
 |---|---|---|---|
-| Pod crash detection | Chat platforms | Dashboard modules | Time to deploy |
+| Pod crash detection | Chat platforms | Dashboard modules *(Premium)* | Time to deploy |
 
 ---
 
@@ -62,15 +62,17 @@ DeepSeek AI &nbsp;·&nbsp; AWS Bedrock &nbsp;·&nbsp; AWS CloudWatch &nbsp;·&nb
 | All 4 chat platforms | Yes | Yes |
 | AI auto-diagnosis | Yes | Yes |
 | 24/7 monitoring (pods, nodes, HPA, TLS) | Yes | Yes |
-| Admin dashboard — all 6 modules | Yes | Yes |
-| Incident log + AI postmortem + Jira | Yes | Yes |
-| Seats | Up to 10 | Unlimited |
+| All chat /commands | Yes | Yes |
+| Admin dashboard (web UI — all 6 modules) | — | Yes |
+| Log Explorer, Network Explorer, CI/CD | — | Yes |
+| Incident log + AI postmortem + Jira | — | Yes |
 | SSO (Google / Microsoft / GitHub) | — | Yes |
 | Multi-user RBAC | — | Yes |
 | Signed images + SBOM (Cosign) | — | Yes |
 | IP allowlist / VPN mode | — | Yes |
 | Audit log | — | Yes |
 | Priority support + SLA | — | Yes |
+| Seats | Up to 10 | Unlimited |
 
 ---
 

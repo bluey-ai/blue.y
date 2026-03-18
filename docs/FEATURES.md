@@ -27,7 +27,7 @@ BLUE.Y eliminates all four problems. It watches your cluster continuously, diagn
 
 **2. Connect your channels.** Link Telegram, Slack, WhatsApp, or Teams in minutes. Every platform gets the identical full command set — pick the one your on-call rotation already uses.
 
-**3. Let it watch.** BLUE.Y monitors pods, nodes, HPA, and TLS certs around the clock. When something goes wrong, it doesn't just fire an alert — it gathers `kubectl describe`, logs, and events, sends them to AI, and delivers a root-cause diagnosis directly to your chat. Your team opens the message and already knows the fix.
+**3. Let it watch.** BLUE.Y monitors pods, nodes, HPA, and TLS certs around the clock. When something goes wrong, it doesn't just fire an alert — it gathers `kubectl describe`, logs, and events, sends them to AI, and delivers a root-cause diagnosis directly to your chat. Your team opens the message and already knows the fix. Premium users also get a full web dashboard for deep log analysis, network visibility, and CI/CD management.
 
 ---
 
@@ -75,7 +75,7 @@ Alerts fire the moment a threshold is breached. Use `/sleep` before a maintenanc
 
 ---
 
-### Admin Dashboard — Full Cluster Visibility Without kubectl
+### Admin Dashboard — Full Cluster Visibility Without kubectl *(Premium)*
 
 A polished, dark-mode web interface at your domain. No Kubernetes CLI knowledge required for your team.
 
@@ -229,26 +229,27 @@ helm install blue-y bluey/blue-y --namespace prod
 | Multi-platform chat (Telegram, WhatsApp, Slack, Teams) | Yes | Yes |
 | AI auto-diagnosis (pod crashes, OOMKill, ImagePull) | Yes | Yes |
 | 24/7 monitoring — pods, nodes, HPA, TLS | Yes | Yes |
-| Admin dashboard | Yes | Yes |
-| Log Explorer (live tail, error clustering, AI analyze, NL search) | Yes | Yes |
-| Network Explorer (route health, AI diagnose, ALB metrics) | Yes | Yes |
-| CI/CD Pipelines (Bitbucket + GitHub, trigger + smart rebuild) | Yes | Yes |
-| Incident log + AI postmortem + Jira integration | Yes | Yes |
-| Seats | Up to 10 | Unlimited |
+| Chat command reference (all /commands) | Yes | Yes |
+| Admin dashboard (web UI) | — | Yes |
+| Log Explorer (live tail, error clustering, AI analyze, NL search) | — | Yes |
+| Network Explorer (route health, AI diagnose, ALB metrics) | — | Yes |
+| CI/CD Pipelines (Bitbucket + GitHub, trigger + smart rebuild) | — | Yes |
+| Incident log + AI postmortem + Jira integration | — | Yes |
 | SSO — Google, Microsoft, GitHub OAuth | — | Yes |
 | Multi-user RBAC (Viewer / Admin / Super Admin) | — | Yes |
 | Signed container images + SBOM (Cosign) | — | Yes |
 | IP allowlist / VPN mode | — | Yes |
 | Audit log | — | Yes |
 | Priority support + SLA | — | Yes |
+| Seats | Up to 10 | Unlimited |
 
 ---
 
 ## Get Started
 
-**Community** is fully open source and production-ready. No credit card, no account, no expiry.
+**Community** is fully open source and production-ready. Includes full chat operations and AI auto-diagnosis across all 4 platforms. No credit card, no account, no expiry.
 
-**Premium** adds SSO, RBAC, signed images, IP allowlisting, and priority support — for teams that need compliance, auditability, and unlimited seats.
+**Premium** unlocks the full Admin Dashboard (Log Explorer, Network Explorer, CI/CD, Incidents) plus SSO, RBAC, signed images, IP allowlisting, and priority support — for teams that need a complete ops platform with compliance and auditability.
 
 [**Get Community on GitHub →**](https://github.com/bluey-ai/blue.y) &nbsp;&nbsp; [**Talk to Us about Premium →**](mailto:hello@blueonion.today)
 
