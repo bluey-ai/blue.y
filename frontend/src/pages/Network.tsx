@@ -241,19 +241,18 @@ function HealthTab({ namespace, isAdmin }: { namespace: string; isAdmin: boolean
 
   useEffect(() => { load(); }, [load]);
 
-  const handleDiagnose = async (ingressName: string) => {
-    const key = `${namespace}/${ingressName}`;
-    setDiagnosing(prev => new Set(prev).add(key));
+  const handleDiagnose = async (routeKey: string, ingressName: string) => {
+    setDiagnosing(prev => new Set(prev).add(routeKey));
     try {
       const res = await diagnoseRoute(ingressName, namespace);
-      setDiagnoses(prev => ({ ...prev, [key]: res.diagnosis }));
+      setDiagnoses(prev => ({ ...prev, [routeKey]: res.diagnosis }));
     } catch (e: any) {
       setDiagnoses(prev => ({
         ...prev,
-        [key]: { rootCause: e?.message || 'Diagnosis failed', confidence: 'low', breakpoint: 'unknown', severity: 'warning', suggestions: [] },
+        [routeKey]: { rootCause: e?.message || 'Diagnosis failed', confidence: 'low', breakpoint: 'unknown', severity: 'warning', suggestions: [] },
       }));
     } finally {
-      setDiagnosing(prev => { const s = new Set(prev); s.delete(key); return s; });
+      setDiagnosing(prev => { const s = new Set(prev); s.delete(routeKey); return s; });
     }
   };
 
@@ -370,7 +369,7 @@ function HealthTab({ namespace, isAdmin }: { namespace: string; isAdmin: boolean
             </thead>
             <tbody>
               {routes.map((r, i) => {
-                const diagKey = `${namespace}/${r.ingressName}`;
+                const diagKey = `${namespace}/${r.ingressName}/${r.host}${r.path}`;
                 const diag = diagnoses[diagKey];
                 const isDiagnosing = diagnosing.has(diagKey);
                 const ingressObj = ingresses.find(ing => ing.name === r.ingressName);
@@ -407,7 +406,7 @@ function HealthTab({ namespace, isAdmin }: { namespace: string; isAdmin: boolean
                         <div className="flex items-center gap-1">
                           {(r.health === 'red' || r.health === 'yellow') && (
                             <button
-                              onClick={() => handleDiagnose(r.ingressName)}
+                              onClick={() => handleDiagnose(diagKey, r.ingressName)}
                               disabled={isDiagnosing}
                               title="AI Diagnose"
                               className={clsx(
