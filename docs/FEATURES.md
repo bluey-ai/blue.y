@@ -241,7 +241,6 @@ helm install blue-y bluey/blue-y --namespace prod
 | IP allowlist / VPN mode | — | Yes |
 | Audit log | — | Yes |
 | Priority support + SLA | — | Yes |
-| Seats | Up to 10 | Unlimited |
 
 ---
 

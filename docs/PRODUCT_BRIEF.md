@@ -72,7 +72,6 @@ DeepSeek AI &nbsp;·&nbsp; AWS Bedrock &nbsp;·&nbsp; AWS CloudWatch &nbsp;·&nb
 | IP allowlist / VPN mode | — | Yes |
 | Audit log | — | Yes |
 | Priority support + SLA | — | Yes |
-| Seats | Up to 10 | Unlimited |
 
 ---
 
