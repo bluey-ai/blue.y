@@ -9,20 +9,22 @@ import Card from '../components/Card';
 import clsx from 'clsx';
 
 const ROLE_OPTS = [
-  { value: 'admin',  label: 'Admin' },
-  { value: 'viewer', label: 'Viewer' },
+  { value: 'admin',     label: 'Admin' },
+  { value: 'developer', label: 'Developer' },
+  { value: 'viewer',    label: 'Viewer' },
 ];
 
 const ROLE_COLORS: Record<string, string> = {
   superadmin: 'text-[#f0883e] bg-[#f0883e]/10 border-[#f0883e]/20',
   admin:      'text-[#58a6ff] bg-[#58a6ff]/10 border-[#58a6ff]/20',
+  developer:  'text-[#3fb950] bg-[#3fb950]/10 border-[#3fb950]/20',
   viewer:     'text-[#8b949e] bg-[#21262d] border-[#30363d]',
 };
 
 function RoleBadge({ role }: { role: string }) {
   return (
     <span className={clsx('inline-flex items-center gap-1 px-2 py-px rounded-full text-[10px] font-medium border', ROLE_COLORS[role] ?? ROLE_COLORS.viewer)}>
-      {role === 'superadmin' ? <ShieldCheck size={9} /> : role === 'admin' ? <Shield size={9} /> : <Eye size={9} />}
+      {role === 'superadmin' ? <ShieldCheck size={9} /> : role === 'admin' ? <Shield size={9} /> : role === 'developer' ? <Shield size={9} /> : <Eye size={9} />}
       {role}
     </span>
   );

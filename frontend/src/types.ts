@@ -101,7 +101,7 @@ export interface MeResponse {
   sub: string;
   platform: string;
   name: string;
-  role: 'superadmin' | 'admin' | 'viewer';
+  role: 'superadmin' | 'admin' | 'developer' | 'viewer';
   version?: string;
 }
 

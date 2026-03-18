@@ -29,7 +29,7 @@ async function readConfigMap(): Promise<Record<string, string>> {
 
 const router = Router();
 
-const VALID_ROLES: AdminRole[] = ['admin', 'viewer']; // superadmin cannot be invited via SSO
+const VALID_ROLES: AdminRole[] = ['admin', 'developer', 'viewer']; // superadmin cannot be invited via SSO
 
 // GET /api/invites — list all SSO invites
 router.get('/', (_req: Request, res: Response) => {

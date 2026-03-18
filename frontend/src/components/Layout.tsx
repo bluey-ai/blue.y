@@ -12,14 +12,18 @@ interface Props {
   children: React.ReactNode;
 }
 
+// BLY-83: role hierarchy for nav filtering (superadmin > admin > developer > viewer)
+const ROLE_RANK: Record<string, number> = { superadmin: 3, admin: 2, developer: 1.5, viewer: 1 };
+
 const NAV: { id: Page; label: string; Icon: React.ElementType; minRole?: string }[] = [
   { id: 'overview',    label: 'Overview',     Icon: LayoutDashboard },
   { id: 'incidents',   label: 'Incidents',    Icon: AlertTriangle },
   { id: 'cluster',     label: 'Cluster',      Icon: Server },
   { id: 'deployments', label: 'Deployments',  Icon: Layers },
   { id: 'logs',        label: 'Log Explorer', Icon: Terminal },
-  { id: 'cicd',        label: 'CI/CD',        Icon: Workflow },
+  { id: 'cicd',        label: 'CI/CD',        Icon: Workflow,   minRole: 'developer'   },
   { id: 'network',     label: 'Network',      Icon: Network },
+  { id: 'issues',      label: 'Ops Issues',   Icon: AlertTriangle, minRole: 'viewer'  },
   { id: 'users',           label: 'Users',            Icon: Users,    minRole: 'superadmin' },
   { id: 'integrations',    label: 'Integrations',     Icon: Plug,     minRole: 'superadmin' },
   { id: 'email-templates',  label: 'Email Templates',   Icon: Mail,      minRole: 'superadmin' },
@@ -36,10 +40,11 @@ const PLATFORM_COLOR: Record<string, string> = {
   google:    'text-[#ea4335]',
 };
 
-const ROLE_LABEL: Record<string, string> = { superadmin: 'Super Admin', admin: 'Admin', viewer: 'Viewer' };
+const ROLE_LABEL: Record<string, string> = { superadmin: 'Super Admin', admin: 'Admin', developer: 'Developer', viewer: 'Viewer' };
 const ROLE_COLOR: Record<string, string> = {
   superadmin: 'text-[#bc8cff] bg-[#bc8cff]/10 border-[#bc8cff]/20',
   admin:      'text-[#58a6ff] bg-[#58a6ff]/10 border-[#58a6ff]/20',
+  developer:  'text-[#3fb950] bg-[#3fb950]/10 border-[#3fb950]/20',
   viewer:     'text-[#8b949e] bg-[#8b949e]/10 border-[#8b949e]/20',
 };
 
@@ -121,7 +126,7 @@ export default function Layout({ page, onNavigate, children }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 py-3 space-y-0.5 px-1.5 overflow-y-auto">
-        {NAV.filter(({ minRole }) => !minRole || me?.role === minRole).map(({ id, label, Icon }) => (
+        {NAV.filter(({ minRole }) => !minRole || (ROLE_RANK[me?.role ?? ''] ?? 0) >= (ROLE_RANK[minRole] ?? 99)).map(({ id, label, Icon }) => (
           <button
             key={id}
             onClick={() => navigate(id)}

@@ -12,8 +12,9 @@ import EmailTemplates from './pages/EmailTemplates';
 import AlertRecipients from './pages/AlertRecipients';
 import CiCd from './pages/CiCd';
 import Network from './pages/Network';
+import Issues from './pages/Issues';
 
-export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'cicd' | 'network' | 'users' | 'integrations' | 'config' | 'email-templates' | 'alert-recipients';
+export type Page = 'overview' | 'incidents' | 'cluster' | 'deployments' | 'logs' | 'cicd' | 'network' | 'issues' | 'users' | 'integrations' | 'config' | 'email-templates' | 'alert-recipients';
 
 export default function App() {
   const [page, setPage] = useState<Page>('overview');
@@ -26,6 +27,7 @@ export default function App() {
     logs:              <Logs />,
     cicd:              <CiCd onNavigate={setPage} />,
     network:           <Network />,
+    issues:            <Issues />,
     users:             <Users />,
     integrations:      <Integrations />,
     config:            <Config />,

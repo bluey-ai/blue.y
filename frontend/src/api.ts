@@ -388,6 +388,63 @@ export const diagnoseRoute = (ingressName: string, namespace: string) =>
     '/network/ai/diagnose-route', { ingressName, namespace },
   );
 
+// Ops Issues (BLY-84)
+export type IssueStatus   = 'open' | 'acknowledged' | 'in_progress' | 'needs_review' | 'resolved' | 'wont_fix';
+export type IssueSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export interface OpsIssue {
+  id: number; title: string; description: string;
+  severity: IssueSeverity; status: IssueStatus;
+  source_type: string; source_name: string; source_namespace: string;
+  raised_by_id: string; raised_by_name: string;
+  assigned_to_id: string | null; assigned_to_name: string | null;
+  ai_diagnosis: string | null; jira_ticket_key: string | null;
+  resolution_notes: string | null;
+  created_at: string; updated_at: string; resolved_at: string | null;
+}
+
+export interface OpsIssueComment {
+  id: number; issue_id: number;
+  author_id: string; author_name: string;
+  content: string; created_at: string;
+}
+
+export interface OpsIssueTimelineEntry {
+  id: number; issue_id: number;
+  actor_id: string; actor_name: string;
+  from_status: string | null; to_status: string;
+  note: string | null; created_at: string;
+}
+
+export interface IssueStats { open: number; in_progress: number; resolved_week: number; }
+
+export const getIssues = (opts: { status?: string; severity?: string } = {}) => {
+  const p = new URLSearchParams();
+  if (opts.status)   p.set('status',   opts.status);
+  if (opts.severity) p.set('severity', opts.severity);
+  return get<{ issues: OpsIssue[]; stats: IssueStats; count: number }>(`/issues?${p}`);
+};
+
+export const createIssue = (data: {
+  title: string; description?: string; severity?: IssueSeverity;
+  source_type?: string; source_name?: string; source_namespace?: string; ai_diagnosis?: string;
+}) => post<OpsIssue>('/issues', data);
+
+export const getIssueDetail = (id: number) =>
+  get<{ issue: OpsIssue; comments: OpsIssueComment[]; timeline: OpsIssueTimelineEntry[] }>(`/issues/${id}`);
+
+export const updateIssueStatus = (id: number, status: IssueStatus, resolution_notes?: string) =>
+  fetch(`${BASE}/issues/${id}/status`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, resolution_notes }),
+  }).then(r => r.ok ? r.json() : r.json().then((e: any) => { throw new Error(e.error || r.statusText); }));
+
+export const assignIssueToMe = (id: number) => post<{ ok: boolean }>(`/issues/${id}/assign`, {});
+
+export const addIssueComment = (id: number, content: string) =>
+  post<OpsIssueComment>(`/issues/${id}/comments`, { content });
+
 // Stream (SSE)
 export function createStream(onEvent: (e: StreamEvent) => void, onError?: (e: Event) => void): EventSource {
   const es = new EventSource('/admin/api/stream', { withCredentials: true });

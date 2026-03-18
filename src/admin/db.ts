@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type AdminRole = 'superadmin' | 'admin' | 'viewer';
+export type AdminRole = 'superadmin' | 'admin' | 'developer' | 'viewer';
 
 /** Magic-link / bot users (Telegram, Slack, Teams). Role column added BLY-49. */
 export interface AdminUserRow {
@@ -86,6 +86,55 @@ export function openDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
     CREATE INDEX IF NOT EXISTS idx_incidents_ns       ON incidents(namespace);
   `);
+  // BLY-84: Ops Issues Board tables (migrations — safe on existing DBs)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ops_issues (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      title             TEXT    NOT NULL DEFAULT '',
+      description       TEXT    NOT NULL DEFAULT '',
+      severity          TEXT    NOT NULL DEFAULT 'medium',
+      status            TEXT    NOT NULL DEFAULT 'open',
+      source_type       TEXT    NOT NULL DEFAULT '',
+      source_name       TEXT    NOT NULL DEFAULT '',
+      source_namespace  TEXT    NOT NULL DEFAULT '',
+      raised_by_id      TEXT    NOT NULL DEFAULT '',
+      raised_by_name    TEXT    NOT NULL DEFAULT '',
+      assigned_to_id    TEXT,
+      assigned_to_name  TEXT,
+      ai_diagnosis      TEXT,
+      jira_ticket_key   TEXT,
+      resolution_notes  TEXT,
+      created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+      resolved_at       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ops_issues_status   ON ops_issues(status);
+    CREATE INDEX IF NOT EXISTS idx_ops_issues_severity ON ops_issues(severity);
+    CREATE INDEX IF NOT EXISTS idx_ops_issues_created  ON ops_issues(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ops_issue_comments (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      issue_id    INTEGER NOT NULL REFERENCES ops_issues(id) ON DELETE CASCADE,
+      author_id   TEXT    NOT NULL DEFAULT '',
+      author_name TEXT    NOT NULL DEFAULT '',
+      content     TEXT    NOT NULL DEFAULT '',
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ops_comments_issue ON ops_issue_comments(issue_id);
+
+    CREATE TABLE IF NOT EXISTS ops_issue_timeline (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      issue_id    INTEGER NOT NULL REFERENCES ops_issues(id) ON DELETE CASCADE,
+      actor_id    TEXT    NOT NULL DEFAULT '',
+      actor_name  TEXT    NOT NULL DEFAULT '',
+      from_status TEXT,
+      to_status   TEXT    NOT NULL DEFAULT '',
+      note        TEXT,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ops_timeline_issue ON ops_issue_timeline(issue_id);
+  `);
+
   logger.info(`[admin] SQLite DB opened: ${dbPath}`);
   return db;
 }
@@ -261,4 +310,136 @@ export function incidentStats(): { total: number; critical: number; warning: num
   const critical = (db.prepare("SELECT COUNT(*) as n FROM incidents WHERE severity = 'critical'").get() as { n: number }).n;
   const warning  = (db.prepare("SELECT COUNT(*) as n FROM incidents WHERE severity = 'warning'").get()  as { n: number }).n;
   return { total, critical, warning };
+}
+
+// ── ops_issues helpers (BLY-84) ───────────────────────────────────────────────
+
+export type IssueStatus   = 'open' | 'acknowledged' | 'in_progress' | 'needs_review' | 'resolved' | 'wont_fix';
+export type IssueSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export interface OpsIssueRow {
+  id:               number;
+  title:            string;
+  description:      string;
+  severity:         IssueSeverity;
+  status:           IssueStatus;
+  source_type:      string;
+  source_name:      string;
+  source_namespace: string;
+  raised_by_id:     string;
+  raised_by_name:   string;
+  assigned_to_id:   string | null;
+  assigned_to_name: string | null;
+  ai_diagnosis:     string | null;
+  jira_ticket_key:  string | null;
+  resolution_notes: string | null;
+  created_at:       string;
+  updated_at:       string;
+  resolved_at:      string | null;
+}
+
+export interface OpsIssueComment {
+  id:          number;
+  issue_id:    number;
+  author_id:   string;
+  author_name: string;
+  content:     string;
+  created_at:  string;
+}
+
+export interface OpsIssueTimelineEntry {
+  id:          number;
+  issue_id:    number;
+  actor_id:    string;
+  actor_name:  string;
+  from_status: string | null;
+  to_status:   string;
+  note:        string | null;
+  created_at:  string;
+}
+
+export function createOpsIssue(data: {
+  title: string; description: string; severity: IssueSeverity;
+  source_type: string; source_name: string; source_namespace: string;
+  raised_by_id: string; raised_by_name: string; ai_diagnosis?: string;
+}): OpsIssueRow {
+  const db = openDb();
+  const result = db.prepare(`
+    INSERT INTO ops_issues (title, description, severity, source_type, source_name, source_namespace, raised_by_id, raised_by_name, ai_diagnosis)
+    VALUES (@title, @description, @severity, @source_type, @source_name, @source_namespace, @raised_by_id, @raised_by_name, @ai_diagnosis)
+  `).run({ ...data, ai_diagnosis: data.ai_diagnosis ?? null });
+  return db.prepare('SELECT * FROM ops_issues WHERE id = ?').get(result.lastInsertRowid) as OpsIssueRow;
+}
+
+export function listOpsIssues(opts: { status?: string; severity?: string; limit?: number } = {}): OpsIssueRow[] {
+  let sql = 'SELECT * FROM ops_issues WHERE 1=1';
+  const params: Record<string, string | number> = {};
+  if (opts.status)   { sql += ' AND status   = @status';   params.status   = opts.status; }
+  if (opts.severity) { sql += ' AND severity = @severity'; params.severity = opts.severity; }
+  sql += ' ORDER BY created_at DESC LIMIT @limit';
+  params.limit = opts.limit ?? 200;
+  return openDb().prepare(sql).all(params) as OpsIssueRow[];
+}
+
+export function getOpsIssue(id: number): OpsIssueRow | undefined {
+  return openDb().prepare('SELECT * FROM ops_issues WHERE id = ?').get(id) as OpsIssueRow | undefined;
+}
+
+export function updateOpsIssueStatus(id: number, status: IssueStatus, actorId: string, actorName: string, resolutionNotes?: string): boolean {
+  const db = openDb();
+  const current = db.prepare('SELECT status FROM ops_issues WHERE id = ?').get(id) as { status: string } | undefined;
+  if (!current) return false;
+
+  db.prepare(`
+    UPDATE ops_issues SET status = ?, resolution_notes = COALESCE(?, resolution_notes),
+    resolved_at = CASE WHEN ? IN ('resolved','wont_fix') THEN datetime('now') ELSE resolved_at END,
+    updated_at = datetime('now') WHERE id = ?
+  `).run(status, resolutionNotes ?? null, status, id);
+
+  db.prepare(`
+    INSERT INTO ops_issue_timeline (issue_id, actor_id, actor_name, from_status, to_status)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, actorId, actorName, current.status, status);
+
+  return true;
+}
+
+export function assignOpsIssue(id: number, assigneeId: string, assigneeName: string, actorId: string, actorName: string): boolean {
+  const db = openDb();
+  const result = db.prepare(`
+    UPDATE ops_issues SET assigned_to_id = ?, assigned_to_name = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(assigneeId, assigneeName, id);
+
+  if (result.changes > 0) {
+    db.prepare(`
+      INSERT INTO ops_issue_timeline (issue_id, actor_id, actor_name, from_status, to_status, note)
+      VALUES (?, ?, ?, NULL, (SELECT status FROM ops_issues WHERE id = ?), ?)
+    `).run(id, actorId, actorName, id, `Assigned to ${assigneeName}`);
+  }
+  return result.changes > 0;
+}
+
+export function addOpsIssueComment(issueId: number, authorId: string, authorName: string, content: string): OpsIssueComment {
+  const db = openDb();
+  const result = db.prepare(`
+    INSERT INTO ops_issue_comments (issue_id, author_id, author_name, content) VALUES (?, ?, ?, ?)
+  `).run(issueId, authorId, authorName, content);
+  db.prepare("UPDATE ops_issues SET updated_at = datetime('now') WHERE id = ?").run(issueId);
+  return db.prepare('SELECT * FROM ops_issue_comments WHERE id = ?').get(result.lastInsertRowid) as OpsIssueComment;
+}
+
+export function listOpsIssueComments(issueId: number): OpsIssueComment[] {
+  return openDb().prepare('SELECT * FROM ops_issue_comments WHERE issue_id = ? ORDER BY created_at ASC').all(issueId) as OpsIssueComment[];
+}
+
+export function listOpsIssueTimeline(issueId: number): OpsIssueTimelineEntry[] {
+  return openDb().prepare('SELECT * FROM ops_issue_timeline WHERE issue_id = ? ORDER BY created_at ASC').all(issueId) as OpsIssueTimelineEntry[];
+}
+
+export function opsIssueStats(): { open: number; in_progress: number; resolved_week: number } {
+  const db = openDb();
+  const open        = (db.prepare("SELECT COUNT(*) as n FROM ops_issues WHERE status IN ('open','acknowledged')").get() as { n: number }).n;
+  const in_progress = (db.prepare("SELECT COUNT(*) as n FROM ops_issues WHERE status = 'in_progress'").get()           as { n: number }).n;
+  const resolved_week = (db.prepare("SELECT COUNT(*) as n FROM ops_issues WHERE status = 'resolved' AND resolved_at >= datetime('now','-7 days')").get() as { n: number }).n;
+  return { open, in_progress, resolved_week };
 }
